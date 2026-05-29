@@ -16,6 +16,7 @@ htmlcov/
 .coverage
 
 *.tsbuildinfo
+constructora-web/src/config/buildInfo.ts
 
 constructora-api/storage/
 constructora-web/*.traineddata
