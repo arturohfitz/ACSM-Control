@@ -1,0 +1,243 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #172033;
+  background: #07131c;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 88% 92%, rgba(56, 126, 195, 0.22), transparent 22rem),
+    linear-gradient(135deg, #081321 0%, #0c2138 48%, #17212e 100%);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transform: translateY(0) scale(1);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    filter 120ms ease,
+    background-color 120ms ease;
+}
+
+button:not(:disabled)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.46) 0%, rgba(255, 255, 255, 0.22) 24%, transparent 58%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.08), transparent);
+  opacity: 0;
+  transform: scale(0.72);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px) scale(0.985);
+  filter: brightness(0.95);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.18),
+    0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+button:not(:disabled):active::after {
+  opacity: 1;
+  transform: scale(1.25);
+  transition-duration: 70ms;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #2f78bd;
+  outline-offset: 2px;
+}
+
+::selection {
+  background: #dbeafe;
+}
+
+.bg-acsm-green {
+  background-color: #1d5f9f;
+  background-image: linear-gradient(180deg, #3d88cb 0%, #1d5f9f 52%, #164a7d 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 14px 28px rgba(29, 95, 159, 0.24);
+}
+
+.hover\:bg-acsm-green-hover:hover {
+  background-color: #164a7d;
+  background-image: linear-gradient(180deg, #2f78bd 0%, #164a7d 100%);
+}
+
+.bg-acsm-paper {
+  background-color: #e8f1f8;
+  background-image: linear-gradient(180deg, rgba(246, 250, 253, 0.98) 0%, rgba(218, 231, 242, 0.96) 100%);
+}
+
+.shadow-panel {
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.99) 0%, rgba(242, 247, 251, 0.99) 52%, rgba(218, 231, 242, 0.99) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    0 30px 80px rgba(4, 20, 44, 0.3),
+    0 10px 24px rgba(17, 47, 83, 0.12),
+    0 1px 2px rgba(4, 20, 44, 0.2);
+}
+
+input:not([type="checkbox"]),
+select,
+textarea {
+  background-color: #ffffff;
+  background-image: linear-gradient(180deg, #ffffff 0%, #f4f8fb 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    inset 0 0 0 1px rgba(76, 99, 122, 0.04),
+    0 8px 18px rgba(18, 35, 49, 0.08);
+}
+
+thead.bg-acsm-paper {
+  background-image: linear-gradient(180deg, #eef5fa 0%, #d9e7f2 100%);
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+.acsm-app-shell {
+  background:
+    radial-gradient(circle at 90% 88%, rgba(56, 126, 195, 0.24), transparent 22rem),
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(135deg, #081321 0%, #0d2139 50%, #17212e 100%);
+  background-size:
+    auto,
+    140px 140px,
+    140px 140px,
+    auto;
+}
+
+.acsm-app-shell main > * {
+  position: relative;
+}
+
+.acsm-app-shell .shadow-panel,
+.acsm-app-shell section.bg-white,
+.acsm-app-shell div.bg-white.shadow-panel {
+  border-color: rgba(164, 186, 207, 0.98) !important;
+  border-radius: 22px !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    0 26px 64px rgba(2, 17, 34, 0.28),
+    0 12px 28px rgba(25, 63, 101, 0.12),
+    0 1px 2px rgba(5, 20, 38, 0.2) !important;
+}
+
+.acsm-app-shell .bg-white:not(button):not(input):not(select):not(textarea) {
+  background-color: rgba(250, 252, 254, 0.98) !important;
+}
+
+.acsm-app-shell .border-acsm-line {
+  border-color: rgba(172, 194, 214, 0.98) !important;
+}
+
+.acsm-app-shell .rounded-md {
+  border-radius: 14px;
+}
+
+.acsm-app-shell .rounded-lg {
+  border-radius: 20px;
+}
+
+.acsm-app-shell table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.acsm-app-shell thead {
+  color: #40566d;
+  letter-spacing: 0.02em;
+}
+
+.acsm-app-shell thead.bg-acsm-paper,
+.acsm-app-shell .bg-acsm-paper {
+  background-color: #e8f1f8 !important;
+}
+
+.acsm-app-shell tbody tr:nth-child(even) {
+  background-color: rgba(244, 248, 252, 0.72);
+}
+
+.acsm-app-shell tbody tr {
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.acsm-app-shell tbody tr:hover {
+  background-color: rgba(219, 234, 248, 0.88);
+}
+
+.acsm-app-shell input:not([type="checkbox"]),
+.acsm-app-shell select,
+.acsm-app-shell textarea {
+  border-color: #aebfd0;
+  border-radius: 14px;
+}
+
+.acsm-app-shell input:not([type="checkbox"]):focus,
+.acsm-app-shell select:focus,
+.acsm-app-shell textarea:focus {
+  border-color: #2f78bd;
+  box-shadow:
+    0 0 0 3px rgba(47, 120, 189, 0.18),
+    0 10px 22px rgba(18, 35, 49, 0.1);
+}
+
+.acsm-app-shell h2,
+.acsm-app-shell h3 {
+  color: #162130;
+}
+
+.acsm-app-shell .text-acsm-muted {
+  color: #4f6278 !important;
+}
+
+.acsm-app-shell section > .border-b,
+.acsm-app-shell .shadow-panel > .border-b {
+  border-color: rgba(164, 186, 207, 0.86) !important;
+}
+
+.acsm-app-shell th {
+  color: #40566d;
+}
