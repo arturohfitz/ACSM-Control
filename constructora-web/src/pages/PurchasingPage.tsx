@@ -406,16 +406,25 @@ export default function PurchasingPage() {
     void loadData()
   }, [])
 
+  function emptyQuoteRowsFor(rfq: SupplierRFQ | undefined) {
+    return (rfq?.items ?? []).map((item) => ({
+      rfq_item_id: item.id,
+      unit_price: '',
+      delivery_days: '',
+    }))
+  }
+
+  function resetQuoteCapture(rfq = selectedRfq) {
+    setQuoteSupplierId('')
+    setQuoteNumber('')
+    setDeliveryDays('')
+    setPaymentTermsDays('30')
+    setQuoteRows(emptyQuoteRowsFor(rfq))
+  }
+
   useEffect(() => {
     void loadRfqDetails(selectedRfq?.id)
-    setQuoteRows(
-      (selectedRfq?.items ?? []).map((item) => ({
-        rfq_item_id: item.id,
-        unit_price: '',
-        delivery_days: '',
-      })),
-    )
-    setQuoteSupplierId('')
+    resetQuoteCapture(selectedRfq)
   }, [selectedRfq?.id])
 
   useEffect(() => {
@@ -522,12 +531,16 @@ export default function PurchasingPage() {
     if (!selectedRfq) return
     setError('')
     setMessage('')
+    if (!quoteNumber.trim()) {
+      setError('Captura el folio de la cotizacion del proveedor.')
+      return
+    }
     try {
       await apiRequest<SupplierQuote>(`/purchasing/supplier-rfqs/${selectedRfq.id}/quotes`, {
         method: 'POST',
         body: JSON.stringify({
           supplier_id: Number(quoteSupplierId),
-          quote_number: quoteNumber || null,
+          quote_number: quoteNumber.trim(),
           delivery_days: deliveryDays ? Number(deliveryDays) : null,
           payment_terms_days: Number(paymentTermsDays || 30),
           items: quoteRows
@@ -539,9 +552,8 @@ export default function PurchasingPage() {
             })),
         }),
       })
-      setMessage('Cotizacion registrada para comparativo.')
-      setQuoteNumber('')
-      setDeliveryDays('')
+      setMessage('Datos guardados para su comparativo.')
+      resetQuoteCapture(selectedRfq)
       await loadRfqDetails(selectedRfq.id)
       await loadData(selectedRfq.id)
     } catch (err) {
@@ -996,7 +1008,12 @@ export default function PurchasingPage() {
               <div className="grid gap-3 md:grid-cols-4">
                 <select
                   value={quoteSupplierId}
-                  onChange={(event) => setQuoteSupplierId(event.target.value)}
+                  onChange={(event) => {
+                    setQuoteSupplierId(event.target.value)
+                    setQuoteNumber('')
+                    setDeliveryDays('')
+                    setQuoteRows(emptyQuoteRowsFor(selectedRfq))
+                  }}
                   className="h-10 rounded-md border border-acsm-line px-3 text-sm"
                 >
                   <option value="">Proveedor</option>
@@ -1009,7 +1026,8 @@ export default function PurchasingPage() {
                 <input
                   value={quoteNumber}
                   onChange={(event) => setQuoteNumber(event.target.value)}
-                  placeholder="Folio cotizacion"
+                  placeholder="Folio cotizacion *"
+                  required
                   className="h-10 rounded-md border border-acsm-line px-3 text-sm"
                 />
                 <input
@@ -1082,7 +1100,7 @@ export default function PurchasingPage() {
               <button
                 type="button"
                 onClick={() => void createSupplierQuote()}
-                disabled={!quoteSupplierId}
+                disabled={!quoteSupplierId || !quoteNumber.trim()}
                 className="inline-flex h-10 items-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
               >
                 <ClipboardCheck className="h-4 w-4" aria-hidden="true" />

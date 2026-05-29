@@ -436,6 +436,11 @@ def create_supplier_quote(
             status_code=status.HTTP_409_CONFLICT,
             detail="La solicitud ya esta en aprobacion o fue adjudicada",
         )
+    if not payload.quote_number or not payload.quote_number.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El folio de cotizacion es obligatorio",
+        )
     supplier = _supplier_for_user(db, payload.supplier_id, current_user)
     link = next((item for item in rfq.supplier_links if item.supplier_id == supplier.id), None)
     if link is None:
@@ -459,7 +464,7 @@ def create_supplier_quote(
         company_id=rfq.company_id,
         rfq_id=rfq.id,
         supplier_id=supplier.id,
-        quote_number=payload.quote_number,
+        quote_number=payload.quote_number.strip(),
         received_at=payload.received_at or date.today(),
         valid_until=payload.valid_until,
         delivery_days=payload.delivery_days,
