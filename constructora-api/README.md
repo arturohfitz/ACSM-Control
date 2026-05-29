@@ -114,6 +114,31 @@ source .venv/bin/activate
 PYTHONPATH=. uvicorn app.main:app --reload
 ```
 
+## Proceso obligatorio de versionado
+
+Para evitar ejecutar una version anterior o perder cambios de desarrollo, usa siempre estos scripts desde la raiz del proyecto:
+
+```bash
+# Verifica backend y frontend
+scripts/verify.sh
+
+# Guarda un checkpoint local con commit
+scripts/checkpoint.sh "descripcion del cambio"
+
+# Reinicia API y Web desde esta carpeta, cerrando procesos viejos en 8000/5173
+scripts/restart-dev.sh
+```
+
+Tambien puedes instalar el candado local de Git:
+
+```bash
+scripts/install-hooks.sh
+```
+
+Con ese hook, cada `git commit` ejecuta validacion de backend y build frontend antes de permitir guardar el cambio.
+
+La version visible del sistema se actualiza automaticamente antes de `npm run dev` y `npm run build`, y aparece en el menu lateral.
+
 Swagger de ACSM Control queda disponible en:
 
 ```text

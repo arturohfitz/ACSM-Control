@@ -22,3 +22,4 @@ constructora-api/storage/
 constructora-web/*.traineddata
 
 *.log
+.runtime-*.log
