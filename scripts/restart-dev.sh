@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_LOG="$ROOT_DIR/.runtime-api.log"
 WEB_LOG="$ROOT_DIR/.runtime-web.log"
+API_PID="$ROOT_DIR/.runtime-api.pid"
+WEB_PID="$ROOT_DIR/.runtime-web.pid"
 
 "$ROOT_DIR/scripts/update-version.sh"
 
@@ -22,17 +24,12 @@ stop_port 8000
 stop_port 5173
 
 echo "Levantando API desde $ROOT_DIR/constructora-api"
-(
-  cd "$ROOT_DIR/constructora-api"
-  source .venv/bin/activate
-  PYTHONPATH=. nohup uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 >"$API_LOG" 2>&1 &
-)
+setsid bash -lc "cd '$ROOT_DIR/constructora-api' && source .venv/bin/activate && PYTHONPATH=. exec uvicorn app.main:app --reload --host 127.0.0.1 --port 8000" >"$API_LOG" 2>&1 &
+echo $! > "$API_PID"
 
 echo "Levantando Web desde $ROOT_DIR/constructora-web"
-(
-  cd "$ROOT_DIR/constructora-web"
-  nohup npm run dev -- --host 127.0.0.1 --port 5173 >"$WEB_LOG" 2>&1 &
-)
+setsid bash -lc "cd '$ROOT_DIR/constructora-web' && exec npm run dev -- --host 127.0.0.1 --port 5173" >"$WEB_LOG" 2>&1 &
+echo $! > "$WEB_PID"
 
 echo "Esperando servicios..."
 for _ in {1..30}; do
