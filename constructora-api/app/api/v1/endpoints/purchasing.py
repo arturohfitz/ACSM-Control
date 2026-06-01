@@ -529,6 +529,78 @@ def list_supplier_quotes(
     )
 
 
+@router.delete("/supplier-quotes/{quote_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_supplier_quote(
+    quote_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "edit")),
+) -> None:
+    quote = db.scalar(
+        select(SupplierQuote)
+        .where(SupplierQuote.id == quote_id)
+        .options(
+            selectinload(SupplierQuote.rfq).selectinload(SupplierRFQ.quotes),
+            selectinload(SupplierQuote.rfq).selectinload(SupplierRFQ.items),
+            selectinload(SupplierQuote.rfq).selectinload(SupplierRFQ.supplier_links),
+            selectinload(SupplierQuote.supplier),
+            selectinload(SupplierQuote.items),
+            selectinload(SupplierQuote.purchase_order),
+            selectinload(SupplierQuote.approval),
+        )
+    )
+    if quote is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    ensure_same_company(current_user, quote)
+    if quote.rfq.status in {"approval_pending", "awarded"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No se puede borrar una cotizacion que ya esta en aprobacion o adjudicada",
+        )
+    if quote.purchase_order is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No se puede borrar una cotizacion con orden de compra",
+        )
+    if quote.approval is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No se puede borrar una cotizacion con historial de aprobacion",
+        )
+    if quote.status != "received":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se pueden corregir cotizaciones recibidas antes de aprobacion",
+        )
+
+    rfq = quote.rfq
+    supplier_name = quote.supplier.name if quote.supplier else str(quote.supplier_id)
+    link = next((item for item in rfq.supplier_links if item.supplier_id == quote.supplier_id), None)
+    if link is not None:
+        link.status = "sent" if rfq.status in {"sent", "quoted", "partially_quoted"} else "invited"
+    record_event(
+        db,
+        current_user,
+        module="compras",
+        action="delete",
+        entity_type="SupplierQuote",
+        entity_id=quote.id,
+        company_id=quote.company_id,
+        label=quote.quote_number or rfq.rfq_number,
+        description=f"{current_user.full_name} borro la cotizacion de {supplier_name} para recaptura",
+        metadata={"rfq_id": rfq.id, "supplier_id": quote.supplier_id},
+    )
+    db.delete(quote)
+    db.flush()
+    remaining_quotes = [item for item in rfq.quotes if item.id != quote.id]
+    if not remaining_quotes:
+        rfq.status = "sent"
+    elif all(len(item.items) == len(rfq.items) for item in remaining_quotes):
+        rfq.status = "quoted"
+    else:
+        rfq.status = "partially_quoted"
+    db.commit()
+
+
 @router.get("/supplier-rfqs/{rfq_id}/comparison", response_model=list[SupplierRFQComparisonRow])
 def supplier_rfq_comparison(
     rfq_id: int,

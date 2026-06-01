@@ -624,6 +624,27 @@ export default function PurchasingPage() {
     }
   }
 
+  async function deleteSupplierQuoteForRecapture(row: ComparisonRow) {
+    setError('')
+    setMessage('')
+    try {
+      await apiRequest<void>(`/purchasing/supplier-quotes/${row.supplier_quote_id}`, {
+        method: 'DELETE',
+      })
+      resetQuoteCapture(selectedRfq)
+      setMessage(
+        `Cotizacion de ${row.supplier_name} borrada. Tienes que volver a seleccionar el proveedor y recapturar los datos.`,
+      )
+      await loadData(selectedRfq?.id)
+      if (selectedRfq?.id) await loadRfqDetails(selectedRfq.id)
+      window.setTimeout(() => {
+        quoteCaptureRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 80)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible borrar la cotizacion')
+    }
+  }
+
   async function sendOrder(orderId: number) {
     setError('')
     setMessage('')
@@ -1187,7 +1208,7 @@ export default function PurchasingPage() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-[760px] w-full text-sm">
+            <table className="min-w-[980px] w-full text-sm">
               <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
                 <tr>
                   <th className="px-4 py-3 text-left">Proveedor</th>
@@ -1196,11 +1217,14 @@ export default function PurchasingPage() {
                   <th className="px-4 py-3 text-left">Credito</th>
                   <th className="px-4 py-3 text-left">Partidas</th>
                   <th className="px-4 py-3 text-left">Estado</th>
+                  <th className="px-4 py-3 text-right">Correccion</th>
                 </tr>
               </thead>
               <tbody>
                 {comparison.map((row) => {
                   const isComplete = row.complete_items === row.total_items && row.total_items > 0
+                  const canCorrectQuote =
+                    row.status === 'received' && !['approval_pending', 'awarded'].includes(selectedRfq?.status ?? '')
                   return (
                     <tr key={row.supplier_quote_id} className="border-t border-acsm-line">
                       <td className="px-4 py-3 font-semibold">{row.supplier_name}</td>
@@ -1222,12 +1246,24 @@ export default function PurchasingPage() {
                           {isComplete ? statusLabel(row.status) : 'Incompleta'}
                         </span>
                       </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => void deleteSupplierQuoteForRecapture(row)}
+                          disabled={!canCorrectQuote}
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                          title="Borrar esta captura para volver a registrar la cotizacion"
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                          Volver a registrar
+                        </button>
+                      </td>
                     </tr>
                   )
                 })}
                 {!comparison.length && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-6 text-center text-acsm-muted">
+                    <td colSpan={7} className="px-4 py-6 text-center text-acsm-muted">
                       Sin cotizaciones recibidas.
                     </td>
                   </tr>
