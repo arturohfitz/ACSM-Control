@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  AlertTriangle,
   Check,
   ClipboardCheck,
   Plus,
@@ -295,6 +296,8 @@ export default function PurchasingPage() {
   const [deliveryDays, setDeliveryDays] = useState('')
   const [paymentTermsDays, setPaymentTermsDays] = useState('30')
   const [quoteRows, setQuoteRows] = useState<QuoteDraftItem[]>([])
+  const [exceptionOpen, setExceptionOpen] = useState(false)
+  const [exceptionNotes, setExceptionNotes] = useState('')
   const quoteCaptureRef = useRef<HTMLElement | null>(null)
 
   const selectedRfq = useMemo(
@@ -368,6 +371,25 @@ export default function PurchasingPage() {
     () => orders.filter((order) => order.status === 'issued'),
     [orders],
   )
+  const completeComparison = useMemo(
+    () =>
+      comparison.filter(
+        (row) =>
+          row.complete_items === row.total_items &&
+          row.total_items > 0 &&
+          ['received', 'rejected', 'approval_requested'].includes(row.status),
+      ),
+    [comparison],
+  )
+  const canRequestApproval =
+    Boolean(selectedRfq) &&
+    completeComparison.length >= 3 &&
+    !['approval_pending', 'awarded'].includes(selectedRfq?.status ?? '')
+  const canRequestException =
+    Boolean(selectedRfq) &&
+    completeComparison.length > 0 &&
+    completeComparison.length < 3 &&
+    !['approval_pending', 'awarded'].includes(selectedRfq?.status ?? '')
 
   async function loadData(nextSelectedRfqId = selectedRfq?.id) {
     setLoading(true)
@@ -573,22 +595,32 @@ export default function PurchasingPage() {
     }
   }
 
-  async function requestQuoteApproval(quoteId: number) {
+  async function requestRfqApproval(isException = false) {
+    if (!selectedRfq) return
     setError('')
     setMessage('')
     try {
       await apiRequest(
-        `/purchasing/supplier-quotes/${quoteId}/request-approval`,
+        `/purchasing/supplier-rfqs/${selectedRfq.id}/request-approval`,
         {
           method: 'POST',
-          body: JSON.stringify({ request_notes: null }),
+          body: JSON.stringify({
+            is_exception: isException,
+            request_notes: isException ? exceptionNotes.trim() : null,
+          }),
         },
       )
-      setMessage('Cotizacion enviada a aprobacion gerencial.')
+      setMessage(
+        isException
+          ? 'Solicitud de aprobacion por excepcion enviada.'
+          : 'Solicitud de aprobacion enviada.',
+      )
+      setExceptionOpen(false)
+      setExceptionNotes('')
       await loadData(selectedRfq?.id)
       if (selectedRfq?.id) await loadRfqDetails(selectedRfq.id)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible solicitar aprobacion')
+      setError(err instanceof Error ? err.message : 'No fue posible enviar la solicitud de aprobacion')
     }
   }
 
@@ -1123,9 +1155,36 @@ export default function PurchasingPage() {
         )}
 
         <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
-          <div className="border-b border-acsm-line px-5 py-4">
-            <h2 className="font-bold text-acsm-ink">Comparativo</h2>
-            <p className="text-sm text-acsm-muted">Costo, entrega y credito para decidir proveedor.</p>
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line px-5 py-4">
+            <div>
+              <h2 className="font-bold text-acsm-ink">Comparativo</h2>
+              <p className="text-sm text-acsm-muted">
+                Costo, entrega y credito para mandar el paquete completo a aprobacion.
+              </p>
+              <p className="mt-1 text-xs font-semibold text-acsm-muted">
+                {completeComparison.length} cotizaciones completas de 3 requeridas
+              </p>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => void requestRfqApproval(false)}
+                disabled={!canRequestApproval}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover disabled:opacity-60"
+              >
+                <Check className="h-4 w-4" aria-hidden="true" />
+                Solicitar aprobacion
+              </button>
+              <button
+                type="button"
+                onClick={() => setExceptionOpen(true)}
+                disabled={!canRequestException}
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+              >
+                <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+                Solicitar excepcion
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-[760px] w-full text-sm">
@@ -1136,35 +1195,36 @@ export default function PurchasingPage() {
                   <th className="px-4 py-3 text-left">Entrega</th>
                   <th className="px-4 py-3 text-left">Credito</th>
                   <th className="px-4 py-3 text-left">Partidas</th>
-                  <th className="px-4 py-3 text-right">Accion</th>
+                  <th className="px-4 py-3 text-left">Estado</th>
                 </tr>
               </thead>
               <tbody>
-                {comparison.map((row) => (
-                  <tr key={row.supplier_quote_id} className="border-t border-acsm-line">
-                    <td className="px-4 py-3 font-semibold">{row.supplier_name}</td>
-                    <td className="px-4 py-3">{formatMoney(row.subtotal)}</td>
-                    <td className="px-4 py-3">{row.delivery_days ?? '-'} dias</td>
-                    <td className="px-4 py-3">{row.payment_terms_days} dias</td>
-                    <td className="px-4 py-3">
-                      {row.complete_items}/{row.total_items}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => void requestQuoteApproval(row.supplier_quote_id)}
-                        disabled={
-                          ['approved', 'discarded', 'approval_requested'].includes(row.status) ||
-                          ['awarded', 'approval_pending'].includes(selectedRfq?.status ?? '')
-                        }
-                        className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper disabled:opacity-60"
-                      >
-                        <Check className="h-4 w-4" aria-hidden="true" />
-                        Solicitar aprobacion
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {comparison.map((row) => {
+                  const isComplete = row.complete_items === row.total_items && row.total_items > 0
+                  return (
+                    <tr key={row.supplier_quote_id} className="border-t border-acsm-line">
+                      <td className="px-4 py-3 font-semibold">{row.supplier_name}</td>
+                      <td className="px-4 py-3">{formatMoney(row.subtotal)}</td>
+                      <td className="px-4 py-3">{row.delivery_days ?? '-'} dias</td>
+                      <td className="px-4 py-3">{row.payment_terms_days} dias</td>
+                      <td className="px-4 py-3">
+                        {row.complete_items}/{row.total_items}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={[
+                            'inline-flex rounded-full border px-3 py-1 text-xs font-bold',
+                            isComplete
+                              ? 'border-blue-200 bg-blue-50 text-blue-700'
+                              : 'border-amber-200 bg-amber-50 text-amber-800',
+                          ].join(' ')}
+                        >
+                          {isComplete ? statusLabel(row.status) : 'Incompleta'}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
                 {!comparison.length && (
                   <tr>
                     <td colSpan={6} className="px-4 py-6 text-center text-acsm-muted">
@@ -1247,6 +1307,73 @@ export default function PurchasingPage() {
           </table>
         </div>
       </section>
+
+      {exceptionOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setExceptionOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl overflow-hidden rounded-[24px] border border-white/20 bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-acsm-line bg-gradient-to-r from-white to-amber-50 px-6 py-5">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-amber-700">
+                  Excepcion de compras
+                </p>
+                <h2 className="text-xl font-bold text-acsm-ink">Solicitar aprobacion con menos de 3 cotizaciones</h2>
+                <p className="mt-1 text-sm text-acsm-muted">
+                  Explica por que se pide revisar el comparativo incompleto. Gerencia vera esta nota en Aprobaciones.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExceptionOpen(false)}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-acsm-line bg-white text-acsm-ink hover:bg-acsm-paper"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="space-y-4 p-6">
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                Cotizaciones completas disponibles: {completeComparison.length}. El minimo normal es 3.
+              </div>
+              <label className="block text-sm font-bold text-acsm-ink">
+                Motivo de excepcion
+                <textarea
+                  value={exceptionNotes}
+                  onChange={(event) => setExceptionNotes(event.target.value)}
+                  rows={5}
+                  className="mt-2 w-full rounded-xl border border-acsm-line px-3 py-2 text-sm"
+                  placeholder="Ej. Un proveedor no respondio, material urgente para obra, precio vigente por pocas horas..."
+                />
+              </label>
+              <div className="flex flex-wrap justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setExceptionOpen(false)}
+                  className="inline-flex h-10 items-center rounded-xl border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-ink hover:bg-acsm-paper"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void requestRfqApproval(true)}
+                  disabled={!exceptionNotes.trim()}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover disabled:opacity-60"
+                >
+                  <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+                  Enviar excepcion a aprobacion
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {detailRfq ? (
         <div

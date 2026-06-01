@@ -222,6 +222,11 @@ class SupplierQuoteApprovalRequest(BaseModel):
     request_notes: str | None = None
 
 
+class SupplierRFQApprovalRequest(BaseModel):
+    is_exception: bool = False
+    request_notes: str | None = None
+
+
 class SupplierQuoteApprovalDecision(BaseModel):
     decision_notes: str | None = None
 

@@ -108,6 +108,17 @@ function statusLabel(status: string) {
   return labels[status] ?? status
 }
 
+function approvalRequestContext(notes?: string | null) {
+  const value = notes?.trim() ?? ''
+  if (!value.startsWith('EXCEPCION:')) {
+    return { isException: false, notes: value }
+  }
+  return {
+    isException: true,
+    notes: value.replace(/^EXCEPCION:\s*/i, '').trim(),
+  }
+}
+
 export default function PurchasingApprovalsPage() {
   const [approvals, setApprovals] = useState<SupplierQuoteApproval[]>([])
   const [selectedApprovalId, setSelectedApprovalId] = useState<number | null>(null)
@@ -130,6 +141,10 @@ export default function PurchasingApprovalsPage() {
       selectedApproval?.supplier_quote ??
       null,
     [quotes, selectedApproval, selectedQuoteId],
+  )
+  const selectedContext = useMemo(
+    () => approvalRequestContext(selectedApproval?.request_notes),
+    [selectedApproval?.request_notes],
   )
 
   async function loadApprovals(nextSelectedId = selectedApprovalId) {
@@ -257,31 +272,40 @@ export default function PurchasingApprovalsPage() {
               {loading ? <span className="text-xs text-acsm-muted">Cargando...</span> : null}
             </div>
             <div className="max-h-[520px] overflow-y-auto">
-              {approvals.map((approval) => (
-                <button
-                  key={approval.id}
-                  type="button"
-                  onClick={() => setSelectedApprovalId(approval.id)}
-                  className={[
-                    'block w-full border-l-4 border-b border-acsm-line px-4 py-4 text-left transition',
-                    selectedApproval?.id === approval.id
-                      ? 'border-blue-600 bg-white shadow-[inset_0_0_0_1px_rgba(47,120,189,0.18)]'
-                      : 'border-transparent hover:bg-white',
-                  ].join(' ')}
-                >
-                  <span className="block text-sm font-bold text-acsm-ink">{approval.rfq.title}</span>
-                  <span className="mt-1 block text-xs font-semibold text-blue-800">
-                    {approval.rfq.rfq_number}
-                  </span>
-                  <span className="mt-3 block text-sm font-semibold text-acsm-ink">
-                    {approval.supplier_quote.supplier?.name ?? `Proveedor ${approval.supplier_quote.supplier_id}`}
-                  </span>
-                  <span className="text-xs text-acsm-muted">
-                    {formatMoney(approval.supplier_quote.subtotal)} · solicitada por{' '}
-                    {approval.requester?.full_name ?? 'Sin usuario'}
-                  </span>
-                </button>
-              ))}
+              {approvals.map((approval) => {
+                const context = approvalRequestContext(approval.request_notes)
+                return (
+                  <button
+                    key={approval.id}
+                    type="button"
+                    onClick={() => setSelectedApprovalId(approval.id)}
+                    className={[
+                      'block w-full border-l-4 border-b border-acsm-line px-4 py-4 text-left transition',
+                      selectedApproval?.id === approval.id
+                        ? 'border-blue-600 bg-white shadow-[inset_0_0_0_1px_rgba(47,120,189,0.18)]'
+                        : 'border-transparent hover:bg-white',
+                    ].join(' ')}
+                  >
+                    <span className="block text-sm font-bold text-acsm-ink">{approval.rfq.title}</span>
+                    <span className="mt-1 block text-xs font-semibold text-blue-800">
+                      {approval.rfq.rfq_number}
+                    </span>
+                    <span className="mt-3 block text-sm font-semibold text-acsm-ink">
+                      Comparativo de proveedores
+                    </span>
+                    <span className="text-xs text-acsm-muted">
+                      Referencia:{' '}
+                      {approval.supplier_quote.supplier?.name ?? `Proveedor ${approval.supplier_quote.supplier_id}`} ·{' '}
+                      solicitada por {approval.requester?.full_name ?? 'Sin usuario'}
+                    </span>
+                    {context.isException ? (
+                      <span className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                        Excepcion
+                      </span>
+                    ) : null}
+                  </button>
+                )
+              })}
               {!approvals.length ? (
                 <div className="px-4 py-12 text-center text-sm text-acsm-muted">
                   No hay cotizaciones pendientes de aprobacion.
@@ -303,6 +327,11 @@ export default function PurchasingApprovalsPage() {
                       {selectedApproval.rfq.rfq_number} · solicitada el{' '}
                       {formatDateTime(selectedApproval.requested_at)}
                     </p>
+                    {selectedContext.isException ? (
+                      <span className="mt-3 inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
+                        Aprobacion por excepcion
+                      </span>
+                    ) : null}
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <div className="rounded-xl border border-acsm-line bg-white p-3">
@@ -331,6 +360,15 @@ export default function PurchasingApprovalsPage() {
                     </div>
                   </div>
                 </div>
+
+                {selectedContext.isException ? (
+                  <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <h4 className="font-bold text-amber-950">Motivo de excepcion capturado por compras</h4>
+                    <p className="mt-2 whitespace-pre-wrap text-sm font-semibold text-amber-900">
+                      {selectedContext.notes}
+                    </p>
+                  </section>
+                ) : null}
 
                 <section className="overflow-hidden rounded-xl border border-acsm-line">
                   <div className="border-b border-acsm-line bg-acsm-paper px-4 py-3">

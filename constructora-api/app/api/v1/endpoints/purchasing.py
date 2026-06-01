@@ -42,6 +42,7 @@ from app.schemas.purchasing import (
     SupplierQuoteApprovalRead,
     SupplierQuoteApprovalRequest,
     SupplierQuoteRead,
+    SupplierRFQApprovalRequest,
     SupplierRFQComparisonRow,
     SupplierRFQCreate,
     SupplierRFQRead,
@@ -551,6 +552,127 @@ def supplier_rfq_comparison(
         )
         for quote in quotes
     ]
+
+
+@router.post(
+    "/supplier-rfqs/{rfq_id}/request-approval",
+    response_model=SupplierQuoteApprovalRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_supplier_rfq_approval(
+    rfq_id: int,
+    payload: SupplierRFQApprovalRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "request_approval")),
+) -> SupplierQuoteApproval:
+    rfq = db.scalar(
+        select(SupplierRFQ)
+        .where(SupplierRFQ.id == rfq_id)
+        .options(
+            selectinload(SupplierRFQ.items),
+            selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.supplier),
+            selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.items),
+            selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.purchase_order),
+            selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.approval),
+        )
+    )
+    if rfq is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    ensure_same_company(current_user, rfq)
+    if rfq.status == "awarded":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La solicitud ya tiene una cotizacion aprobada",
+        )
+    pending = db.scalar(
+        select(SupplierQuoteApproval)
+        .where(
+            SupplierQuoteApproval.rfq_id == rfq.id,
+            SupplierQuoteApproval.status == "requested",
+        )
+        .options(*_approval_options())
+    )
+    if pending is not None:
+        return pending
+
+    total_items = len(rfq.items)
+    complete_quotes = sorted(
+        [
+            quote
+            for quote in rfq.quotes
+            if quote.purchase_order is None
+            and quote.status in {"received", "rejected", "approval_requested"}
+            and len(quote.items) == total_items
+        ],
+        key=lambda quote: quote.subtotal,
+    )
+    if payload.is_exception:
+        if not complete_quotes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Para solicitar excepcion se requiere al menos una cotizacion completa",
+            )
+        if not payload.request_notes or not payload.request_notes.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Captura el motivo de la excepcion",
+            )
+    elif len(complete_quotes) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Se requieren 3 cotizaciones completas o solicitar una excepcion",
+        )
+
+    reference_quote = complete_quotes[0]
+    requested_at = _now()
+    request_notes = payload.request_notes.strip() if payload.request_notes else None
+    if payload.is_exception:
+        request_notes = f"EXCEPCION:\n{request_notes}"
+
+    approval = reference_quote.approval
+    if approval is None:
+        approval = SupplierQuoteApproval(
+            company_id=reference_quote.company_id,
+            rfq_id=rfq.id,
+            supplier_quote_id=reference_quote.id,
+            status="requested",
+            request_notes=request_notes,
+            requested_by=current_user.id,
+            requested_at=requested_at,
+        )
+        db.add(approval)
+    else:
+        approval.status = "requested"
+        approval.request_notes = request_notes
+        approval.decision_notes = None
+        approval.requested_by = current_user.id
+        approval.requested_at = requested_at
+        approval.decided_by = None
+        approval.decided_at = None
+    reference_quote.status = "approval_requested"
+    rfq.status = "approval_pending"
+    record_event(
+        db,
+        current_user,
+        module="compras",
+        action="request_approval_exception" if payload.is_exception else "request_approval",
+        entity_type="SupplierRFQ",
+        entity_id=rfq.id,
+        company_id=rfq.company_id,
+        label=rfq.rfq_number,
+        description=(
+            f"{current_user.full_name} solicito aprobacion del comparativo "
+            f"{rfq.rfq_number}"
+        ),
+        metadata={
+            "quotes": len(complete_quotes),
+            "is_exception": payload.is_exception,
+            "reference_quote_id": reference_quote.id,
+        },
+    )
+    db.commit()
+    db.refresh(approval)
+    return _get_supplier_quote_approval(db, approval.id, current_user)
 
 
 def _supplier_quote_for_approval(db: Session, quote_id: int, current_user: User) -> SupplierQuote:
