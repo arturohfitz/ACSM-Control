@@ -88,6 +88,25 @@ type ComparisonRow = {
   total_items: number
 }
 
+type PurchaseOrder = {
+  id: number
+  supplier_id: number
+  po_number: string
+  status: string
+  issued_at: string
+  expected_delivery_date?: string | null
+  subtotal: string
+  supplier?: Supplier | null
+  items: {
+    id: number
+    description: string
+    quantity_ordered: string
+    received_quantity: string
+    unit: string
+    status: string
+  }[]
+}
+
 type RFQDraftItem = {
   material_id: string
   material_search: string
@@ -118,6 +137,15 @@ function formatDateTime(value?: string | null) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value))
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return '-'
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number)
+  if (!year || !month || !day) return value
+  return new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(
+    new Date(year, month - 1, day),
+  )
 }
 
 function escapeHtml(value: unknown) {
@@ -242,6 +270,7 @@ export default function PurchasingPage() {
   const [rfqs, setRfqs] = useState<SupplierRFQ[]>([])
   const [quotes, setQuotes] = useState<SupplierQuote[]>([])
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
+  const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [selectedRfqId, setSelectedRfqId] = useState<number | null>(null)
   const [detailRfqId, setDetailRfqId] = useState<number | null>(null)
   const [message, setMessage] = useState('')
@@ -335,21 +364,27 @@ export default function PurchasingPage() {
       return true
     })
   }, [rfqBuyerFilter, rfqDateFrom, rfqDateTo, rfqSearch, rfqSupplierFilter, rfqs])
+  const readyOrders = useMemo(
+    () => orders.filter((order) => order.status === 'issued'),
+    [orders],
+  )
 
   async function loadData(nextSelectedRfqId = selectedRfq?.id) {
     setLoading(true)
     setError('')
     try {
-      const [projectData, materialData, supplierData, rfqData] = await Promise.all([
+      const [projectData, materialData, supplierData, rfqData, orderData] = await Promise.all([
         apiRequest<Project[]>('/projects'),
         apiRequest<Material[]>('/materials'),
         apiRequest<Supplier[]>('/purchasing/suppliers'),
         apiRequest<SupplierRFQ[]>('/purchasing/supplier-rfqs'),
+        apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders?limit=250'),
       ])
       setProjects(projectData)
       setMaterials(materialData)
       setSuppliers(supplierData)
       setRfqs(rfqData)
+      setOrders(orderData)
       if (!projectId && projectData[0]) setProjectId(String(projectData[0].id))
       const nextId = nextSelectedRfqId ?? rfqData[0]?.id ?? null
       setSelectedRfqId(nextId)
@@ -554,6 +589,20 @@ export default function PurchasingPage() {
       if (selectedRfq?.id) await loadRfqDetails(selectedRfq.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible solicitar aprobacion')
+    }
+  }
+
+  async function sendOrder(orderId: number) {
+    setError('')
+    setMessage('')
+    try {
+      const updated = await apiRequest<PurchaseOrder>(`/purchasing/purchase-orders/${orderId}/send`, {
+        method: 'POST',
+      })
+      setMessage(`Orden ${updated.po_number} enviada al proveedor. Ya puedes consultarla en Ordenes de compra.`)
+      await loadData(selectedRfq?.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible enviar la orden de compra')
     }
   }
 
@@ -1127,6 +1176,76 @@ export default function PurchasingPage() {
             </table>
           </div>
         </section>
+      </section>
+
+      <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-gradient-to-r from-white to-sky-50 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-acsm-line bg-acsm-paper text-acsm-green">
+              <Send className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-acsm-muted">
+                Siguiente paso
+              </p>
+              <h2 className="font-bold text-acsm-ink">Ordenes aprobadas listas para enviar</h2>
+              <p className="text-sm text-acsm-muted">
+                Son cotizaciones aprobadas por gerencia; compras solo confirma el envio de la OC al proveedor.
+              </p>
+            </div>
+          </div>
+          <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+            {readyOrders.length} pendientes
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-[860px] w-full text-sm">
+            <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
+              <tr>
+                <th className="px-4 py-3 text-left">Orden</th>
+                <th className="px-4 py-3 text-left">Proveedor autorizado</th>
+                <th className="px-4 py-3 text-left">Emitida</th>
+                <th className="px-4 py-3 text-left">Subtotal</th>
+                <th className="px-4 py-3 text-left">Partidas</th>
+                <th className="px-4 py-3 text-right">Accion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {readyOrders.map((order) => (
+                <tr key={order.id} className="border-t border-acsm-line bg-white hover:bg-sky-50/70">
+                  <td className="px-4 py-4 align-top font-bold text-acsm-ink">{order.po_number}</td>
+                  <td className="px-4 py-4 align-top">
+                    <div className="font-bold text-acsm-ink">
+                      {order.supplier?.name ?? `Proveedor ${order.supplier_id}`}
+                    </div>
+                    <div className="text-xs text-acsm-muted">{order.supplier?.payment_terms_days ?? 0} dias credito</div>
+                  </td>
+                  <td className="px-4 py-4 align-top font-semibold">{formatDate(order.issued_at)}</td>
+                  <td className="px-4 py-4 align-top font-semibold">{formatMoney(order.subtotal)}</td>
+                  <td className="px-4 py-4 align-top">{order.items.length}</td>
+                  <td className="px-4 py-4 text-right align-top">
+                    <button
+                      type="button"
+                      onClick={() => void sendOrder(order.id)}
+                      className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover"
+                    >
+                      <Send className="h-4 w-4" aria-hidden="true" />
+                      Enviar OC al proveedor
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!readyOrders.length && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-acsm-muted">
+                    No hay ordenes aprobadas pendientes de envio. Cuando gerencia apruebe una cotizacion,
+                    aparecera aqui para cerrar el flujo de compra.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {detailRfq ? (
