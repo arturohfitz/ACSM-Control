@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
   ClipboardCheck,
-  FileText,
   Plus,
   Printer,
   RefreshCw,
@@ -87,25 +86,6 @@ type ComparisonRow = {
   status: string
   complete_items: number
   total_items: number
-}
-
-type PurchaseOrder = {
-  id: number
-  supplier_id: number
-  po_number: string
-  status: string
-  issued_at: string
-  expected_delivery_date?: string | null
-  subtotal: string
-  supplier?: Supplier | null
-  items: {
-    id: number
-    description: string
-    quantity_ordered: string
-    received_quantity: string
-    unit: string
-    status: string
-  }[]
 }
 
 type RFQDraftItem = {
@@ -262,7 +242,6 @@ export default function PurchasingPage() {
   const [rfqs, setRfqs] = useState<SupplierRFQ[]>([])
   const [quotes, setQuotes] = useState<SupplierQuote[]>([])
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
-  const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [selectedRfqId, setSelectedRfqId] = useState<number | null>(null)
   const [detailRfqId, setDetailRfqId] = useState<number | null>(null)
   const [message, setMessage] = useState('')
@@ -361,18 +340,16 @@ export default function PurchasingPage() {
     setLoading(true)
     setError('')
     try {
-      const [projectData, materialData, supplierData, rfqData, orderData] = await Promise.all([
+      const [projectData, materialData, supplierData, rfqData] = await Promise.all([
         apiRequest<Project[]>('/projects'),
         apiRequest<Material[]>('/materials'),
         apiRequest<Supplier[]>('/purchasing/suppliers'),
         apiRequest<SupplierRFQ[]>('/purchasing/supplier-rfqs'),
-        apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders'),
       ])
       setProjects(projectData)
       setMaterials(materialData)
       setSuppliers(supplierData)
       setRfqs(rfqData)
-      setOrders(orderData)
       if (!projectId && projectData[0]) setProjectId(String(projectData[0].id))
       const nextId = nextSelectedRfqId ?? rfqData[0]?.id ?? null
       setSelectedRfqId(nextId)
@@ -577,20 +554,6 @@ export default function PurchasingPage() {
       if (selectedRfq?.id) await loadRfqDetails(selectedRfq.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible solicitar aprobacion')
-    }
-  }
-
-  async function sendOrder(orderId: number) {
-    setError('')
-    setMessage('')
-    try {
-      const updated = await apiRequest<PurchaseOrder>(`/purchasing/purchase-orders/${orderId}/send`, {
-        method: 'POST',
-      })
-      setMessage(`Orden ${updated.po_number} marcada como enviada al proveedor.`)
-      await loadData(selectedRfq?.id)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible enviar la orden')
     }
   }
 
@@ -1164,65 +1127,6 @@ export default function PurchasingPage() {
             </table>
           </div>
         </section>
-      </section>
-
-      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
-        <div className="flex items-center gap-3 border-b border-acsm-line px-4 py-3">
-          <FileText className="h-4 w-4 text-acsm-green" aria-hidden="true" />
-          <div>
-            <h2 className="font-semibold text-acsm-ink">Ordenes de compra</h2>
-            <p className="text-xs text-acsm-muted">Las ordenes aprobadas generan lista esperada en inventario.</p>
-          </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-[920px] w-full text-sm">
-            <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
-              <tr>
-                <th className="px-4 py-3 text-left">Orden</th>
-                <th className="px-4 py-3 text-left">Proveedor</th>
-                <th className="px-4 py-3 text-left">Estado</th>
-                <th className="px-4 py-3 text-left">Subtotal</th>
-                <th className="px-4 py-3 text-left">Avance recepcion</th>
-                <th className="px-4 py-3 text-right">Accion</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order) => {
-                const received = order.items.reduce((sum, item) => sum + Number(item.received_quantity), 0)
-                const total = order.items.reduce((sum, item) => sum + Number(item.quantity_ordered), 0)
-                return (
-                  <tr key={order.id} className="border-t border-acsm-line">
-                    <td className="px-4 py-3 font-semibold">{order.po_number}</td>
-                    <td className="px-4 py-3">{order.supplier?.name ?? order.supplier_id}</td>
-                    <td className="px-4 py-3">{statusLabel(order.status)}</td>
-                    <td className="px-4 py-3">{formatMoney(order.subtotal)}</td>
-                    <td className="px-4 py-3">
-                      {received.toLocaleString('es-MX')} / {total.toLocaleString('es-MX')}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => void sendOrder(order.id)}
-                        disabled={order.status !== 'issued'}
-                        className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper disabled:opacity-60"
-                      >
-                        <Send className="h-4 w-4" aria-hidden="true" />
-                        Enviar OC
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-              {!orders.length && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-acsm-muted">
-                    Aun no hay ordenes de compra.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
       </section>
 
       {detailRfq ? (

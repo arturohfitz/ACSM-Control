@@ -71,6 +71,12 @@ const purchasingSubItems = [
     icon: ClipboardList,
     permission: 'supplier_quotes:approve',
   },
+  {
+    to: '/purchasing/orders',
+    label: 'Ordenes de compra',
+    icon: ReceiptText,
+    permission: 'purchase_orders:view',
+  },
 ]
 
 const inventorySubItems = [
@@ -132,6 +138,7 @@ const titles: Record<string, string> = {
   '/quotes': 'Cotizaciones',
   '/purchasing': 'Compras',
   '/purchasing/approvals': 'Aprobaciones de compras',
+  '/purchasing/orders': 'Ordenes de compra',
   '/inventory': 'Inventario',
   '/inventory/purchase-order-receiving': 'Recepcion por orden de compra',
   '/inventory/external-receiving': 'Recepcion sin orden de compra',

@@ -21,6 +21,7 @@ import {
 import InventoryPage from './pages/InventoryPage'
 import LoginPage from './pages/LoginPage'
 import PurchasingApprovalsPage from './pages/PurchasingApprovalsPage'
+import PurchasingOrdersPage from './pages/PurchasingOrdersPage'
 import PurchasingPage from './pages/PurchasingPage'
 import SettingsPage from './pages/SettingsPage'
 import SupplierPaymentsPage from './pages/SupplierPaymentsPage'
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/quotes" element={<QuotesPage />} />
           <Route path="/purchasing" element={<PurchasingPage />} />
           <Route path="/purchasing/approvals" element={<PurchasingApprovalsPage />} />
+          <Route path="/purchasing/orders" element={<PurchasingOrdersPage />} />
           <Route path="/inventory" element={<Navigate to="/inventory/purchase-order-receiving" replace />} />
           <Route
             path="/inventory/purchase-order-receiving"
