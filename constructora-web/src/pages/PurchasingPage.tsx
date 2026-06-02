@@ -1084,44 +1084,56 @@ export default function PurchasingPage() {
             </div>
             <div className="space-y-3 p-5">
               <div className="grid gap-3 md:grid-cols-4">
-                <select
-                  value={quoteSupplierId}
-                  onChange={(event) => {
-                    setQuoteSupplierId(event.target.value)
-                    setQuoteNumber('')
-                    setDeliveryDays('')
-                    setQuoteRows(emptyQuoteRowsFor(selectedRfq))
-                  }}
-                  className="h-10 rounded-md border border-acsm-line px-3 text-sm"
-                >
-                  <option value="">Proveedor</option>
-                  {selectedRfq.supplier_links.map((link) => (
-                    <option key={link.supplier_id} value={link.supplier_id}>
-                      {link.supplier?.name ?? link.supplier_id}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  value={quoteNumber}
-                  onChange={(event) => setQuoteNumber(event.target.value)}
-                  placeholder="Folio cotizacion *"
-                  required
-                  className="h-10 rounded-md border border-acsm-line px-3 text-sm"
-                />
-                <input
-                  type="number"
-                  value={deliveryDays}
-                  onChange={(event) => setDeliveryDays(event.target.value)}
-                  placeholder="Dias entrega"
-                  className="h-10 rounded-md border border-acsm-line px-3 text-sm"
-                />
-                <input
-                  type="number"
-                  value={paymentTermsDays}
-                  onChange={(event) => setPaymentTermsDays(event.target.value)}
-                  placeholder="Dias credito"
-                  className="h-10 rounded-md border border-acsm-line px-3 text-sm"
-                />
+                <label className="text-xs font-bold uppercase text-acsm-muted">
+                  Proveedor cotizante
+                  <select
+                    value={quoteSupplierId}
+                    onChange={(event) => {
+                      setQuoteSupplierId(event.target.value)
+                      setQuoteNumber('')
+                      setDeliveryDays('')
+                      setQuoteRows(emptyQuoteRowsFor(selectedRfq))
+                    }}
+                    className="mt-1 h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold normal-case text-acsm-ink"
+                  >
+                    <option value="">Seleccionar proveedor</option>
+                    {selectedRfq.supplier_links.map((link) => (
+                      <option key={link.supplier_id} value={link.supplier_id}>
+                        {link.supplier?.name ?? link.supplier_id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs font-bold uppercase text-acsm-muted">
+                  Folio de cotizacion
+                  <input
+                    value={quoteNumber}
+                    onChange={(event) => setQuoteNumber(event.target.value)}
+                    placeholder="Ej. COT-1234 *"
+                    required
+                    className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm font-semibold normal-case text-acsm-ink"
+                  />
+                </label>
+                <label className="text-xs font-bold uppercase text-acsm-muted">
+                  Dias de entrega general
+                  <input
+                    type="number"
+                    value={deliveryDays}
+                    onChange={(event) => setDeliveryDays(event.target.value)}
+                    placeholder="Ej. 5 dias"
+                    className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm font-semibold normal-case text-acsm-ink"
+                  />
+                </label>
+                <label className="text-xs font-bold uppercase text-acsm-muted">
+                  Dias de credito / pago
+                  <input
+                    type="number"
+                    value={paymentTermsDays}
+                    onChange={(event) => setPaymentTermsDays(event.target.value)}
+                    placeholder="Ej. 30 dias"
+                    className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm font-semibold normal-case text-acsm-ink"
+                  />
+                </label>
               </div>
 
               <div className="overflow-x-auto rounded-md border border-acsm-line">
