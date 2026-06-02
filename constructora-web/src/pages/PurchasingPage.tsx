@@ -744,8 +744,8 @@ export default function PurchasingPage() {
               </label>
             </div>
 
-            <div className="rounded-md border border-acsm-line">
-              <div className="flex items-center justify-between border-b border-acsm-line bg-acsm-paper px-3 py-2">
+            <div className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-sm">
+              <div className="flex items-center justify-between gap-3 border-b border-acsm-line bg-acsm-paper px-3 py-2">
                 <div>
                   <h3 className="text-sm font-semibold text-acsm-ink">Materiales a cotizar</h3>
                   <p className="text-xs text-acsm-muted">Puedes capturar libre o partir del catalogo.</p>
@@ -759,7 +759,7 @@ export default function PurchasingPage() {
                   Renglon
                 </button>
               </div>
-              <div className="overflow-x-auto">
+              <div className="p-2">
                 <datalist id="material-catalog-options">
                   {sortedMaterials.map((material) => (
                     <option key={material.id} value={material.name}>
@@ -767,7 +767,15 @@ export default function PurchasingPage() {
                     </option>
                   ))}
                 </datalist>
-                <table className="min-w-[980px] w-full border-collapse text-sm">
+                <table className="w-full table-fixed overflow-hidden rounded-md border border-acsm-line text-sm">
+                  <colgroup>
+                    <col className="w-[19%]" />
+                    <col className="w-[21%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[19%]" />
+                    <col className="w-[21%]" />
+                    <col className="w-[5%]" />
+                  </colgroup>
                   <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
                     <tr>
                       <th className="px-2 py-2 text-left">Catalogo</th>
@@ -787,21 +795,21 @@ export default function PurchasingPage() {
                             value={item.material_search}
                             onChange={(event) => updateMaterialSearch(index, event.target.value)}
                             placeholder="Buscar material..."
-                            className="h-9 w-full rounded-md border border-acsm-line px-2"
+                            className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2"
                           />
                         </td>
                         <td className="px-2 py-2">
                           <input
                             value={item.description}
                             onChange={(event) => updateItem(index, { description: event.target.value })}
-                            className="h-9 w-full rounded-md border border-acsm-line px-2"
+                            className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2"
                           />
                         </td>
                         <td className="px-2 py-2">
                           <input
                             value={item.unit}
                             onChange={(event) => updateItem(index, { unit: event.target.value })}
-                            className="h-9 w-full rounded-md border border-acsm-line px-2"
+                            className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2"
                           />
                         </td>
                         <td className="px-2 py-2">
@@ -810,14 +818,14 @@ export default function PurchasingPage() {
                             step="0.0001"
                             value={item.quantity}
                             onChange={(event) => updateItem(index, { quantity: event.target.value })}
-                            className="h-9 w-full rounded-md border border-acsm-line px-2"
+                            className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2"
                           />
                         </td>
                         <td className="px-2 py-2">
                           <input
                             value={item.notes}
                             onChange={(event) => updateItem(index, { notes: event.target.value })}
-                            className="h-9 w-full rounded-md border border-acsm-line px-2"
+                            className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2"
                           />
                         </td>
                         <td className="px-2 py-2 text-right">
