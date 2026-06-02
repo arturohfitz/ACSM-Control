@@ -19,6 +19,7 @@ htmlcov/
 constructora-web/src/config/buildInfo.ts
 
 constructora-api/storage/
+backups/
 constructora-web/*.traineddata
 
 *.log
