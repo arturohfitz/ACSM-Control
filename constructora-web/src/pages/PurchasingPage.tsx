@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Check,
   ClipboardCheck,
+  Eye,
   Plus,
   Printer,
   RefreshCw,
@@ -971,72 +972,84 @@ export default function PurchasingPage() {
                 return (
                   <div
                     key={rfq.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectRfqForQuote(rfq.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        selectRfqForQuote(rfq.id)
-                      }
-                    }}
                     className={[
-                      'grid w-full cursor-pointer grid-cols-1 gap-3 border-l-4 px-4 py-4 text-left transition md:grid-cols-[minmax(220px,1.3fr)_170px_190px] lg:px-5 xl:grid-cols-[minmax(220px,1.3fr)_170px_190px_minmax(260px,1.4fr)_120px]',
+                      'grid w-full grid-cols-1 overflow-hidden border-l-4 text-left transition lg:grid-cols-[minmax(260px,0.9fr)_minmax(420px,1.7fr)_220px]',
                       selectedRfq?.id === rfq.id
                         ? 'border-blue-600 bg-blue-50 shadow-[inset_0_0_0_1px_rgba(47,120,189,0.18)]'
-                        : 'border-transparent bg-white hover:border-blue-300 hover:bg-slate-50',
+                        : 'border-transparent bg-white hover:border-blue-200 hover:bg-slate-50/70',
                     ].join(' ')}
-                    title="Seleccionar esta solicitud para capturar la cotizacion recibida"
                   >
-                    <div className="min-w-0 overflow-visible">
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          setDetailRfqId(rfq.id)
-                        }}
-                        className="block w-full max-w-full !overflow-visible rounded-md text-left leading-normal hover:text-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-                        title="Ver detalle de la solicitud"
-                      >
-                        <span className="block whitespace-normal break-words text-sm font-bold leading-snug text-acsm-ink underline-offset-4 hover:underline">
+                    <div className="min-w-0 border-b border-acsm-line/80 px-4 py-4 lg:border-b-0 lg:border-r lg:px-5">
+                      <div className="min-w-0">
+                        <span className="block whitespace-normal break-words text-sm font-bold leading-snug text-acsm-ink">
                           {rfq.title}
                         </span>
-                        <span className="mt-1 block break-all text-xs font-semibold leading-snug text-blue-800 underline-offset-4 hover:underline">
+                        <span className="mt-1 block break-all text-xs font-semibold leading-snug text-blue-800">
                           {rfq.rfq_number}
                         </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDetailRfqId(rfq.id)}
+                        className="mt-3 inline-flex h-9 items-center gap-2 rounded-xl border border-blue-200 bg-white px-3 text-xs font-bold text-blue-800 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                        title="Abrir detalle de la solicitud"
+                      >
+                        <Eye className="h-4 w-4" aria-hidden="true" />
+                        Ver detalle
                       </button>
                       {selectedRfq?.id === rfq.id ? (
-                        <span className="mt-2 inline-flex max-w-full whitespace-normal rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[10px] font-bold leading-tight text-blue-800 sm:text-[11px]">
+                        <span className="ml-2 mt-3 inline-flex max-w-full whitespace-normal rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[10px] font-bold leading-tight text-blue-800 sm:text-[11px]">
                           Activa para captura
                         </span>
                       ) : null}
                     </div>
-                    <div className="text-sm">
-                      <span className="block text-xs font-bold uppercase text-acsm-muted">Creada</span>
-                      <span className="font-semibold text-acsm-ink">{formatDateTime(rfq.created_at)}</span>
+
+                    <div className="grid min-w-0 gap-4 px-4 py-4 text-sm md:grid-cols-2 xl:grid-cols-[170px_190px_minmax(260px,1fr)_120px]">
+                      <div>
+                        <span className="block text-xs font-bold uppercase text-acsm-muted">Creada</span>
+                        <span className="font-semibold text-acsm-ink">{formatDateTime(rfq.created_at)}</span>
+                      </div>
+                      <div className="min-w-0">
+                        <span className="block text-xs font-bold uppercase text-acsm-muted">Comprador</span>
+                        <span className="block truncate font-semibold text-acsm-ink">
+                          {rfq.creator?.full_name ?? 'Sin usuario'}
+                        </span>
+                        <span className="block truncate text-xs text-acsm-muted">{rfq.creator?.email}</span>
+                      </div>
+                      <div className="min-w-0">
+                        <span className="block text-xs font-bold uppercase text-acsm-muted">
+                          Proveedores seleccionados
+                        </span>
+                        <span className="block truncate font-semibold text-acsm-ink" title={suppliersText}>
+                          {suppliersText || 'Sin proveedores'}
+                        </span>
+                        <span className="mt-1 block text-xs text-acsm-muted">
+                          {rfq.supplier_links.length} proveedores · {rfq.items.length} partidas
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-xs font-bold uppercase text-acsm-muted">Estado</span>
+                        <span className="mt-1 inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-800">
+                          {statusLabel(rfq.status)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="min-w-0 text-sm">
-                      <span className="block text-xs font-bold uppercase text-acsm-muted">Comprador</span>
-                      <span className="block truncate font-semibold text-acsm-ink">
-                        {rfq.creator?.full_name ?? 'Sin usuario'}
-                      </span>
-                      <span className="block truncate text-xs text-acsm-muted">{rfq.creator?.email}</span>
-                    </div>
-                    <div className="min-w-0 text-sm">
-                      <span className="block text-xs font-bold uppercase text-acsm-muted">
-                        Proveedores seleccionados
-                      </span>
-                      <span className="block truncate font-semibold text-acsm-ink" title={suppliersText}>
-                        {suppliersText || 'Sin proveedores'}
-                      </span>
-                      <span className="mt-1 block text-xs text-acsm-muted">
-                        {rfq.supplier_links.length} proveedores · {rfq.items.length} partidas
-                      </span>
-                    </div>
-                    <div className="text-left xl:text-right">
-                      <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-800">
-                        {statusLabel(rfq.status)}
-                      </span>
+
+                    <div className="flex items-center justify-start border-t border-acsm-line/80 bg-[linear-gradient(180deg,#f8fbff_0%,#eaf4fb_100%)] px-4 py-4 lg:justify-center lg:border-l lg:border-t-0">
+                      <button
+                        type="button"
+                        onClick={() => selectRfqForQuote(rfq.id)}
+                        className={[
+                          'inline-flex h-11 w-full max-w-[190px] items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold shadow-button transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600',
+                          selectedRfq?.id === rfq.id
+                            ? 'border border-blue-300 bg-white text-blue-800 hover:bg-blue-50'
+                            : 'bg-acsm-green text-white hover:bg-acsm-green-hover',
+                        ].join(' ')}
+                        title="Seleccionar esta solicitud para capturar la cotizacion recibida"
+                      >
+                        <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+                        {selectedRfq?.id === rfq.id ? 'Captura activa' : 'Capturar cotizacion'}
+                      </button>
                     </div>
                   </div>
                 )
