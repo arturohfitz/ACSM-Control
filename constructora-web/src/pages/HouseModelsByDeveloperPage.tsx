@@ -343,7 +343,8 @@ function DocumentSummary({
       return left.order - right.order
     })
   }, [rows, statusFilter, selectedGroup, rowSearch, rowSort])
-  const visibleRows = expanded ? filteredRows : filteredRows.slice(0, 8)
+  const categoryDetailMode = Boolean(selectedGroup)
+  const visibleRows = categoryDetailMode || expanded ? filteredRows : filteredRows.slice(0, 8)
   const bulkBusy = document ? actionBusyKey === `${document.document_type}:bulk` : false
 
   return (
@@ -528,7 +529,14 @@ function DocumentSummary({
                 </select>
               </div>
             </div>
-            <div className="hidden grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px] gap-2 border-b border-[#aac5dc] bg-[#d8e8f4] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted xl:grid">
+            <div
+              className={[
+                'hidden gap-2 border-b border-[#aac5dc] bg-[#d8e8f4] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted xl:grid',
+                categoryDetailMode
+                  ? 'grid-cols-[54px_72px_minmax(360px,1.5fr)_52px_78px_92px_112px_minmax(130px,180px)_128px]'
+                  : 'grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px]',
+              ].join(' ')}
+            >
               <div>No.</div>
               <div>Clave</div>
               <div>Descripcion</div>
@@ -542,9 +550,13 @@ function DocumentSummary({
             {visibleRows.map((row, index) => (
               <div
                 key={`${row.code}-${index}`}
-                className={`grid gap-2 px-3 py-3 text-xs xl:grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px] xl:items-start ${
-                  row.status === 'ignored' ? 'bg-slate-50/80 opacity-75' : ''
-                }`}
+                className={[
+                  'grid gap-2 px-3 py-3 text-xs xl:items-start',
+                  categoryDetailMode
+                    ? 'xl:grid-cols-[54px_72px_minmax(360px,1.5fr)_52px_78px_92px_112px_minmax(130px,180px)_128px]'
+                    : 'xl:grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px]',
+                  row.status === 'ignored' ? 'bg-slate-50/80 opacity-75' : '',
+                ].join(' ')}
               >
                 <div className="flex items-start justify-between gap-3 xl:block">
                   <span className="text-[10px] font-semibold uppercase text-acsm-muted xl:hidden">No.</span>
@@ -558,7 +570,12 @@ function DocumentSummary({
                   <div className="mb-1 text-[10px] font-semibold uppercase text-acsm-muted xl:hidden">
                     Descripcion
                   </div>
-                  <p className={`break-words leading-snug text-acsm-ink ${expanded ? '' : 'line-clamp-2'}`}>
+                  <p
+                    className={[
+                      'break-words leading-snug text-acsm-ink',
+                      categoryDetailMode || expanded ? 'whitespace-normal' : 'line-clamp-2',
+                    ].join(' ')}
+                  >
                     {row.name}
                   </p>
                 </div>

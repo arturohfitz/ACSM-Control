@@ -35,6 +35,7 @@ from app.models.purchasing import (
     SupplierQuoteApproval,
     SupplierQuoteItem,
     SupplierRFQ,
+    SupplierRFQExceptionRequest,
     SupplierRFQItem,
     SupplierRFQSupplier,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "SupplierQuoteApproval",
     "SupplierQuoteItem",
     "SupplierRFQ",
+    "SupplierRFQExceptionRequest",
     "SupplierRFQItem",
     "SupplierRFQSupplier",
     "SystemEmailSettings",

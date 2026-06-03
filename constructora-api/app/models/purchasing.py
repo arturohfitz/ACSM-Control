@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -60,6 +60,34 @@ class SupplierRFQ(TimestampMixin, Base):
     )
     quotes: Mapped[list["SupplierQuote"]] = relationship(back_populates="rfq")
     creator: Mapped["User | None"] = relationship(foreign_keys=[created_by])
+
+
+class SupplierRFQExceptionRequest(TimestampMixin, Base):
+    __tablename__ = "supplier_rfq_exception_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    rfq_id: Mapped[int | None] = mapped_column(ForeignKey("supplier_rfqs.id"), index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="requested", nullable=False, index=True)
+    required_by: Mapped[date | None] = mapped_column(Date)
+    response_deadline: Mapped[date | None] = mapped_column(Date)
+    supplier_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    item_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    request_notes: Mapped[str] = mapped_column(Text, nullable=False)
+    decision_notes: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    project: Mapped["Project"] = relationship()
+    rfq: Mapped["SupplierRFQ | None"] = relationship()
+    requester: Mapped["User | None"] = relationship(foreign_keys=[requested_by])
+    decider: Mapped["User | None"] = relationship(foreign_keys=[decided_by])
 
 
 class SupplierRFQItem(Base):

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import require_permission
+from app.api.deps import get_current_user, require_permission
 from app.db.session import get_db
 from app.models import (
     ExpectedMaterialItem,
@@ -22,6 +22,7 @@ from app.models import (
     SupplierQuoteApproval,
     SupplierQuoteItem,
     SupplierRFQ,
+    SupplierRFQExceptionRequest,
     SupplierRFQItem,
     SupplierRFQSupplier,
     SystemEmailSettings,
@@ -45,6 +46,9 @@ from app.schemas.purchasing import (
     SupplierRFQApprovalRequest,
     SupplierRFQComparisonRow,
     SupplierRFQCreate,
+    SupplierRFQExceptionCreate,
+    SupplierRFQExceptionDecision,
+    SupplierRFQExceptionRead,
     SupplierRFQRead,
     SupplierRFQUpdate,
     SupplierRead,
@@ -54,6 +58,7 @@ from app.schemas.purchasing import (
 from app.services.audit import record_create, record_delete, record_event, record_update, snapshot
 from app.services.crud import get_or_404
 from app.services.emailer import EmailConfigurationError, rfq_email_content, send_email
+from app.services.permissions import user_has_permission
 from app.services.tenancy import company_id_for_write, ensure_same_company, scoped_select
 
 
@@ -106,6 +111,44 @@ def _next_number(db: Session, model: type, field_name: str, prefix: str, company
         count += 1
         candidate = f"{prefix}-{date.today().strftime('%Y%m')}-{count + 1:04d}"
     return candidate
+
+
+def _rfq_exception_snapshot(payload: SupplierRFQCreate | SupplierRFQExceptionCreate) -> dict:
+    data = payload.model_dump(mode="json", exclude={"exception_request_id", "request_notes", "rfq_number", "notes", "warehouse_id"})
+    return {
+        "project_id": data["project_id"],
+        "title": data["title"].strip(),
+        "required_by": data.get("required_by"),
+        "response_deadline": data.get("response_deadline"),
+        "supplier_ids": sorted(set(data["supplier_ids"])),
+        "items": [
+            {
+                "material_id": item.get("material_id"),
+                "source_code": item.get("source_code"),
+                "description": item["description"].strip(),
+                "unit": item["unit"].strip(),
+                "quantity": str(item["quantity"]),
+                "notes": item.get("notes"),
+            }
+            for item in data["items"]
+        ],
+    }
+
+
+def _ensure_exception_matches_payload(
+    exception_request: SupplierRFQExceptionRequest,
+    payload: SupplierRFQCreate,
+) -> None:
+    if exception_request.status != "approved" or exception_request.used_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La excepcion aun no esta aprobada o ya fue utilizada",
+        )
+    if exception_request.payload_snapshot != _rfq_exception_snapshot(payload):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La excepcion aprobada no coincide con la solicitud actual",
+        )
 
 
 def _po_is_complete(purchase_order: PurchaseOrder) -> bool:
@@ -292,6 +335,164 @@ def list_supplier_rfqs(
     )
 
 
+@router.get("/supplier-rfq-exceptions", response_model=list[SupplierRFQExceptionRead])
+def list_supplier_rfq_exceptions(
+    approval_status: str = "requested",
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[SupplierRFQExceptionRequest]:
+    can_create = user_has_permission(current_user, "supplier_rfq", "create")
+    can_approve = user_has_permission(current_user, "supplier_quotes", "approve")
+    if not can_create and not can_approve:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permiso requerido: supplier_rfq:create o supplier_quotes:approve",
+        )
+    statement = scoped_select(select(SupplierRFQExceptionRequest), SupplierRFQExceptionRequest, current_user)
+    if approval_status != "all":
+        statement = statement.where(SupplierRFQExceptionRequest.status == approval_status)
+    if not can_approve:
+        statement = statement.where(SupplierRFQExceptionRequest.requested_by == current_user.id)
+    return list(
+        db.scalars(
+            statement.options(
+                selectinload(SupplierRFQExceptionRequest.requester),
+                selectinload(SupplierRFQExceptionRequest.decider),
+            )
+            .order_by(SupplierRFQExceptionRequest.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        ).all()
+    )
+
+
+@router.post(
+    "/supplier-rfq-exceptions",
+    response_model=SupplierRFQExceptionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_supplier_rfq_exception(
+    payload: SupplierRFQExceptionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_rfq", "create")),
+) -> SupplierRFQExceptionRequest:
+    project = _project_for_user(db, payload.project_id, current_user)
+    suppliers = [_supplier_for_user(db, supplier_id, current_user) for supplier_id in payload.supplier_ids]
+    supplier_count = len({supplier.id for supplier in suppliers})
+    if supplier_count >= 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La excepcion solo aplica cuando hay menos de 3 proveedores",
+        )
+    for item in payload.items:
+        if item.material_id is not None:
+            material = get_or_404(db, Material, item.material_id)
+            ensure_same_company(current_user, material)
+    exception_request = SupplierRFQExceptionRequest(
+        company_id=project.company_id,
+        project_id=project.id,
+        title=payload.title,
+        required_by=payload.required_by,
+        response_deadline=payload.response_deadline,
+        supplier_count=supplier_count,
+        item_count=len(payload.items),
+        payload_snapshot=_rfq_exception_snapshot(payload),
+        request_notes=payload.request_notes.strip(),
+        requested_by=current_user.id,
+        requested_at=_now(),
+    )
+    db.add(exception_request)
+    db.flush()
+    record_event(
+        db,
+        current_user,
+        module="compras",
+        action="request_exception",
+        entity_type="SupplierRFQExceptionRequest",
+        entity_id=exception_request.id,
+        company_id=exception_request.company_id,
+        label=exception_request.title,
+        description=f"{current_user.full_name} solicito excepcion para cotizar con menos de 3 proveedores",
+        metadata={"proveedores": supplier_count, "partidas": len(payload.items)},
+    )
+    db.commit()
+    created_exception = db.scalar(
+        select(SupplierRFQExceptionRequest)
+        .where(SupplierRFQExceptionRequest.id == exception_request.id)
+        .options(
+            selectinload(SupplierRFQExceptionRequest.requester),
+            selectinload(SupplierRFQExceptionRequest.decider),
+        )
+    )
+    if created_exception is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    return created_exception
+
+
+@router.post("/supplier-rfq-exceptions/{exception_id}/approve", response_model=SupplierRFQExceptionRead)
+def approve_supplier_rfq_exception(
+    exception_id: int,
+    payload: SupplierRFQExceptionDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "approve")),
+) -> SupplierRFQExceptionRequest:
+    exception_request = get_or_404(db, SupplierRFQExceptionRequest, exception_id)
+    ensure_same_company(current_user, exception_request)
+    if exception_request.status != "requested":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La excepcion ya fue atendida")
+    exception_request.status = "approved"
+    exception_request.decision_notes = payload.decision_notes
+    exception_request.decided_by = current_user.id
+    exception_request.decided_at = _now()
+    record_event(
+        db,
+        current_user,
+        module="compras",
+        action="approve_exception",
+        entity_type="SupplierRFQExceptionRequest",
+        entity_id=exception_request.id,
+        company_id=exception_request.company_id,
+        label=exception_request.title,
+        description=f"{current_user.full_name} aprobo excepcion para solicitud de cotizacion",
+    )
+    db.commit()
+    db.refresh(exception_request)
+    return exception_request
+
+
+@router.post("/supplier-rfq-exceptions/{exception_id}/reject", response_model=SupplierRFQExceptionRead)
+def reject_supplier_rfq_exception(
+    exception_id: int,
+    payload: SupplierRFQExceptionDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "approve")),
+) -> SupplierRFQExceptionRequest:
+    exception_request = get_or_404(db, SupplierRFQExceptionRequest, exception_id)
+    ensure_same_company(current_user, exception_request)
+    if exception_request.status != "requested":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La excepcion ya fue atendida")
+    exception_request.status = "rejected"
+    exception_request.decision_notes = payload.decision_notes
+    exception_request.decided_by = current_user.id
+    exception_request.decided_at = _now()
+    record_event(
+        db,
+        current_user,
+        module="compras",
+        action="reject_exception",
+        entity_type="SupplierRFQExceptionRequest",
+        entity_id=exception_request.id,
+        company_id=exception_request.company_id,
+        label=exception_request.title,
+        description=f"{current_user.full_name} rechazo excepcion para solicitud de cotizacion",
+    )
+    db.commit()
+    db.refresh(exception_request)
+    return exception_request
+
+
 @router.post("/supplier-rfqs", response_model=SupplierRFQRead, status_code=status.HTTP_201_CREATED)
 def create_supplier_rfq(
     payload: SupplierRFQCreate,
@@ -301,11 +502,17 @@ def create_supplier_rfq(
     project = _project_for_user(db, payload.project_id, current_user)
     warehouse = _warehouse_for_project(db, payload.warehouse_id, project)
     suppliers = [_supplier_for_user(db, supplier_id, current_user) for supplier_id in payload.supplier_ids]
-    if len({supplier.id for supplier in suppliers}) < 3:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Selecciona al menos 3 proveedores diferentes",
-        )
+    supplier_count = len({supplier.id for supplier in suppliers})
+    approved_exception: SupplierRFQExceptionRequest | None = None
+    if supplier_count < 3:
+        if payload.exception_request_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Se requiere una excepcion aprobada para crear solicitud con menos de 3 proveedores",
+            )
+        approved_exception = get_or_404(db, SupplierRFQExceptionRequest, payload.exception_request_id)
+        ensure_same_company(current_user, approved_exception)
+        _ensure_exception_matches_payload(approved_exception, payload)
     rfq = SupplierRFQ(
         company_id=project.company_id,
         project_id=project.id,
@@ -327,6 +534,10 @@ def create_supplier_rfq(
         db.add(SupplierRFQItem(rfq_id=rfq.id, **item.model_dump()))
     for supplier in suppliers:
         db.add(SupplierRFQSupplier(rfq_id=rfq.id, supplier_id=supplier.id))
+    if approved_exception is not None:
+        approved_exception.status = "used"
+        approved_exception.rfq_id = rfq.id
+        approved_exception.used_at = _now()
     db.commit()
     rfq = db.scalar(
         select(SupplierRFQ)

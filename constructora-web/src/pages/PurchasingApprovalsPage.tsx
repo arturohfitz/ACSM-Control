@@ -67,6 +67,27 @@ type SupplierQuoteApproval = {
   rfq: SupplierRFQ
 }
 
+type SupplierRFQException = {
+  id: number
+  title: string
+  status: string
+  required_by?: string | null
+  response_deadline?: string | null
+  supplier_count: number
+  item_count: number
+  payload_snapshot: {
+    supplier_ids: number[]
+    items: {
+      description: string
+      unit: string
+      quantity: string
+    }[]
+  }
+  request_notes: string
+  requested_at: string
+  requester?: UserSummary | null
+}
+
 type ComparisonRow = {
   supplier_quote_id: number
   supplier_name: string
@@ -121,7 +142,9 @@ function approvalRequestContext(notes?: string | null) {
 
 export default function PurchasingApprovalsPage() {
   const [approvals, setApprovals] = useState<SupplierQuoteApproval[]>([])
+  const [rfqExceptions, setRfqExceptions] = useState<SupplierRFQException[]>([])
   const [selectedApprovalId, setSelectedApprovalId] = useState<number | null>(null)
+  const [selectedExceptionId, setSelectedExceptionId] = useState<number | null>(null)
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
   const [quotes, setQuotes] = useState<SupplierQuote[]>([])
   const [selectedQuoteId, setSelectedQuoteId] = useState<number | null>(null)
@@ -131,8 +154,12 @@ export default function PurchasingApprovalsPage() {
   const [loading, setLoading] = useState(false)
 
   const selectedApproval = useMemo(
-    () => approvals.find((approval) => approval.id === selectedApprovalId) ?? approvals[0] ?? null,
+    () => approvals.find((approval) => approval.id === selectedApprovalId) ?? null,
     [approvals, selectedApprovalId],
+  )
+  const selectedException = useMemo(
+    () => rfqExceptions.find((entry) => entry.id === selectedExceptionId) ?? null,
+    [rfqExceptions, selectedExceptionId],
   )
   const selectedQuote = useMemo(
     () =>
@@ -151,11 +178,19 @@ export default function PurchasingApprovalsPage() {
     setLoading(true)
     setError('')
     try {
-      const data = await apiRequest<SupplierQuoteApproval[]>(
-        '/purchasing/supplier-quote-approvals?approval_status=requested',
-      )
+      const [data, exceptionData] = await Promise.all([
+        apiRequest<SupplierQuoteApproval[]>('/purchasing/supplier-quote-approvals?approval_status=requested'),
+        apiRequest<SupplierRFQException[]>('/purchasing/supplier-rfq-exceptions?approval_status=requested'),
+      ])
       setApprovals(data)
-      setSelectedApprovalId(nextSelectedId ?? data[0]?.id ?? null)
+      setRfqExceptions(exceptionData)
+      if (exceptionData.length && !nextSelectedId) {
+        setSelectedExceptionId(exceptionData[0].id)
+        setSelectedApprovalId(null)
+      } else {
+        setSelectedApprovalId(nextSelectedId ?? data[0]?.id ?? null)
+        setSelectedExceptionId(null)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar aprobaciones')
     } finally {
@@ -189,7 +224,7 @@ export default function PurchasingApprovalsPage() {
     setSelectedQuoteId(selectedApproval?.supplier_quote_id ?? null)
     void loadComparison(selectedApproval?.rfq_id)
     setDecisionNotes('')
-  }, [selectedApproval?.id])
+  }, [selectedApproval?.id, selectedException?.id])
 
   async function approveSelected() {
     if (!selectedApproval || !selectedQuote) return
@@ -220,6 +255,40 @@ export default function PurchasingApprovalsPage() {
       await loadApprovals()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible rechazar la cotizacion')
+    }
+  }
+
+  async function approveSelectedException() {
+    if (!selectedException) return
+    setError('')
+    setMessage('')
+    try {
+      await apiRequest(`/purchasing/supplier-rfq-exceptions/${selectedException.id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ decision_notes: decisionNotes || null }),
+      })
+      setMessage('Excepcion aprobada. El comprador ya puede crear la solicitud con menos de 3 proveedores.')
+      setSelectedExceptionId(null)
+      await loadApprovals()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible aprobar la excepcion')
+    }
+  }
+
+  async function rejectSelectedException() {
+    if (!selectedException) return
+    setError('')
+    setMessage('')
+    try {
+      await apiRequest(`/purchasing/supplier-rfq-exceptions/${selectedException.id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ decision_notes: decisionNotes || null }),
+      })
+      setMessage('Excepcion rechazada.')
+      setSelectedExceptionId(null)
+      await loadApprovals()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible rechazar la excepcion')
     }
   }
 
@@ -267,11 +336,40 @@ export default function PurchasingApprovalsPage() {
             <div className="flex items-center justify-between border-b border-acsm-line px-4 py-3">
               <div>
                 <h3 className="font-bold text-acsm-ink">Pendientes</h3>
-                <p className="text-xs text-acsm-muted">{approvals.length} por revisar</p>
+                <p className="text-xs text-acsm-muted">
+                  {approvals.length + rfqExceptions.length} por revisar
+                </p>
               </div>
               {loading ? <span className="text-xs text-acsm-muted">Cargando...</span> : null}
             </div>
             <div className="max-h-[520px] overflow-y-auto">
+              {rfqExceptions.map((entry) => (
+                <button
+                  key={`exception-${entry.id}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedExceptionId(entry.id)
+                    setSelectedApprovalId(null)
+                  }}
+                  className={[
+                    'block w-full border-l-4 border-b border-acsm-line px-4 py-4 text-left transition',
+                    selectedException?.id === entry.id
+                      ? 'border-amber-500 bg-white shadow-[inset_0_0_0_1px_rgba(217,119,6,0.24)]'
+                      : 'border-transparent hover:bg-white',
+                  ].join(' ')}
+                >
+                  <span className="block text-sm font-bold text-acsm-ink">{entry.title}</span>
+                  <span className="mt-1 block text-xs font-semibold text-amber-800">
+                    Excepcion para crear solicitud
+                  </span>
+                  <span className="mt-3 block text-sm font-semibold text-acsm-ink">
+                    {entry.supplier_count} proveedor(es) · {entry.item_count} partida(s)
+                  </span>
+                  <span className="text-xs text-acsm-muted">
+                    Solicitada por {entry.requester?.full_name ?? 'Sin usuario'}
+                  </span>
+                </button>
+              ))}
               {approvals.map((approval) => {
                 const context = approvalRequestContext(approval.request_notes)
                 return (
@@ -306,7 +404,7 @@ export default function PurchasingApprovalsPage() {
                   </button>
                 )
               })}
-              {!approvals.length ? (
+              {!approvals.length && !rfqExceptions.length ? (
                 <div className="px-4 py-12 text-center text-sm text-acsm-muted">
                   No hay cotizaciones pendientes de aprobacion.
                 </div>
@@ -315,7 +413,107 @@ export default function PurchasingApprovalsPage() {
           </aside>
 
           <div className="min-w-0 p-5">
-            {selectedApproval ? (
+            {selectedException ? (
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">
+                      Excepcion para crear solicitud
+                    </p>
+                    <h3 className="text-2xl font-bold text-acsm-ink">{selectedException.title}</h3>
+                    <p className="text-sm text-acsm-muted">
+                      Solicitada el {formatDateTime(selectedException.requested_at)} por{' '}
+                      {selectedException.requester?.full_name ?? 'Sin usuario'}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <div className="rounded-xl border border-acsm-line bg-white p-3">
+                      <div className="text-xs font-bold uppercase text-acsm-muted">Proveedores</div>
+                      <div className="mt-1 text-lg font-bold text-acsm-ink">
+                        {selectedException.supplier_count}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-acsm-line bg-white p-3">
+                      <div className="text-xs font-bold uppercase text-acsm-muted">Partidas</div>
+                      <div className="mt-1 text-lg font-bold text-acsm-ink">
+                        {selectedException.item_count}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-acsm-line bg-white p-3">
+                      <div className="text-xs font-bold uppercase text-acsm-muted">Estado</div>
+                      <div className="mt-1 text-lg font-bold text-acsm-ink">
+                        {statusLabel(selectedException.status)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <section className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <h4 className="font-bold text-amber-950">Motivo capturado por compras</h4>
+                  <p className="mt-2 whitespace-pre-wrap text-sm font-semibold text-amber-900">
+                    {selectedException.request_notes}
+                  </p>
+                </section>
+
+                <section className="overflow-hidden rounded-xl border border-acsm-line">
+                  <div className="border-b border-acsm-line bg-acsm-paper px-4 py-3">
+                    <h4 className="font-bold text-acsm-ink">Partidas que se desean cotizar</h4>
+                    <p className="text-xs text-acsm-muted">
+                      Esta aprobacion solo permite crear la solicitud con menos de 3 proveedores.
+                    </p>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Material</th>
+                        <th className="px-4 py-3 text-left">Cantidad</th>
+                        <th className="px-4 py-3 text-left">Unidad</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedException.payload_snapshot.items.map((item, index) => (
+                        <tr key={`${item.description}-${index}`} className="border-t border-acsm-line">
+                          <td className="px-4 py-3 font-semibold">{item.description}</td>
+                          <td className="px-4 py-3">{Number(item.quantity).toLocaleString('es-MX')}</td>
+                          <td className="px-4 py-3">{item.unit}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+
+                <div className="rounded-xl border border-acsm-line bg-white p-4">
+                  <label className="block text-sm font-bold text-acsm-ink">
+                    Comentarios de decision
+                    <textarea
+                      value={decisionNotes}
+                      onChange={(event) => setDecisionNotes(event.target.value)}
+                      rows={3}
+                      className="mt-2 w-full rounded-xl border border-acsm-line px-3 py-2 text-sm"
+                      placeholder="Motivo de aprobacion o rechazo"
+                    />
+                  </label>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void approveSelectedException()}
+                      className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white hover:bg-acsm-green-hover"
+                    >
+                      <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                      Aprobar excepcion
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void rejectSelectedException()}
+                      className="inline-flex h-10 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-bold text-red-700 hover:bg-red-100"
+                    >
+                      <XCircle className="h-4 w-4" aria-hidden="true" />
+                      Rechazar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : selectedApproval ? (
               <div className="space-y-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>

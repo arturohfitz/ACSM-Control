@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from app.schemas.common import NonNegativeDecimal, ORMModel, PositiveDecimal, TimestampRead
 from app.schemas.inventory import ExpectedMaterialListRead
@@ -30,6 +30,7 @@ RFQSupplierStatus = Literal[
 ]
 SupplierQuoteStatus = Literal["received", "approval_requested", "rejected", "discarded", "approved"]
 SupplierQuoteApprovalStatus = Literal["requested", "approved", "rejected", "cancelled"]
+SupplierRFQExceptionStatus = Literal["requested", "approved", "rejected", "used", "cancelled"]
 PurchaseOrderStatus = Literal[
     "issued",
     "sent",
@@ -131,12 +132,7 @@ class SupplierRFQCreate(BaseModel):
     notes: str | None = None
     supplier_ids: list[int] = Field(min_length=1)
     items: list[SupplierRFQItemCreate] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def require_supplier_count(self):
-        if len(set(self.supplier_ids)) < 3:
-            raise ValueError("Selecciona al menos 3 proveedores para solicitar cotizacion")
-        return self
+    exception_request_id: int | None = None
 
 
 class SupplierRFQUpdate(BaseModel):
@@ -225,6 +221,43 @@ class SupplierQuoteApprovalRequest(BaseModel):
 class SupplierRFQApprovalRequest(BaseModel):
     is_exception: bool = False
     request_notes: str | None = None
+
+
+class SupplierRFQExceptionCreate(BaseModel):
+    project_id: int
+    title: str = Field(min_length=1, max_length=200)
+    required_by: date | None = None
+    response_deadline: date | None = None
+    supplier_ids: list[int] = Field(min_length=1)
+    items: list[SupplierRFQItemCreate] = Field(min_length=1)
+    request_notes: str = Field(min_length=1)
+
+
+class SupplierRFQExceptionDecision(BaseModel):
+    decision_notes: str | None = None
+
+
+class SupplierRFQExceptionRead(TimestampRead):
+    id: int
+    company_id: int
+    project_id: int
+    rfq_id: int | None = None
+    title: str
+    status: SupplierRFQExceptionStatus
+    required_by: date | None = None
+    response_deadline: date | None = None
+    supplier_count: int
+    item_count: int
+    payload_snapshot: dict
+    request_notes: str
+    decision_notes: str | None = None
+    requested_by: int | None = None
+    requested_at: datetime
+    decided_by: int | None = None
+    decided_at: datetime | None = None
+    used_at: datetime | None = None
+    requester: UserSummaryRead | None = None
+    decider: UserSummaryRead | None = None
 
 
 class SupplierQuoteApprovalDecision(BaseModel):

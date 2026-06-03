@@ -67,6 +67,37 @@ type SupplierRFQ = {
   supplier_links: RFQSupplierLink[]
 }
 
+type SupplierRFQException = {
+  id: number
+  project_id: number
+  rfq_id?: number | null
+  title: string
+  status: string
+  required_by?: string | null
+  response_deadline?: string | null
+  supplier_count: number
+  item_count: number
+  payload_snapshot: {
+    project_id: number
+    title: string
+    required_by?: string | null
+    response_deadline?: string | null
+    supplier_ids: number[]
+    items: {
+      material_id?: number | null
+      source_code?: string | null
+      description: string
+      unit: string
+      quantity: string
+      notes?: string | null
+    }[]
+  }
+  request_notes: string
+  decision_notes?: string | null
+  requested_at: string
+  requester?: UserSummary | null
+}
+
 type SupplierQuote = {
   id: number
   supplier_id: number
@@ -270,6 +301,7 @@ export default function PurchasingPage() {
   const [materials, setMaterials] = useState<Material[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [rfqs, setRfqs] = useState<SupplierRFQ[]>([])
+  const [rfqExceptions, setRfqExceptions] = useState<SupplierRFQException[]>([])
   const [quotes, setQuotes] = useState<SupplierQuote[]>([])
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
@@ -299,6 +331,8 @@ export default function PurchasingPage() {
   const [quoteRows, setQuoteRows] = useState<QuoteDraftItem[]>([])
   const [exceptionOpen, setExceptionOpen] = useState(false)
   const [exceptionNotes, setExceptionNotes] = useState('')
+  const [rfqExceptionOpen, setRfqExceptionOpen] = useState(false)
+  const [rfqExceptionNotes, setRfqExceptionNotes] = useState('')
   const quoteCaptureRef = useRef<HTMLElement | null>(null)
 
   const selectedRfq = useMemo(
@@ -391,22 +425,71 @@ export default function PurchasingPage() {
     completeComparison.length > 0 &&
     completeComparison.length < 3 &&
     !['approval_pending', 'awarded'].includes(selectedRfq?.status ?? '')
+  const validRfqItems = useMemo(
+    () => items.filter((item) => item.description && item.unit && Number(item.quantity) > 0),
+    [items],
+  )
+  const rfqDraftSnapshot = useMemo(
+    () => ({
+      project_id: Number(projectId),
+      title: title.trim(),
+      required_by: requiredBy || null,
+      response_deadline: responseDeadline || null,
+      supplier_ids: supplierIds.map(Number).sort((left, right) => left - right),
+      items: validRfqItems.map((item) => ({
+        material_id: item.material_id ? Number(item.material_id) : null,
+        source_code: null,
+        description: item.description.trim(),
+        unit: item.unit.trim(),
+        quantity: String(Number(item.quantity)),
+        notes: item.notes || null,
+      })),
+    }),
+    [projectId, requiredBy, responseDeadline, supplierIds, title, validRfqItems],
+  )
+  const approvedRfqException = useMemo(
+    () =>
+      rfqExceptions.find(
+        (entry) =>
+          entry.status === 'approved' &&
+          !entry.rfq_id &&
+          JSON.stringify(entry.payload_snapshot) === JSON.stringify(rfqDraftSnapshot),
+      ) ?? null,
+    [rfqDraftSnapshot, rfqExceptions],
+  )
+  const pendingRfqException = useMemo(
+    () =>
+      rfqExceptions.find(
+        (entry) =>
+          entry.status === 'requested' &&
+          JSON.stringify(entry.payload_snapshot) === JSON.stringify(rfqDraftSnapshot),
+      ) ?? null,
+    [rfqDraftSnapshot, rfqExceptions],
+  )
+  const needsRfqException = supplierIds.length > 0 && supplierIds.length < 3
+  const canCreateRfq =
+    Boolean(projectId) &&
+    Boolean(title.trim()) &&
+    validRfqItems.length > 0 &&
+    (supplierIds.length >= 3 || Boolean(approvedRfqException))
 
   async function loadData(nextSelectedRfqId = selectedRfq?.id) {
     setLoading(true)
     setError('')
     try {
-      const [projectData, materialData, supplierData, rfqData, orderData] = await Promise.all([
+      const [projectData, materialData, supplierData, rfqData, exceptionData, orderData] = await Promise.all([
         apiRequest<Project[]>('/projects'),
         apiRequest<Material[]>('/materials'),
         apiRequest<Supplier[]>('/purchasing/suppliers'),
         apiRequest<SupplierRFQ[]>('/purchasing/supplier-rfqs'),
+        apiRequest<SupplierRFQException[]>('/purchasing/supplier-rfq-exceptions?approval_status=all'),
         apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders?limit=250'),
       ])
       setProjects(projectData)
       setMaterials(materialData)
       setSuppliers(supplierData)
       setRfqs(rfqData)
+      setRfqExceptions(exceptionData)
       setOrders(orderData)
       if (!projectId && projectData[0]) setProjectId(String(projectData[0].id))
       const nextId = nextSelectedRfqId ?? rfqData[0]?.id ?? null
@@ -514,8 +597,8 @@ export default function PurchasingPage() {
   async function createRfq() {
     setError('')
     setMessage('')
-    if (supplierIds.length < 3) {
-      setError('Selecciona al menos 3 proveedores para comparar cotizaciones.')
+    if (supplierIds.length < 3 && !approvedRfqException) {
+      setError('Se requiere una excepcion aprobada para crear solicitud con menos de 3 proveedores.')
       return
     }
     try {
@@ -527,8 +610,8 @@ export default function PurchasingPage() {
           required_by: requiredBy || null,
           response_deadline: responseDeadline || null,
           supplier_ids: supplierIds.map(Number),
-          items: items
-            .filter((item) => item.description && item.unit && Number(item.quantity) > 0)
+          exception_request_id: approvedRfqException?.id ?? null,
+          items: validRfqItems
             .map((item) => ({
               material_id: item.material_id ? Number(item.material_id) : null,
               description: item.description,
@@ -542,6 +625,7 @@ export default function PurchasingPage() {
       setTitle('')
       setSupplierIds([])
       setItems([{ ...emptyItem }])
+      setRfqExceptionNotes('')
       await loadData(created.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible crear la solicitud')
@@ -622,6 +706,41 @@ export default function PurchasingPage() {
       if (selectedRfq?.id) await loadRfqDetails(selectedRfq.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible enviar la solicitud de aprobacion')
+    }
+  }
+
+  async function requestCreateRfqException() {
+    setError('')
+    setMessage('')
+    if (!rfqExceptionNotes.trim()) {
+      setError('Captura el motivo para solicitar la excepcion.')
+      return
+    }
+    try {
+      await apiRequest<SupplierRFQException>('/purchasing/supplier-rfq-exceptions', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: Number(projectId),
+          title: title.trim(),
+          required_by: requiredBy || null,
+          response_deadline: responseDeadline || null,
+          supplier_ids: supplierIds.map(Number),
+          items: validRfqItems.map((item) => ({
+            material_id: item.material_id ? Number(item.material_id) : null,
+            description: item.description,
+            unit: item.unit,
+            quantity: Number(item.quantity),
+            notes: item.notes || null,
+          })),
+          request_notes: rfqExceptionNotes.trim(),
+        }),
+      })
+      setMessage('Solicitud de excepcion enviada a aprobacion.')
+      setRfqExceptionOpen(false)
+      setRfqExceptionNotes('')
+      await loadData(selectedRfq?.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible enviar la excepcion')
     }
   }
 
@@ -887,10 +1006,39 @@ export default function PurchasingPage() {
                 </div>
               ) : null}
             </div>
+            {needsRfqException ? (
+              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <div className="font-bold">
+                  {approvedRfqException
+                    ? 'Excepcion aprobada'
+                    : pendingRfqException
+                      ? 'Excepcion en revision'
+                      : 'Requiere excepcion'}
+                </div>
+                <p className="mt-1">
+                  {approvedRfqException
+                    ? 'Ya puedes crear esta solicitud con menos de 3 proveedores.'
+                    : pendingRfqException
+                      ? 'Gerencia debe aprobarla para activar Crear solicitud.'
+                      : 'Solicita autorizacion si no existen 3 proveedores para este material.'}
+                </p>
+                {!approvedRfqException && !pendingRfqException ? (
+                  <button
+                    type="button"
+                    onClick={() => setRfqExceptionOpen(true)}
+                    disabled={!projectId || !title.trim() || validRfqItems.length === 0}
+                    className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-amber-300 bg-white px-3 text-sm font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-60"
+                  >
+                    <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+                    Solicitar excepcion
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={() => void createRfq()}
-              disabled={loading || !projectId || !title}
+              disabled={loading || !canCreateRfq}
               className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
             >
               <Send className="h-4 w-4" aria-hidden="true" />
@@ -1376,6 +1524,86 @@ export default function PurchasingPage() {
           </table>
         </div>
       </section>
+
+      {rfqExceptionOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setRfqExceptionOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl overflow-hidden rounded-[24px] border border-white/20 bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-acsm-line bg-gradient-to-r from-white to-amber-50 px-6 py-5">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-amber-700">
+                  Excepcion para solicitud
+                </p>
+                <h2 className="text-xl font-bold text-acsm-ink">
+                  Crear solicitud con menos de 3 proveedores
+                </h2>
+                <p className="mt-1 text-sm text-acsm-muted">
+                  Gerencia debe autorizar esta captura antes de poder enviar la solicitud a proveedores.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRfqExceptionOpen(false)}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-acsm-line bg-white text-acsm-ink hover:bg-acsm-paper"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="space-y-4 p-6">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <div className="text-xs font-bold uppercase text-amber-800">Proveedores</div>
+                  <div className="mt-1 text-lg font-bold text-amber-950">{supplierIds.length}</div>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <div className="text-xs font-bold uppercase text-amber-800">Partidas</div>
+                  <div className="mt-1 text-lg font-bold text-amber-950">{validRfqItems.length}</div>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <div className="text-xs font-bold uppercase text-amber-800">Regla normal</div>
+                  <div className="mt-1 text-lg font-bold text-amber-950">3 proveedores</div>
+                </div>
+              </div>
+              <label className="block text-sm font-bold text-acsm-ink">
+                Motivo de excepcion
+                <textarea
+                  value={rfqExceptionNotes}
+                  onChange={(event) => setRfqExceptionNotes(event.target.value)}
+                  rows={5}
+                  className="mt-2 w-full rounded-xl border border-acsm-line px-3 py-2 text-sm"
+                  placeholder="Ej. Solo existe un proveedor autorizado para este material, no hay tres proveedores activos, entrega urgente..."
+                />
+              </label>
+              <div className="flex flex-wrap justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setRfqExceptionOpen(false)}
+                  className="inline-flex h-10 items-center rounded-xl border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-ink hover:bg-acsm-paper"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void requestCreateRfqException()}
+                  disabled={!rfqExceptionNotes.trim()}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover disabled:opacity-60"
+                >
+                  <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+                  Enviar excepcion a aprobacion
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {exceptionOpen ? (
         <div
