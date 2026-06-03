@@ -533,8 +533,8 @@ function DocumentSummary({
               className={[
                 'hidden gap-2 border-b border-[#aac5dc] bg-[#d8e8f4] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted xl:grid',
                 categoryDetailMode
-                  ? 'grid-cols-[54px_72px_minmax(360px,1.5fr)_52px_78px_92px_112px_minmax(130px,180px)_128px]'
-                  : 'grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px]',
+                  ? 'grid-cols-[44px_64px_minmax(320px,1.6fr)_48px_68px_82px_104px_minmax(112px,150px)_112px]'
+                  : 'grid-cols-[48px_68px_minmax(0,1fr)_52px_74px_88px_112px_minmax(140px,190px)_124px]',
               ].join(' ')}
             >
               <div>No.</div>
@@ -553,8 +553,8 @@ function DocumentSummary({
                 className={[
                   'grid gap-2 px-3 py-3 text-xs xl:items-start',
                   categoryDetailMode
-                    ? 'xl:grid-cols-[54px_72px_minmax(360px,1.5fr)_52px_78px_92px_112px_minmax(130px,180px)_128px]'
-                    : 'xl:grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px]',
+                    ? 'xl:grid-cols-[44px_64px_minmax(320px,1.6fr)_48px_68px_82px_104px_minmax(112px,150px)_112px]'
+                    : 'xl:grid-cols-[48px_68px_minmax(0,1fr)_52px_74px_88px_112px_minmax(140px,190px)_124px]',
                   row.status === 'ignored' ? 'bg-slate-50/80 opacity-75' : '',
                 ].join(' ')}
               >
@@ -591,12 +591,12 @@ function DocumentSummary({
                   <span className="text-[10px] font-semibold uppercase text-acsm-muted xl:hidden">Importe</span>
                   <span className="font-semibold text-acsm-ink">{row.amount}</span>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="mb-1 flex items-center justify-between gap-2 xl:hidden">
                     <span className="text-[10px] font-semibold uppercase text-acsm-muted">Estado</span>
                   </div>
                   <span
-                    className={`inline-flex min-h-8 items-center rounded-full border px-3 py-1 text-[11px] font-semibold ${integrationPillClass(row)}`}
+                    className={`inline-flex min-h-8 max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${integrationPillClass(row)}`}
                   >
                     {integrationLabel(row)}
                   </span>
@@ -611,7 +611,7 @@ function DocumentSummary({
                       onLink(row.id, event.target.value ? Number(event.target.value) : null)
                     }
                     disabled={row.status === 'ignored'}
-                    className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs text-acsm-ink disabled:opacity-60"
+                    className="h-8 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-[11px] text-acsm-ink disabled:opacity-60"
                   >
                     <option value="">Seleccionar existente</option>
                     {catalogOptions.map((option) => (
@@ -621,13 +621,13 @@ function DocumentSummary({
                     ))}
                   </select>
                 </div>
-                <div>
+                <div className="min-w-0">
                   {row.status === 'ignored' ? (
                     <button
                       type="button"
                       onClick={() => onRestore(row.id)}
                       disabled={actionBusyKey === `${document.document_type}:${row.id}`}
-                      className="h-8 w-full rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      className="h-8 w-full min-w-0 rounded-md border border-slate-300 bg-white px-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
                       Reactivar
                     </button>
@@ -636,7 +636,7 @@ function DocumentSummary({
                       type="button"
                       onClick={() => onLink(row.id, null)}
                       disabled={actionBusyKey === `${document.document_type}:${row.id}`}
-                      className="h-8 w-full rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      className="h-8 w-full min-w-0 rounded-md border border-slate-300 bg-white px-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
                       Desvincular
                     </button>
@@ -646,7 +646,7 @@ function DocumentSummary({
                         type="button"
                         onClick={() => onCreateCatalogItem(row.id)}
                         disabled={actionBusyKey === `${document.document_type}:${row.id}`}
-                        className="h-8 w-full rounded-md border border-blue-200 bg-blue-50 px-2 text-xs font-semibold text-blue-800 hover:bg-blue-100 disabled:opacity-50"
+                        className="h-8 w-full min-w-0 rounded-md border border-blue-200 bg-blue-50 px-1.5 text-[11px] font-semibold text-blue-800 hover:bg-blue-100 disabled:opacity-50"
                       >
                         Crear nuevo
                       </button>
@@ -654,7 +654,7 @@ function DocumentSummary({
                         type="button"
                         onClick={() => onIgnore(row.id)}
                         disabled={actionBusyKey === `${document.document_type}:${row.id}`}
-                        className="h-8 w-full rounded-md border border-amber-200 bg-amber-50 px-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                        className="h-8 w-full min-w-0 rounded-md border border-amber-200 bg-amber-50 px-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
                       >
                         Ignorar
                       </button>
