@@ -5,11 +5,8 @@ from uuid import uuid4
 import hashlib
 import logging
 import re
-import subprocess
-import tempfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from pypdf import PdfReader
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -46,6 +43,7 @@ from app.schemas.business import (
 from app.services.crud import delete_item, get_or_404, update_item
 from app.services.audit import record_create, record_delete, record_event, record_update, snapshot
 from app.services.delete_guards import ensure_house_model_has_no_approved_quote
+from app.services.pdf_text import PDFTextEmptyError, PDFTextExtractionError, extract_pdf_text
 from app.services.tenancy import company_id_for_write, ensure_same_company, scoped_select
 
 
@@ -121,42 +119,19 @@ def _date_from_text(value: str | None) -> date | None:
 
 
 def _extract_pdf_text(file_bytes: bytes, file_name: str) -> str:
-    with tempfile.NamedTemporaryFile(suffix=Path(file_name).suffix or ".pdf") as tmp:
-        tmp.write(file_bytes)
-        tmp.flush()
-        try:
-            completed = subprocess.run(
-                ["pdftotext", "-layout", tmp.name, "-"],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if completed.stdout.strip():
-                return completed.stdout
-        except FileNotFoundError:
-            logger.info("pdftotext no esta disponible para extraer %s", file_name)
-        except subprocess.SubprocessError as exc:
-            logger.warning("pdftotext fallo al extraer %s: %s", file_name, exc)
-
     try:
-        from io import BytesIO
-
-        reader = PdfReader(BytesIO(file_bytes))
-        text = "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
-    except Exception as exc:
+        return extract_pdf_text(file_bytes, file_name, timeout_seconds=15)
+    except PDFTextEmptyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El PDF no contiene texto extraible",
+        ) from exc
+    except PDFTextExtractionError as exc:
         logger.exception("No fue posible extraer texto del PDF de modelo %s", file_name)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No fue posible extraer texto del PDF",
         ) from exc
-    if not text.strip():
-        logger.warning("El PDF de modelo %s no contiene texto extraible", file_name)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El PDF no contiene texto extraible",
-        )
-    return text
 
 
 def _extract_document_metadata(source_text: str) -> tuple[str | None, date | None]:

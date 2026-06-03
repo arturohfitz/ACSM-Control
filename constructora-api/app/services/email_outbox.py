@@ -38,6 +38,8 @@ def queue_email(
         text_body=text_body,
         html_body=html_body,
         status="pending",
+        attempts=0,
+        max_attempts=3,
         next_attempt_at=datetime.now(timezone.utc),
     )
     db.add(message)

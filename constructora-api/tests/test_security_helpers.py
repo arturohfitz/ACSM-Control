@@ -1,6 +1,15 @@
 import unittest
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.added = []
+
+    def add(self, item) -> None:
+        self.added.append(item)
 
 
 class SecurityHelpersTest(unittest.TestCase):
@@ -51,6 +60,41 @@ class SecurityHelpersTest(unittest.TestCase):
             _rfq_exception_fingerprint(snapshot),
             _rfq_exception_fingerprint(dict(reversed(list(snapshot.items())))),
         )
+
+    def test_queue_email_defaults_to_pending(self) -> None:
+        from app.services.email_outbox import queue_email
+
+        db = FakeSession()
+        message = queue_email(
+            db,
+            company_id=1,
+            requested_by=7,
+            message_type="supplier_rfq",
+            related_entity_type="SupplierRFQSupplier",
+            related_entity_id=22,
+            recipient_email=" proveedor@example.com ",
+            subject="Solicitud",
+            text_body="Contenido",
+        )
+
+        self.assertEqual(db.added, [message])
+        self.assertEqual(message.status, "pending")
+        self.assertEqual(message.recipient_email, "proveedor@example.com")
+        self.assertEqual(message.related_entity_id, "22")
+        self.assertEqual(message.attempts, 0)
+        self.assertIsNotNone(message.next_attempt_at)
+
+    def test_pdf_text_rejects_invalid_pdf(self) -> None:
+        from app.services import pdf_text
+
+        with (
+            patch.object(pdf_text.subprocess, "run", side_effect=FileNotFoundError),
+            patch.object(pdf_text, "PdfReader", side_effect=ValueError("archivo invalido")),
+            patch.object(pdf_text.logger, "exception"),
+            self.assertRaises(pdf_text.PDFTextExtractionError),
+        ):
+            pdf_text.extract_pdf_text(b"no es un pdf", "invalido.pdf", timeout_seconds=1)
+
 
 
 if __name__ == "__main__":

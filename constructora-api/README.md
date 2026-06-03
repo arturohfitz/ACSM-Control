@@ -248,12 +248,27 @@ Este flujo crea en una sola transaccion:
 
 El administrador creado no es `master_admin`; solo ve y administra datos de su propia constructora.
 
-## Verificacion usada
+## Verificacion y calidad
 
 ```bash
-python -m compileall app alembic
-PYTHONPATH=. python -c "from app.main import app; print(app.title)"
-alembic upgrade head --sql
+cd ..
+./scripts/verify.sh
+```
+
+La verificacion ejecuta:
+
+- Compilacion Python del backend.
+- Pruebas unitarias en `constructora-api/tests`.
+- Build completo del frontend.
+
+Las migraciones se aplican con:
+
+```bash
+cd constructora-api
+source .venv/bin/activate
+alembic upgrade head
 ```
 
 Nota: `alembic upgrade head` requiere que `DATABASE_URL` apunte a una base PostgreSQL accesible con credenciales validas.
+
+GitHub Actions ejecuta `./scripts/verify.sh` en cada push o pull request contra `main`.
