@@ -574,6 +574,8 @@ def update_material_requirement(
     item = get_or_404(db, HouseModelMaterialRequirement, item_id)
     _require_model_child(db, current_user, house_model_id, item)
     data = payload.model_dump(exclude_unset=True)
+    if data.get("validation_status") == "ignored":
+        data["material_id"] = None
     if "material_id" in data and data["material_id"] is not None:
         material = get_or_404(db, Material, data["material_id"])
         ensure_same_company(current_user, material)
@@ -582,9 +584,43 @@ def update_material_requirement(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El material no pertenece a la misma constructora",
             )
+        data.setdefault("validation_status", "validated")
+    elif "material_id" in data and data["material_id"] is None:
+        data.setdefault("validation_status", "pending")
+    if (
+        data.get("validation_status") == "validated"
+        and data.get("material_id", item.material_id) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Para integrar la partida primero vincula o crea un material de catalogo",
+        )
     for field, value in data.items():
         setattr(item, field, value)
     _recalculate_document_totals(db, item.document_id)
+    if data:
+        if data.get("validation_status") == "ignored":
+            action = "ignore"
+        elif "material_id" in data:
+            action = "link"
+        else:
+            action = "update"
+        record_event(
+            db,
+            current_user,
+            module="modelos",
+            action=action,
+            entity_type="HouseModelMaterialRequirement",
+            entity_id=item.id,
+            company_id=item.company_id,
+            label=item.description,
+            description=f"{current_user.full_name} actualizo la integracion de material {item.description}",
+            metadata={
+                "modelo_id": house_model_id,
+                "material_id": item.material_id,
+                "estado": item.validation_status,
+            },
+        )
     db.commit()
     db.refresh(item)
     return item
@@ -607,6 +643,18 @@ def create_material_from_requirement(
     if existing_id is not None:
         item.material_id = existing_id
         item.validation_status = "validated"
+        record_event(
+            db,
+            current_user,
+            module="modelos",
+            action="link",
+            entity_type="HouseModelMaterialRequirement",
+            entity_id=item.id,
+            company_id=item.company_id,
+            label=item.description,
+            description=f"{current_user.full_name} vinculo material existente desde explosion {item.description}",
+            metadata={"modelo_id": house_model_id, "material_id": existing_id},
+        )
         db.commit()
         db.refresh(item)
         return item
@@ -624,6 +672,18 @@ def create_material_from_requirement(
     db.flush()
     item.material_id = material.id
     item.validation_status = "validated"
+    record_event(
+        db,
+        current_user,
+        module="modelos",
+        action="create",
+        entity_type="Material",
+        entity_id=material.id,
+        company_id=material.company_id,
+        label=material.name,
+        description=f"{current_user.full_name} creo material desde explosion {material.name}",
+        metadata={"modelo_id": house_model_id, "partida_id": item.id},
+    )
     db.commit()
     db.refresh(item)
     return item
@@ -643,6 +703,8 @@ def update_budget_activity(
     activity = get_or_404(db, HouseModelBudgetActivity, activity_id)
     _require_model_child(db, current_user, house_model_id, activity)
     data = payload.model_dump(exclude_unset=True)
+    if data.get("validation_status") == "ignored":
+        data["construction_concept_id"] = None
     if "construction_concept_id" in data and data["construction_concept_id"] is not None:
         concept = get_or_404(db, ConstructionConcept, data["construction_concept_id"])
         ensure_same_company(current_user, concept)
@@ -651,9 +713,44 @@ def update_budget_activity(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El concepto no pertenece a la misma constructora",
             )
+        data.setdefault("validation_status", "validated")
+    elif "construction_concept_id" in data and data["construction_concept_id"] is None:
+        data.setdefault("validation_status", "pending")
+    if (
+        data.get("validation_status") == "validated"
+        and data.get("construction_concept_id", activity.construction_concept_id) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Para integrar la actividad primero vincula o crea un concepto de catalogo",
+        )
     for field, value in data.items():
         setattr(activity, field, value)
     _recalculate_document_totals(db, activity.document_id)
+    if data:
+        action = (
+            "ignore"
+            if data.get("validation_status") == "ignored"
+            else "link"
+            if "construction_concept_id" in data
+            else "update"
+        )
+        record_event(
+            db,
+            current_user,
+            module="modelos",
+            action=action,
+            entity_type="HouseModelBudgetActivity",
+            entity_id=activity.id,
+            company_id=activity.company_id,
+            label=activity.description[:255],
+            description=f"{current_user.full_name} actualizo la integracion de actividad {activity.source_code or activity.id}",
+            metadata={
+                "modelo_id": house_model_id,
+                "construction_concept_id": activity.construction_concept_id,
+                "estado": activity.validation_status,
+            },
+        )
     db.commit()
     db.refresh(activity)
     return activity
@@ -676,6 +773,18 @@ def create_concept_from_activity(
     if existing_id is not None:
         activity.construction_concept_id = existing_id
         activity.validation_status = "validated"
+        record_event(
+            db,
+            current_user,
+            module="modelos",
+            action="link",
+            entity_type="HouseModelBudgetActivity",
+            entity_id=activity.id,
+            company_id=activity.company_id,
+            label=activity.description[:255],
+            description=f"{current_user.full_name} vinculo concepto existente desde presupuesto {activity.source_code or activity.id}",
+            metadata={"modelo_id": house_model_id, "construction_concept_id": existing_id},
+        )
         db.commit()
         db.refresh(activity)
         return activity
@@ -693,6 +802,18 @@ def create_concept_from_activity(
     db.flush()
     activity.construction_concept_id = concept.id
     activity.validation_status = "validated"
+    record_event(
+        db,
+        current_user,
+        module="modelos",
+        action="create",
+        entity_type="ConstructionConcept",
+        entity_id=concept.id,
+        company_id=concept.company_id,
+        label=concept.name,
+        description=f"{current_user.full_name} creo concepto desde presupuesto {concept.code}",
+        metadata={"modelo_id": house_model_id, "actividad_id": activity.id},
+    )
     db.commit()
     db.refresh(activity)
     return activity

@@ -15,6 +15,8 @@ ACTION_LABELS = {
     "approve": "aprobo",
     "send": "envio",
     "validate": "valido",
+    "link": "vinculo",
+    "ignore": "ignoro",
     "schedule": "programo",
     "pay": "pago",
     "upload": "cargo",
