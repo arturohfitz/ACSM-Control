@@ -720,6 +720,11 @@ export default function HouseModelsByDeveloperPage() {
     [documents],
   )
 
+  const selectedDocumentTotal = useMemo(
+    () => numberValue(latestExplosion?.total_amount) + numberValue(latestBudget?.total_amount),
+    [latestExplosion, latestBudget],
+  )
+
   const explosionGroups = useMemo(() => buildExplosionGroups(latestExplosion), [latestExplosion])
   const budgetGroups = useMemo(() => buildBudgetGroups(latestBudget), [latestBudget])
 
@@ -1111,41 +1116,41 @@ export default function HouseModelsByDeveloperPage() {
         </aside>
 
         <div className="min-w-0 border-l border-white bg-[#f8fafc]">
-          <div className="border-b border-slate-300 bg-white px-5 py-4">
+          <div className="border-b border-slate-300 bg-white px-5 py-3">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
-                <div className="text-xs font-semibold uppercase text-acsm-muted">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-acsm-muted">
                   Desarrolladora seleccionada
                 </div>
-                <h3 className="mt-1 truncate text-xl font-semibold text-acsm-ink">
+                <h3 className="mt-0.5 truncate text-lg font-semibold text-acsm-ink">
                   {selectedClient?.name ?? 'Sin seleccion'}
                 </h3>
-                <p className="mt-1 text-sm text-acsm-muted">
+                <p className="mt-0.5 text-xs text-acsm-muted">
                   {selectedClient?.contact_name ?? selectedClient?.contact_email ?? 'Sin contacto capturado'}
                 </p>
               </div>
               <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
-                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-semibold uppercase text-acsm-muted">
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                  <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                     Modelos
                   </div>
-                  <div className="mt-1 text-lg font-semibold text-acsm-ink">
+                  <div className="mt-0.5 text-base font-semibold text-acsm-ink">
                     {selectedModels.length}
                   </div>
                 </div>
-                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-semibold uppercase text-acsm-muted">
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                  <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                     m2 promedio
                   </div>
-                  <div className="mt-1 text-lg font-semibold text-acsm-ink">
+                  <div className="mt-0.5 text-base font-semibold text-acsm-ink">
                     {selectedModels.length ? formatNumber(totalM2 / selectedModels.length) : '-'}
                   </div>
                 </div>
-                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                  <div className="text-[11px] font-semibold uppercase text-acsm-muted">
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                  <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                     m2 total
                   </div>
-                  <div className="mt-1 text-lg font-semibold text-acsm-ink">
+                  <div className="mt-0.5 text-base font-semibold text-acsm-ink">
                     {formatNumber(totalM2)}
                   </div>
                 </div>
@@ -1195,7 +1200,7 @@ export default function HouseModelsByDeveloperPage() {
                           <h4 className="truncate text-sm font-semibold text-acsm-ink">
                             {model.name}
                           </h4>
-                          <p className="mt-1 max-w-2xl text-sm text-acsm-muted">
+                          <p className="mt-0.5 max-w-2xl text-xs text-acsm-muted">
                             {model.description || 'Sin descripcion capturada'}
                           </p>
                         </div>
@@ -1229,7 +1234,7 @@ export default function HouseModelsByDeveloperPage() {
                         </div>
                       </div>
                       {isSelectedModel ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="mt-2 flex flex-wrap gap-2">
                           <span
                             className={[
                               'rounded-full border px-2 py-1 text-[11px] font-semibold',
@@ -1252,32 +1257,73 @@ export default function HouseModelsByDeveloperPage() {
                           </span>
                         </div>
                       ) : null}
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                          <div className="text-[11px] font-semibold uppercase text-acsm-muted">m2</div>
-                          <div className="font-semibold text-acsm-ink">
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                          <div className="text-[10px] font-semibold uppercase text-acsm-muted">m2</div>
+                          <div className="mt-0.5 font-semibold text-acsm-ink">
                             {formatNumber(model.construction_m2)}
                           </div>
                         </div>
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                          <div className="text-[11px] font-semibold uppercase text-acsm-muted">
+                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                          <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                             Niveles
                           </div>
-                          <div className="font-semibold text-acsm-ink">{model.levels ?? '-'}</div>
+                          <div className="mt-0.5 font-semibold text-acsm-ink">{model.levels ?? '-'}</div>
                         </div>
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                          <div className="text-[11px] font-semibold uppercase text-acsm-muted">
+                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                          <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                             Recamaras
                           </div>
-                          <div className="font-semibold text-acsm-ink">{model.bedrooms ?? '-'}</div>
+                          <div className="mt-0.5 font-semibold text-acsm-ink">{model.bedrooms ?? '-'}</div>
                         </div>
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                          <div className="text-[11px] font-semibold uppercase text-acsm-muted">Banos</div>
-                          <div className="font-semibold text-acsm-ink">
+                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                          <div className="text-[10px] font-semibold uppercase text-acsm-muted">Banos</div>
+                          <div className="mt-0.5 font-semibold text-acsm-ink">
                             {formatNumber(model.bathrooms)}
                           </div>
                         </div>
                       </div>
+                      {isSelectedModel ? (
+                        <div className="mt-2 grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
+                          <div className="rounded-md border border-blue-100 bg-white px-3 py-1.5">
+                            <div className="text-[10px] font-semibold uppercase text-acsm-muted">
+                              Total explosion
+                            </div>
+                            <div className="mt-0.5 flex items-center justify-between gap-2">
+                              <span className="text-acsm-muted">
+                                {latestExplosion ? `${latestExplosion.total_items} partidas` : 'Pendiente'}
+                              </span>
+                              <span className="font-semibold text-acsm-ink">
+                                {formatCurrency(latestExplosion?.total_amount)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-blue-100 bg-white px-3 py-1.5">
+                            <div className="text-[10px] font-semibold uppercase text-acsm-muted">
+                              Total presupuesto
+                            </div>
+                            <div className="mt-0.5 flex items-center justify-between gap-2">
+                              <span className="text-acsm-muted">
+                                {latestBudget ? `${latestBudget.total_items} partidas` : 'Pendiente'}
+                              </span>
+                              <span className="font-semibold text-acsm-ink">
+                                {formatCurrency(latestBudget?.total_amount)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-slate-300 bg-[#eef4fa] px-3 py-1.5">
+                            <div className="text-[10px] font-semibold uppercase text-acsm-muted">
+                              Total modelo
+                            </div>
+                            <div className="mt-0.5 flex items-center justify-between gap-2">
+                              <span className="text-acsm-muted">Explosion + presupuesto</span>
+                              <span className="font-semibold text-acsm-ink">
+                                {selectedDocumentTotal ? formatCurrency(selectedDocumentTotal) : '-'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                     </article>
                     )
                   })
