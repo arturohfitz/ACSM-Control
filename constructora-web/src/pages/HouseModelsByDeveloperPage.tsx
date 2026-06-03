@@ -139,16 +139,22 @@ function formFromModel(model: HouseModel): ModelForm {
 
 type SummaryRow = {
   id: number
+  order: number
   code: string
   name: string
+  group: string
   unit: string
   quantity: string
+  quantityValue: number
   amount: string
+  amountValue: number
   status: ReviewStatus
   linkedId?: number | null
 }
 
 type IntegrationFilter = 'all' | 'integrated' | 'pending' | 'ignored'
+type RowSort = 'document' | 'code_asc' | 'code_desc' | 'name_asc' | 'amount_desc' | 'amount_asc' | 'quantity_desc' | 'quantity_asc'
+type GroupSort = 'amount_desc' | 'amount_asc' | 'name_asc' | 'count_desc'
 
 type GroupSummaryRow = {
   label: string
@@ -160,6 +166,48 @@ function numberValue(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === '') return 0
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : 0
+}
+
+function normalizeSearch(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+function classifyGroup(label: string) {
+  const value = normalizeSearch(label)
+  if (value.includes('segundo') || value.includes('planta alta') || value.includes('escalera')) {
+    return 'Planta alta'
+  }
+  if (
+    value.includes('primer nivel') ||
+    value.includes('planta baja') ||
+    value.includes('cimentacion') ||
+    value.includes('firme') ||
+    value.includes('preliminar')
+  ) {
+    return 'Planta baja'
+  }
+  if (value.includes('azotea') || value.includes('tinaco')) return 'Azotea'
+  if (value.includes('fachada') || value.includes('banqueta') || value.includes('barda') || value.includes('exterior')) {
+    return 'Exterior'
+  }
+  if (value.includes('instalac') || value.includes('gas') || value.includes('sanitaria') || value.includes('electrica')) {
+    return 'Instalaciones'
+  }
+  if (
+    value.includes('acabado') ||
+    value.includes('mueble') ||
+    value.includes('azulejo') ||
+    value.includes('puerta') ||
+    value.includes('chapa') ||
+    value.includes('ventana') ||
+    value.includes('herrer')
+  ) {
+    return 'Acabados'
+  }
+  return 'General'
 }
 
 function formatCurrency(value: string | number | null | undefined) {
@@ -249,6 +297,11 @@ function DocumentSummary({
   actionBusyKey: string
 }) {
   const [statusFilter, setStatusFilter] = useState<IntegrationFilter>('all')
+  const [groupSearch, setGroupSearch] = useState('')
+  const [groupSort, setGroupSort] = useState<GroupSort>('amount_desc')
+  const [selectedGroup, setSelectedGroup] = useState('')
+  const [rowSearch, setRowSearch] = useState('')
+  const [rowSort, setRowSort] = useState<RowSort>('document')
   const integrationCounts = useMemo(() => {
     return rows.reduce(
       (counts, row) => {
@@ -259,10 +312,37 @@ function DocumentSummary({
       { integrated: 0, pending: 0, ignored: 0 },
     )
   }, [rows])
+  const filteredGroups = useMemo(() => {
+    const search = normalizeSearch(groupSearch.trim())
+    const nextGroups = groups.filter((group) =>
+      search ? normalizeSearch(`${group.label} ${classifyGroup(group.label)}`).includes(search) : true,
+    )
+    return [...nextGroups].sort((left, right) => {
+      if (groupSort === 'name_asc') return left.label.localeCompare(right.label, 'es')
+      if (groupSort === 'count_desc') return right.count - left.count
+      if (groupSort === 'amount_asc') return left.amount - right.amount
+      return right.amount - left.amount
+    })
+  }, [groups, groupSearch, groupSort])
   const filteredRows = useMemo(() => {
-    if (statusFilter === 'all') return rows
-    return rows.filter((row) => integrationStatus(row) === statusFilter)
-  }, [rows, statusFilter])
+    const search = normalizeSearch(rowSearch.trim())
+    const nextRows = rows.filter((row) => {
+      if (statusFilter !== 'all' && integrationStatus(row) !== statusFilter) return false
+      if (selectedGroup && row.group !== selectedGroup) return false
+      if (!search) return true
+      return normalizeSearch(`${row.order} ${row.code} ${row.name} ${row.unit} ${row.group}`).includes(search)
+    })
+    return [...nextRows].sort((left, right) => {
+      if (rowSort === 'code_asc') return left.code.localeCompare(right.code, 'es')
+      if (rowSort === 'code_desc') return right.code.localeCompare(left.code, 'es')
+      if (rowSort === 'name_asc') return left.name.localeCompare(right.name, 'es')
+      if (rowSort === 'amount_desc') return right.amountValue - left.amountValue
+      if (rowSort === 'amount_asc') return left.amountValue - right.amountValue
+      if (rowSort === 'quantity_desc') return right.quantityValue - left.quantityValue
+      if (rowSort === 'quantity_asc') return left.quantityValue - right.quantityValue
+      return left.order - right.order
+    })
+  }, [rows, statusFilter, selectedGroup, rowSearch, rowSort])
   const visibleRows = expanded ? filteredRows : filteredRows.slice(0, 8)
   const bulkBusy = document ? actionBusyKey === `${document.document_type}:bulk` : false
 
@@ -337,20 +417,119 @@ function DocumentSummary({
               </button>
             </div>
           </div>
-          <div className="grid gap-2 border-b border-slate-200 bg-slate-50/70 p-3 sm:grid-cols-2 xl:grid-cols-4">
-            {groups.slice(0, expanded ? groups.length : 6).map((group) => (
-              <div key={group.label} className="rounded-md border border-slate-200 bg-white px-3 py-2">
-                <div className="truncate text-xs font-semibold text-acsm-ink">{group.label}</div>
-                <div className="mt-1 flex items-center justify-between gap-2 text-xs text-acsm-muted">
-                  <span>{group.count} partidas</span>
-                  <span className="font-semibold text-acsm-ink">{formatCurrency(group.amount)}</span>
+          <div className="border-b border-slate-200 bg-slate-50/70 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-semibold text-acsm-ink">Resumen por categoria</div>
+                <div className="text-[11px] text-acsm-muted">
+                  Selecciona una categoria para revisar sus partidas abajo.
                 </div>
               </div>
-            ))}
+              <div className="flex flex-wrap gap-2">
+                <input
+                  value={groupSearch}
+                  onChange={(event) => setGroupSearch(event.target.value)}
+                  placeholder="Buscar categoria"
+                  className="h-9 w-48 rounded-md border border-slate-300 bg-white px-3 text-xs text-acsm-ink"
+                />
+                <select
+                  value={groupSort}
+                  onChange={(event) => setGroupSort(event.target.value as GroupSort)}
+                  className="h-9 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-acsm-ink"
+                >
+                  <option value="amount_desc">Mayor monto</option>
+                  <option value="amount_asc">Menor monto</option>
+                  <option value="count_desc">Mas partidas</option>
+                  <option value="name_asc">A-Z</option>
+                </select>
+              </div>
+            </div>
+            <div className="overflow-hidden rounded-md border border-slate-300 bg-white">
+              <div className="grid grid-cols-[minmax(0,1fr)_120px_90px_120px_110px] gap-2 bg-[#e9f2fb] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted">
+                <div>Categoria</div>
+                <div>Area sugerida</div>
+                <div>Partidas</div>
+                <div>Monto</div>
+                <div>Detalle</div>
+              </div>
+              <div className="max-h-[320px] divide-y divide-slate-100 overflow-auto">
+                {(expanded ? filteredGroups : filteredGroups.slice(0, 6)).map((group) => (
+                  <button
+                    key={group.label}
+                    type="button"
+                    onClick={() => setSelectedGroup((current) => (current === group.label ? '' : group.label))}
+                    className={[
+                      'grid w-full grid-cols-[minmax(0,1fr)_120px_90px_120px_110px] gap-2 px-3 py-2 text-left text-xs transition',
+                      selectedGroup === group.label
+                        ? 'bg-blue-50 shadow-[inset_4px_0_0_#0b7fbd]'
+                        : 'bg-white hover:bg-slate-50',
+                    ].join(' ')}
+                  >
+                    <div className="min-w-0 truncate font-semibold text-acsm-ink">{group.label}</div>
+                    <div className="text-acsm-muted">{classifyGroup(group.label)}</div>
+                    <div className="text-acsm-ink">{group.count}</div>
+                    <div className="font-semibold text-acsm-ink">{formatCurrency(group.amount)}</div>
+                    <div className="font-semibold text-blue-700">
+                      {selectedGroup === group.label ? 'Mostrando' : 'Ver partidas'}
+                    </div>
+                  </button>
+                ))}
+                {filteredGroups.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-xs text-acsm-muted">
+                    No hay categorias con ese filtro.
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            {selectedGroup ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-acsm-muted">
+                <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 font-semibold text-blue-800">
+                  Filtro activo: {selectedGroup}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroup('')}
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1 font-semibold text-acsm-ink hover:bg-slate-50"
+                >
+                  Ver todas
+                </button>
+              </div>
+            ) : null}
           </div>
 
           <div className="divide-y divide-slate-100">
-            <div className="hidden grid-cols-[72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px] gap-2 bg-[#e9f2fb] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted xl:grid">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-3">
+              <div>
+                <div className="text-xs font-semibold text-acsm-ink">Partidas interpretadas</div>
+                <div className="text-[11px] text-acsm-muted">
+                  El orden inicial respeta como llego el documento.
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  value={rowSearch}
+                  onChange={(event) => setRowSearch(event.target.value)}
+                  placeholder="Buscar clave, descripcion o unidad"
+                  className="h-9 w-64 max-w-full rounded-md border border-slate-300 bg-white px-3 text-xs text-acsm-ink"
+                />
+                <select
+                  value={rowSort}
+                  onChange={(event) => setRowSort(event.target.value as RowSort)}
+                  className="h-9 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-acsm-ink"
+                >
+                  <option value="document">Orden del documento</option>
+                  <option value="code_asc">Clave A-Z</option>
+                  <option value="code_desc">Clave Z-A</option>
+                  <option value="name_asc">Descripcion A-Z</option>
+                  <option value="amount_desc">Mayor importe</option>
+                  <option value="amount_asc">Menor importe</option>
+                  <option value="quantity_desc">Mayor cantidad</option>
+                  <option value="quantity_asc">Menor cantidad</option>
+                </select>
+              </div>
+            </div>
+            <div className="hidden grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px] gap-2 bg-[#e9f2fb] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted xl:grid">
+              <div>No.</div>
               <div>Clave</div>
               <div>Descripcion</div>
               <div>Unidad</div>
@@ -363,10 +542,14 @@ function DocumentSummary({
             {visibleRows.map((row, index) => (
               <div
                 key={`${row.code}-${index}`}
-                className={`grid gap-2 px-3 py-3 text-xs xl:grid-cols-[72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px] xl:items-start ${
+                className={`grid gap-2 px-3 py-3 text-xs xl:grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px] xl:items-start ${
                   row.status === 'ignored' ? 'bg-slate-50/80 opacity-75' : ''
                 }`}
               >
+                <div className="flex items-start justify-between gap-3 xl:block">
+                  <span className="text-[10px] font-semibold uppercase text-acsm-muted xl:hidden">No.</span>
+                  <span className="font-semibold text-acsm-muted">{row.order}</span>
+                </div>
                 <div className="flex items-start justify-between gap-3 xl:block">
                   <span className="text-[10px] font-semibold uppercase text-acsm-muted xl:hidden">Clave</span>
                   <span className="font-semibold text-acsm-ink">{row.code}</span>
@@ -1251,13 +1434,17 @@ export default function HouseModelsByDeveloperPage() {
                     )
                   }
                   actionBusyKey={reviewActionKey}
-                  rows={(latestExplosion?.material_requirements ?? []).map((item) => ({
+                  rows={(latestExplosion?.material_requirements ?? []).map((item, index) => ({
                     id: item.id,
+                    order: index + 1,
                     code: item.source_code ?? '-',
                     name: item.description,
+                    group: item.family || 'Sin familia',
                     unit: item.unit,
                     quantity: formatNumber(item.quantity_per_house),
+                    quantityValue: numberValue(item.quantity_per_house),
                     amount: formatCurrency(item.total_cost_reference),
+                    amountValue: numberValue(item.total_cost_reference),
                     status: item.validation_status,
                     linkedId: item.material_id,
                   }))}
@@ -1306,13 +1493,17 @@ export default function HouseModelsByDeveloperPage() {
                     )
                   }
                   actionBusyKey={reviewActionKey}
-                  rows={(latestBudget?.budget_activities ?? []).map((item) => ({
+                  rows={(latestBudget?.budget_activities ?? []).map((item, index) => ({
                     id: item.id,
+                    order: index + 1,
                     code: item.source_code ?? '-',
                     name: item.description,
+                    group: item.chapter_name || item.chapter_code || 'Sin capitulo',
                     unit: item.unit,
                     quantity: formatNumber(item.quantity_per_house),
+                    quantityValue: numberValue(item.quantity_per_house),
                     amount: formatCurrency(item.total_price_reference),
+                    amountValue: numberValue(item.total_price_reference),
                     status: item.validation_status,
                     linkedId: item.construction_concept_id,
                   }))}
