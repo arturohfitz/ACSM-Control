@@ -347,8 +347,8 @@ function DocumentSummary({
   const bulkBusy = document ? actionBusyKey === `${document.document_type}:bulk` : false
 
   return (
-    <div className="overflow-hidden rounded-md border border-slate-300 bg-white shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-300 bg-[linear-gradient(180deg,#ffffff_0%,#edf5fc_100%)] px-4 py-3">
+    <div className="overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_10px_24px_rgba(31,66,110,0.12)]">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#8fb4d4] bg-[linear-gradient(180deg,#f8fbff_0%,#dfeaf5_100%)] px-4 py-3">
         <div>
           <h4 className="text-sm font-semibold text-acsm-ink">{title}</h4>
           <p className="mt-0.5 text-xs text-acsm-muted">{subtitle}</p>
@@ -360,11 +360,11 @@ function DocumentSummary({
         </div>
         {document ? (
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+            <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-2 shadow-sm">
               <div className="text-[10px] font-semibold uppercase text-acsm-muted">Partidas</div>
               <div className="text-sm font-semibold text-acsm-ink">{document.total_items}</div>
             </div>
-            <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+            <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-2 shadow-sm">
               <div className="text-[10px] font-semibold uppercase text-acsm-muted">Total</div>
               <div className="text-sm font-semibold text-acsm-ink">{formatCurrency(document.total_amount)}</div>
             </div>
@@ -381,7 +381,7 @@ function DocumentSummary({
 
       {document ? (
         <div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#aac5dc] bg-[#f7fbff] px-3 py-3">
             <div className="flex flex-wrap gap-2">
               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
                 {integrationCounts.integrated} integradas
@@ -417,7 +417,7 @@ function DocumentSummary({
               </button>
             </div>
           </div>
-          <div className="border-b border-slate-200 bg-slate-50/70 p-3">
+          <div className="border-b border-[#aac5dc] bg-[#eef6fc] p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-xs font-semibold text-acsm-ink">Resumen por categoria</div>
@@ -444,8 +444,8 @@ function DocumentSummary({
                 </select>
               </div>
             </div>
-            <div className="overflow-hidden rounded-md border border-slate-300 bg-white">
-              <div className="grid grid-cols-[minmax(0,1fr)_120px_90px_120px_110px] gap-2 bg-[#e9f2fb] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted">
+            <div className="overflow-hidden rounded-md border border-[#8fb4d4] bg-white shadow-sm">
+              <div className="grid grid-cols-[minmax(0,1fr)_120px_90px_120px_110px] gap-2 border-b border-[#aac5dc] bg-[#d8e8f4] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted">
                 <div>Categoria</div>
                 <div>Area sugerida</div>
                 <div>Partidas</div>
@@ -498,7 +498,7 @@ function DocumentSummary({
           </div>
 
           <div className="divide-y divide-slate-100">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#aac5dc] bg-[#f8fbff] px-3 py-3">
               <div>
                 <div className="text-xs font-semibold text-acsm-ink">Partidas interpretadas</div>
                 <div className="text-[11px] text-acsm-muted">
@@ -528,7 +528,7 @@ function DocumentSummary({
                 </select>
               </div>
             </div>
-            <div className="hidden grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px] gap-2 bg-[#e9f2fb] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted xl:grid">
+            <div className="hidden grid-cols-[54px_72px_minmax(0,1fr)_52px_78px_92px_120px_minmax(160px,220px)_140px] gap-2 border-b border-[#aac5dc] bg-[#d8e8f4] px-3 py-2 text-[10px] font-semibold uppercase text-acsm-muted xl:grid">
               <div>No.</div>
               <div>Clave</div>
               <div>Descripcion</div>
@@ -1033,8 +1033,8 @@ export default function HouseModelsByDeveloperPage() {
   }
 
   return (
-    <section className="mx-auto max-w-[1500px] overflow-hidden rounded-md border border-slate-300 bg-white shadow-[0_18px_42px_rgba(31,66,110,0.13)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-300 bg-[linear-gradient(180deg,#ffffff_0%,#f1f6fb_100%)] px-4 py-3">
+    <section className="mx-auto max-w-[1500px] overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_20px_50px_rgba(31,66,110,0.18)]">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#8fb4d4] bg-[linear-gradient(180deg,#ffffff_0%,#e5f0f9_100%)] px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-acsm-green">
             <Home className="h-4 w-4" aria-hidden="true" />
@@ -1058,8 +1058,8 @@ export default function HouseModelsByDeveloperPage() {
       </div>
 
       <div className="grid min-h-[620px] bg-slate-100/70 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <aside className="border-b border-slate-300 bg-[#e9f0f7] lg:border-b-0 lg:border-r">
-          <div className="border-b border-slate-300 bg-[#dfe9f3] px-3 py-3">
+        <aside className="border-b border-[#8fb4d4] bg-[#dfeaf3] lg:border-b-0 lg:border-r">
+          <div className="border-b border-[#8fb4d4] bg-[#cfdeeb] px-3 py-3">
             <div className="text-xs font-semibold uppercase text-acsm-muted">Desarrolladoras</div>
             <div className="mt-0.5 text-sm font-semibold text-acsm-ink">
               {clients.length} registradas
@@ -1078,7 +1078,7 @@ export default function HouseModelsByDeveloperPage() {
                   className={[
                     'group w-full rounded-md border px-3 py-2 text-left transition',
                     isSelected
-                      ? 'border-[#1f5f9d] bg-white shadow-[0_10px_20px_rgba(31,95,157,0.16)]'
+                      ? 'border-[#1f5f9d] bg-white shadow-[0_10px_20px_rgba(31,95,157,0.18)]'
                       : 'border-slate-300 bg-white/80 hover:border-blue-300 hover:bg-white',
                   ].join(' ')}
                 >
@@ -1115,8 +1115,8 @@ export default function HouseModelsByDeveloperPage() {
           </div>
         </aside>
 
-        <div className="min-w-0 border-l border-white bg-[#f8fafc]">
-          <div className="border-b border-slate-300 bg-white px-5 py-3">
+        <div className="min-w-0 border-l border-white bg-[#f5f9fd]">
+          <div className="border-b border-[#8fb4d4] bg-white px-5 py-3">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-acsm-muted">
@@ -1130,7 +1130,7 @@ export default function HouseModelsByDeveloperPage() {
                 </p>
               </div>
               <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
-                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                <div className="rounded-md border border-[#aac5dc] bg-[#f8fbff] px-3 py-1.5 shadow-sm">
                   <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                     Modelos
                   </div>
@@ -1138,7 +1138,7 @@ export default function HouseModelsByDeveloperPage() {
                     {selectedModels.length}
                   </div>
                 </div>
-                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                <div className="rounded-md border border-[#aac5dc] bg-[#f8fbff] px-3 py-1.5 shadow-sm">
                   <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                     m2 promedio
                   </div>
@@ -1146,7 +1146,7 @@ export default function HouseModelsByDeveloperPage() {
                     {selectedModels.length ? formatNumber(totalM2 / selectedModels.length) : '-'}
                   </div>
                 </div>
-                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                <div className="rounded-md border border-[#aac5dc] bg-[#f8fbff] px-3 py-1.5 shadow-sm">
                   <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                     m2 total
                   </div>
@@ -1160,8 +1160,8 @@ export default function HouseModelsByDeveloperPage() {
 
           <div className="p-5">
             <div className="space-y-4">
-            <div className="overflow-hidden rounded-md border border-slate-300 bg-white shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-300 bg-[#eef4fa] px-3 py-2">
+            <div className="overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_10px_24px_rgba(31,66,110,0.12)]">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#8fb4d4] bg-[#dfeaf5] px-3 py-2">
                 <div>
                   <h3 className="text-sm font-semibold text-acsm-ink">Modelos registrados</h3>
                   <p className="text-xs text-acsm-muted">
@@ -1191,7 +1191,7 @@ export default function HouseModelsByDeveloperPage() {
                       className={[
                         'cursor-pointer px-3 py-3 transition hover:bg-slate-50/70',
                         isSelectedModel
-                          ? 'bg-blue-50/70 shadow-[inset_4px_0_0_#0b7fbd]'
+                          ? 'bg-[#f1f8ff] shadow-[inset_4px_0_0_#0b7fbd]'
                           : 'bg-white',
                       ].join(' ')}
                     >
@@ -1258,25 +1258,25 @@ export default function HouseModelsByDeveloperPage() {
                         </div>
                       ) : null}
                       <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                        <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-1.5">
                           <div className="text-[10px] font-semibold uppercase text-acsm-muted">m2</div>
                           <div className="mt-0.5 font-semibold text-acsm-ink">
                             {formatNumber(model.construction_m2)}
                           </div>
                         </div>
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                        <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-1.5">
                           <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                             Niveles
                           </div>
                           <div className="mt-0.5 font-semibold text-acsm-ink">{model.levels ?? '-'}</div>
                         </div>
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                        <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-1.5">
                           <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                             Recamaras
                           </div>
                           <div className="mt-0.5 font-semibold text-acsm-ink">{model.bedrooms ?? '-'}</div>
                         </div>
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5">
+                        <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-1.5">
                           <div className="text-[10px] font-semibold uppercase text-acsm-muted">Banos</div>
                           <div className="mt-0.5 font-semibold text-acsm-ink">
                             {formatNumber(model.bathrooms)}
@@ -1285,7 +1285,7 @@ export default function HouseModelsByDeveloperPage() {
                       </div>
                       {isSelectedModel ? (
                         <div className="mt-2 grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
-                          <div className="rounded-md border border-blue-100 bg-white px-3 py-1.5">
+                          <div className="rounded-md border border-[#8fb4d4] bg-white px-3 py-1.5 shadow-sm">
                             <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                               Total explosion
                             </div>
@@ -1298,7 +1298,7 @@ export default function HouseModelsByDeveloperPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="rounded-md border border-blue-100 bg-white px-3 py-1.5">
+                          <div className="rounded-md border border-[#8fb4d4] bg-white px-3 py-1.5 shadow-sm">
                             <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                               Total presupuesto
                             </div>
@@ -1311,7 +1311,7 @@ export default function HouseModelsByDeveloperPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="rounded-md border border-slate-300 bg-[#eef4fa] px-3 py-1.5">
+                          <div className="rounded-md border border-[#7ba8cc] bg-[#dfeaf5] px-3 py-1.5 shadow-sm">
                             <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                               Total modelo
                             </div>
@@ -1335,8 +1335,8 @@ export default function HouseModelsByDeveloperPage() {
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-md border border-slate-300 bg-white shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-300 bg-[#eef4fa] px-3 py-3">
+            <div className="overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_10px_24px_rgba(31,66,110,0.12)]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#8fb4d4] bg-[#dfeaf5] px-3 py-3">
                 <div className="flex items-center gap-2">
                   <div className="flex h-8 w-8 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-[#0b7fbd]">
                     <FileText className="h-4 w-4" aria-hidden="true" />
@@ -1358,7 +1358,7 @@ export default function HouseModelsByDeveloperPage() {
               </div>
 
               <div className="grid gap-3 border-b border-slate-200 bg-white p-3 lg:grid-cols-2">
-                <div className="rounded-md border border-dashed border-blue-200 bg-[#f6fbff] p-3">
+                <div className="rounded-md border border-dashed border-[#7ba8cc] bg-[#f6fbff] p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-semibold text-acsm-ink">
@@ -1393,7 +1393,7 @@ export default function HouseModelsByDeveloperPage() {
                   </div>
                 </div>
 
-                <div className="rounded-md border border-dashed border-blue-200 bg-[#f6fbff] p-3">
+                <div className="rounded-md border border-dashed border-[#7ba8cc] bg-[#f6fbff] p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-semibold text-acsm-ink">
