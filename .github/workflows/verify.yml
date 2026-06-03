@@ -9,6 +9,23 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql+psycopg://constructora:constructora@localhost:5432/constructora_db
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: constructora
+          POSTGRES_PASSWORD: constructora
+          POSTGRES_DB: constructora_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U constructora -d constructora_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout
@@ -36,5 +53,17 @@ jobs:
         run: npm ci
         working-directory: constructora-web
 
+      - name: Run database migrations
+        run: |
+          source .venv/bin/activate
+          PYTHONPATH=. alembic upgrade head
+        working-directory: constructora-api
+
       - name: Run verification
         run: ./scripts/verify.sh
+
+      - name: Run database integration tests
+        run: |
+          source .venv/bin/activate
+          RUN_DB_TESTS=1 PYTHONPATH=. python -m unittest discover -s tests -p "*_db.py"
+        working-directory: constructora-api
