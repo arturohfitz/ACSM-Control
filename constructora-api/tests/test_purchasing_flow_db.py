@@ -4,19 +4,39 @@ from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
+from app.api.v1.endpoints.inventory import create_reception
 from app.api.v1.endpoints.purchasing import (
+    approve_supplier_quote,
     create_supplier_quote,
     create_supplier_rfq,
+    create_supplier_invoice,
+    create_supplier_payment,
     list_supplier_quote_approvals,
     request_supplier_rfq_approval,
     supplier_rfq_comparison,
+    validate_supplier_invoice,
 )
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
-from app.models import Client, Company, Project, Supplier, SupplierRFQ, User
+from app.models import (
+    Client,
+    Company,
+    Project,
+    ProjectWarehouse,
+    PurchaseOrder,
+    Supplier,
+    SupplierInvoice,
+    SupplierRFQ,
+    User,
+)
+from app.schemas.inventory import MaterialReceptionCreate, MaterialReceptionItemCreate
 from app.schemas.purchasing import (
+    SupplierInvoiceCreate,
+    SupplierPaymentCreate,
     SupplierQuoteCreate,
     SupplierQuoteItemCreate,
     SupplierRFQApprovalRequest,
@@ -60,6 +80,15 @@ class PurchasingFlowDBTest(unittest.TestCase):
             status="draft",
         )
         self.db.add(self.project)
+        self.db.flush()
+        self.warehouse = ProjectWarehouse(
+            company_id=self.company.id,
+            project_id=self.project.id,
+            name=f"Bodega CI {self.suffix}",
+            location="Patio de pruebas",
+            is_active=True,
+        )
+        self.db.add(self.warehouse)
         self.db.flush()
         self.suppliers = [
             Supplier(
@@ -151,6 +180,183 @@ class PurchasingFlowDBTest(unittest.TestCase):
 
         pending = list_supplier_quote_approvals("requested", 0, 20, self.db, self.user)
         self.assertIn(approval.id, {item.id for item in pending})
+
+    def test_purchase_order_reception_invoice_and_payment_controls(self) -> None:
+        rfq = create_supplier_rfq(
+            SupplierRFQCreate(
+                project_id=self.project.id,
+                warehouse_id=self.warehouse.id,
+                title=f"Flujo OC inventario pago {self.suffix}",
+                required_by=date.today() + timedelta(days=10),
+                response_deadline=date.today() + timedelta(days=5),
+                supplier_ids=[supplier.id for supplier in self.suppliers],
+                items=[
+                    SupplierRFQItemCreate(
+                        source_code="BLK-001",
+                        description="Block 12x20x40",
+                        unit="pieza",
+                        quantity=Decimal("100"),
+                    ),
+                    SupplierRFQItemCreate(
+                        source_code="ARE-001",
+                        description="Arena",
+                        unit="m3",
+                        quantity=Decimal("20"),
+                    ),
+                ],
+            ),
+            BackgroundTasks(),
+            self.db,
+            self.user,
+        )
+
+        quote_ids: list[int] = []
+        for index, supplier in enumerate(self.suppliers, start=1):
+            quote = create_supplier_quote(
+                rfq.id,
+                SupplierQuoteCreate(
+                    supplier_id=supplier.id,
+                    quote_number=f"COT-OC-{index}-{self.suffix}",
+                    delivery_days=supplier.average_delivery_days,
+                    payment_terms_days=supplier.payment_terms_days,
+                    items=[
+                        SupplierQuoteItemCreate(
+                            rfq_item_id=rfq.items[0].id,
+                            unit_price=Decimal(10 + index),
+                        ),
+                        SupplierQuoteItemCreate(
+                            rfq_item_id=rfq.items[1].id,
+                            unit_price=Decimal(100 + index),
+                        ),
+                    ],
+                ),
+                self.db,
+                self.user,
+            )
+            quote_ids.append(quote.id)
+
+        request_supplier_rfq_approval(
+            rfq.id,
+            SupplierRFQApprovalRequest(request_notes="Comparativo completo para prueba de OC"),
+            self.db,
+            self.user,
+        )
+
+        selected_quote_id = quote_ids[-1]
+        approval_result = approve_supplier_quote(selected_quote_id, self.db, self.user)
+        purchase_order = approval_result["purchase_order"]
+        expected_list = approval_result["expected_list"]
+
+        self.assertEqual(purchase_order.supplier_quote_id, selected_quote_id)
+        self.assertEqual(purchase_order.status, "issued")
+        self.assertEqual(expected_list.purchase_order_id, purchase_order.id)
+        self.assertEqual(len(expected_list.items), 2)
+
+        purchase_order = self._get_purchase_order(purchase_order.id)
+        first_item, second_item = purchase_order.items
+        create_reception(
+            self.project.id,
+            MaterialReceptionCreate(
+                warehouse_id=self.warehouse.id,
+                expected_list_id=expected_list.id,
+                delivery_reference=f"PARCIAL-{self.suffix}",
+                received_by="Almacen CI",
+                items=[
+                    MaterialReceptionItemCreate(
+                        expected_item_id=expected_list.items[0].id,
+                        received_quantity=first_item.quantity_ordered / Decimal("2"),
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+
+        purchase_order = self._get_purchase_order(purchase_order.id)
+        self.assertEqual(purchase_order.status, "partially_received")
+        self.assertEqual(purchase_order.items[0].status, "partial")
+        self.assertEqual(purchase_order.items[1].status, "pending")
+
+        invoice = create_supplier_invoice(
+            SupplierInvoiceCreate(
+                purchase_order_id=purchase_order.id,
+                invoice_number=f"FAC-BLOQ-{self.suffix}",
+                invoice_date=date.today(),
+                total=purchase_order.subtotal,
+            ),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(invoice.status, "blocked")
+
+        with self.assertRaises(HTTPException) as blocked_payment:
+            create_supplier_payment(
+                SupplierPaymentCreate(
+                    supplier_invoice_id=invoice.id,
+                    amount=invoice.total,
+                    scheduled_date=date.today() + timedelta(days=30),
+                ),
+                self.db,
+                self.user,
+            )
+        self.assertEqual(blocked_payment.exception.status_code, 400)
+        self.assertEqual(blocked_payment.exception.detail, "La factura no esta aprobada para pago")
+
+        create_reception(
+            self.project.id,
+            MaterialReceptionCreate(
+                warehouse_id=self.warehouse.id,
+                expected_list_id=expected_list.id,
+                delivery_reference=f"FINAL-{self.suffix}",
+                received_by="Almacen CI",
+                items=[
+                    MaterialReceptionItemCreate(
+                        expected_item_id=expected_list.items[0].id,
+                        received_quantity=purchase_order.items[0].quantity_ordered
+                        - purchase_order.items[0].received_quantity,
+                    ),
+                    MaterialReceptionItemCreate(
+                        expected_item_id=expected_list.items[1].id,
+                        received_quantity=second_item.quantity_ordered,
+                    ),
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+
+        purchase_order = self._get_purchase_order(purchase_order.id)
+        self.assertEqual(purchase_order.status, "received")
+        self.assertTrue(all(item.status == "complete" for item in purchase_order.items))
+
+        validation = validate_supplier_invoice(invoice.id, self.db, self.user)
+        self.assertEqual(validation.status, "approved_for_payment")
+        self.assertEqual(validation.pending_items, 0)
+
+        invoice = self.db.get(SupplierInvoice, invoice.id)
+        assert invoice is not None
+        payment = create_supplier_payment(
+            SupplierPaymentCreate(
+                supplier_invoice_id=invoice.id,
+                amount=invoice.total,
+                scheduled_date=date.today() + timedelta(days=30),
+                reference=f"PAGO-{self.suffix}",
+            ),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(payment.status, "scheduled")
+        self.db.refresh(invoice)
+        self.assertEqual(invoice.status, "scheduled")
+
+    def _get_purchase_order(self, purchase_order_id: int) -> PurchaseOrder:
+        purchase_order = self.db.scalar(
+            select(PurchaseOrder)
+            .where(PurchaseOrder.id == purchase_order_id)
+            .options(selectinload(PurchaseOrder.items))
+        )
+        assert purchase_order is not None
+        return purchase_order
 
 
 if __name__ == "__main__":
