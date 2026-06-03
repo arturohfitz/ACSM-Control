@@ -1,3 +1,5 @@
+import hashlib
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -135,6 +137,19 @@ def _rfq_exception_snapshot(payload: SupplierRFQCreate | SupplierRFQExceptionCre
     }
 
 
+def _rfq_exception_fingerprint(snapshot_data: dict) -> str:
+    canonical = json.dumps(snapshot_data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _ensure_unique_supplier_ids(supplier_ids: list[int]) -> None:
+    if len(supplier_ids) != len(set(supplier_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La solicitud contiene proveedores duplicados",
+        )
+
+
 def _ensure_exception_matches_payload(
     exception_request: SupplierRFQExceptionRequest,
     payload: SupplierRFQCreate,
@@ -144,7 +159,13 @@ def _ensure_exception_matches_payload(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La excepcion aun no esta aprobada o ya fue utilizada",
         )
-    if exception_request.payload_snapshot != _rfq_exception_snapshot(payload):
+    payload_snapshot = _rfq_exception_snapshot(payload)
+    payload_fingerprint = _rfq_exception_fingerprint(payload_snapshot)
+    if exception_request.payload_fingerprint:
+        matches = exception_request.payload_fingerprint == payload_fingerprint
+    else:
+        matches = exception_request.payload_snapshot == payload_snapshot
+    if not matches:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La excepcion aprobada no coincide con la solicitud actual",
@@ -379,6 +400,7 @@ def request_supplier_rfq_exception(
     current_user: User = Depends(require_permission("supplier_rfq", "create")),
 ) -> SupplierRFQExceptionRequest:
     project = _project_for_user(db, payload.project_id, current_user)
+    _ensure_unique_supplier_ids(payload.supplier_ids)
     suppliers = [_supplier_for_user(db, supplier_id, current_user) for supplier_id in payload.supplier_ids]
     supplier_count = len({supplier.id for supplier in suppliers})
     if supplier_count >= 3:
@@ -390,6 +412,7 @@ def request_supplier_rfq_exception(
         if item.material_id is not None:
             material = get_or_404(db, Material, item.material_id)
             ensure_same_company(current_user, material)
+    payload_snapshot = _rfq_exception_snapshot(payload)
     exception_request = SupplierRFQExceptionRequest(
         company_id=project.company_id,
         project_id=project.id,
@@ -398,7 +421,8 @@ def request_supplier_rfq_exception(
         response_deadline=payload.response_deadline,
         supplier_count=supplier_count,
         item_count=len(payload.items),
-        payload_snapshot=_rfq_exception_snapshot(payload),
+        payload_snapshot=payload_snapshot,
+        payload_fingerprint=_rfq_exception_fingerprint(payload_snapshot),
         request_notes=payload.request_notes.strip(),
         requested_by=current_user.id,
         requested_at=_now(),
@@ -501,6 +525,7 @@ def create_supplier_rfq(
 ) -> SupplierRFQ:
     project = _project_for_user(db, payload.project_id, current_user)
     warehouse = _warehouse_for_project(db, payload.warehouse_id, project)
+    _ensure_unique_supplier_ids(payload.supplier_ids)
     suppliers = [_supplier_for_user(db, supplier_id, current_user) for supplier_id in payload.supplier_ids]
     supplier_count = len({supplier.id for supplier in suppliers})
     approved_exception: SupplierRFQExceptionRequest | None = None

@@ -76,6 +76,7 @@ class SupplierRFQExceptionRequest(TimestampMixin, Base):
     supplier_count: Mapped[int] = mapped_column(Integer, nullable=False)
     item_count: Mapped[int] = mapped_column(Integer, nullable=False)
     payload_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    payload_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
     request_notes: Mapped[str] = mapped_column(Text, nullable=False)
     decision_notes: Mapped[str | None] = mapped_column(Text)
     requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)

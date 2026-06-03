@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { MailCheck, RefreshCw, Save, Send, Settings } from 'lucide-react'
 
 import { brand } from '../config/brand'
+import { useAuth } from '../auth/AuthContext'
 import { apiRequest } from '../lib/api'
 
 type EmailSettings = {
@@ -81,6 +82,9 @@ function fromSettings(settings: EmailSettings | null): EmailForm {
 }
 
 export default function SettingsPage() {
+  const { hasPermission } = useAuth()
+  const canEditSettings = hasPermission('settings:edit')
+  const canTestEmail = hasPermission('settings:test_email')
   const [settings, setSettings] = useState<EmailSettings | null>(null)
   const [form, setForm] = useState<EmailForm>(emptyForm)
   const [testRecipient, setTestRecipient] = useState('info@acsmcontrol.com')
@@ -114,6 +118,10 @@ export default function SettingsPage() {
 
   async function saveEmailSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!canEditSettings) {
+      setError('No tienes permiso para editar la configuracion.')
+      return
+    }
     setSaving(true)
     setError('')
     setMessage('')
@@ -143,6 +151,10 @@ export default function SettingsPage() {
   }
 
   async function sendTestEmail() {
+    if (!canTestEmail) {
+      setError('No tienes permiso para probar el correo.')
+      return
+    }
     setError('')
     setMessage('')
     try {
@@ -220,6 +232,7 @@ export default function SettingsPage() {
                   Nombre remitente
                   <input
                     value={form.sender_name}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ sender_name: event.target.value })}
                     className="mt-1 h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
                   />
@@ -229,6 +242,7 @@ export default function SettingsPage() {
                   <input
                     type="email"
                     value={form.sender_email}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ sender_email: event.target.value })}
                     className="mt-1 h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
                   />
@@ -238,6 +252,7 @@ export default function SettingsPage() {
                   <input
                     type="email"
                     value={form.reply_to_email}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ reply_to_email: event.target.value })}
                     className="mt-1 h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
                   />
@@ -246,6 +261,7 @@ export default function SettingsPage() {
                   Usuario SMTP
                   <input
                     value={form.smtp_username}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ smtp_username: event.target.value })}
                     className="mt-1 h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
                   />
@@ -254,6 +270,7 @@ export default function SettingsPage() {
                   Servidor SMTP
                   <input
                     value={form.smtp_host}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ smtp_host: event.target.value })}
                     className="mt-1 h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
                   />
@@ -263,6 +280,7 @@ export default function SettingsPage() {
                   <input
                     type="number"
                     value={form.smtp_port}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ smtp_port: event.target.value })}
                     className="mt-1 h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
                   />
@@ -272,6 +290,7 @@ export default function SettingsPage() {
                   <input
                     type="password"
                     value={form.smtp_password}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ smtp_password: event.target.value })}
                     placeholder={
                       settings?.smtp_password_set
@@ -288,6 +307,7 @@ export default function SettingsPage() {
                   <input
                     type="checkbox"
                     checked={form.smtp_use_ssl}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ smtp_use_ssl: event.target.checked })}
                   />
                   Usar SSL
@@ -296,6 +316,7 @@ export default function SettingsPage() {
                   <input
                     type="checkbox"
                     checked={form.smtp_use_tls}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ smtp_use_tls: event.target.checked })}
                   />
                   Usar TLS
@@ -304,6 +325,7 @@ export default function SettingsPage() {
                   <input
                     type="checkbox"
                     checked={form.is_active}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ is_active: event.target.checked })}
                   />
                   Configuracion activa
@@ -321,6 +343,7 @@ export default function SettingsPage() {
                   Servidor IMAP
                   <input
                     value={form.imap_host}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ imap_host: event.target.value })}
                     className="mt-1 h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
                   />
@@ -330,6 +353,7 @@ export default function SettingsPage() {
                   <input
                     type="number"
                     value={form.imap_port}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ imap_port: event.target.value })}
                     className="mt-1 h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
                   />
@@ -338,6 +362,7 @@ export default function SettingsPage() {
                   Usuario IMAP
                   <input
                     value={form.imap_username}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ imap_username: event.target.value })}
                     className="mt-1 h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
                   />
@@ -347,6 +372,7 @@ export default function SettingsPage() {
                   <input
                     type="password"
                     value={form.imap_password}
+                    disabled={!canEditSettings}
                     onChange={(event) => patchForm({ imap_password: event.target.value })}
                     placeholder={
                       settings?.imap_password_set
@@ -362,7 +388,7 @@ export default function SettingsPage() {
             <div className="flex justify-end">
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || !canEditSettings}
                 className="inline-flex h-11 items-center gap-2 rounded-xl bg-gradient-to-r from-blue-800 to-sky-600 px-5 text-sm font-bold text-white shadow-lg shadow-blue-900/20 hover:from-blue-900 hover:to-sky-700 disabled:opacity-60"
               >
                 <Save className="h-4 w-4" aria-hidden="true" />
@@ -411,12 +437,14 @@ export default function SettingsPage() {
               <input
                 type="email"
                 value={testRecipient}
+                disabled={!canTestEmail}
                 onChange={(event) => setTestRecipient(event.target.value)}
                 className="h-11 w-full rounded-xl border border-acsm-line px-3 text-sm"
               />
               <button
                 type="button"
                 onClick={() => void sendTestEmail()}
+                disabled={!canTestEmail}
                 className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 text-sm font-bold text-blue-800 hover:bg-blue-100"
               >
                 <Send className="h-4 w-4" aria-hidden="true" />

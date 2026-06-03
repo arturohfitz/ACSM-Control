@@ -249,6 +249,7 @@ class SupplierRFQExceptionRead(TimestampRead):
     supplier_count: int
     item_count: int
     payload_snapshot: dict
+    payload_fingerprint: str | None = None
     request_notes: str
     decision_notes: str | None = None
     requested_by: int | None = None

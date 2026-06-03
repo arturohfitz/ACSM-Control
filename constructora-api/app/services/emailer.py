@@ -4,6 +4,7 @@ from html import escape
 import smtplib
 
 from app.models import SupplierRFQ, SystemEmailSettings
+from app.services.secrets import decrypt_secret
 
 
 class EmailConfigurationError(RuntimeError):
@@ -29,6 +30,9 @@ def send_email(
     html_body: str | None = None,
 ) -> None:
     _require_config(settings)
+    smtp_password = decrypt_secret(settings.smtp_password)
+    if not smtp_password:
+        raise EmailConfigurationError("Falta contrasena SMTP")
     clean_recipients = [recipient.strip() for recipient in recipients if recipient and recipient.strip()]
     if not clean_recipients:
         raise EmailConfigurationError("No hay destinatarios validos")
@@ -45,14 +49,14 @@ def send_email(
 
     if settings.smtp_use_ssl:
         with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=25) as server:
-            server.login(settings.smtp_username, settings.smtp_password)
+            server.login(settings.smtp_username, smtp_password)
             server.send_message(message)
         return
 
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=25) as server:
         if settings.smtp_use_tls:
             server.starttls()
-        server.login(settings.smtp_username, settings.smtp_password)
+        server.login(settings.smtp_username, smtp_password)
         server.send_message(message)
 
 

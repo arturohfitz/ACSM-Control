@@ -42,8 +42,29 @@ El archivo `.env` ya trae valores locales de arranque. Ajusta al menos:
 ```env
 DATABASE_URL=postgresql+psycopg://constructora:constructora@localhost:5432/constructora_db
 SECRET_KEY=change-this-secret-key
+CORS_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 ADMIN_EMAIL=admin@acsm-control.local
 ADMIN_PASSWORD=Admin12345!
+```
+
+Para produccion el sistema bloquea el arranque si detecta valores inseguros. Define:
+
+```env
+ENVIRONMENT=production
+DATABASE_URL=postgresql+psycopg://usuario:password@host:5432/base
+SECRET_KEY=una-cadena-larga-y-unica-de-al-menos-32-caracteres
+CORS_ORIGINS=https://acsmcontrol.com,https://www.acsmcontrol.com
+ADMIN_EMAIL=correo-admin-real@dominio.com
+ADMIN_PASSWORD=una-contrasena-fuerte-unica
+EMAIL_ENCRYPTION_KEY=llave-fernet-generada
+```
+
+La llave `EMAIL_ENCRYPTION_KEY` cifra las credenciales SMTP/IMAP guardadas en Ajustes. Puedes generar una llave con:
+
+```bash
+cd constructora-api
+source .venv/bin/activate
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 ## Crear base de datos PostgreSQL

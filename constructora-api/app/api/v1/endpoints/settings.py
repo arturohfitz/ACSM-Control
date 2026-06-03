@@ -8,7 +8,9 @@ from app.api.deps import require_permission
 from app.db.session import get_db
 from app.models import SystemEmailSettings, User
 from app.schemas.system_settings import EmailSettingsRead, EmailSettingsUpsert, EmailTestRequest, EmailTestResult
+from app.services.audit import record_event, snapshot
 from app.services.emailer import send_email
+from app.services.secrets import encrypt_secret
 from app.services.tenancy import company_id_for_write, get_user_company_id
 
 
@@ -64,21 +66,68 @@ def get_email_settings(
 def upsert_email_settings(
     payload: EmailSettingsUpsert,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "view")),
+    current_user: User = Depends(require_permission("settings", "edit")),
 ) -> EmailSettingsRead:
     target_company_id = company_id_for_write(current_user, payload.company_id)
     settings = db.scalar(
         select(SystemEmailSettings).where(SystemEmailSettings.company_id == target_company_id)
     )
     data = payload.model_dump(exclude={"company_id"})
+    before = snapshot(settings) if settings else None
+    if data.get("smtp_password") not in {None, ""}:
+        data["smtp_password"] = encrypt_secret(data["smtp_password"])
+    if data.get("imap_password") not in {None, ""}:
+        data["imap_password"] = encrypt_secret(data["imap_password"])
     if settings is None:
         settings = SystemEmailSettings(company_id=target_company_id, **data)
         db.add(settings)
+        db.flush()
+        action = "create"
     else:
         for key, value in data.items():
             if key in {"smtp_password", "imap_password"} and value in {None, ""}:
                 continue
             setattr(settings, key, value)
+        action = "update"
+    metadata = {
+        "smtp_password_set": bool(settings.smtp_password),
+        "imap_password_set": bool(settings.imap_password),
+    }
+    if before is not None:
+        after = snapshot(
+            settings,
+            [
+                "sender_name",
+                "sender_email",
+                "reply_to_email",
+                "smtp_host",
+                "smtp_port",
+                "smtp_username",
+                "smtp_use_ssl",
+                "smtp_use_tls",
+                "imap_host",
+                "imap_port",
+                "imap_username",
+                "is_active",
+            ],
+        )
+        metadata["antes"] = {
+            key: before.get(key)
+            for key in after
+        }
+        metadata["despues"] = after
+    record_event(
+        db,
+        current_user,
+        module="ajustes",
+        action=action,
+        entity_type="SystemEmailSettings",
+        entity_id=settings.id,
+        company_id=settings.company_id,
+        label=settings.sender_email,
+        description=f"{current_user.full_name} actualizo la configuracion de correo",
+        metadata=metadata,
+    )
     db.commit()
     db.refresh(settings)
     return _serialize(settings)
@@ -89,7 +138,7 @@ def test_email_settings(
     payload: EmailTestRequest,
     company_id: int | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("settings", "view")),
+    current_user: User = Depends(require_permission("settings", "test_email")),
 ) -> EmailTestResult:
     target_company_id = _company_id(current_user, company_id)
     settings = db.scalar(
@@ -114,6 +163,18 @@ def test_email_settings(
         settings.last_test_status = "error"
         settings.last_test_message = str(exc)
         settings.last_tested_at = datetime.now(timezone.utc)
+        record_event(
+            db,
+            current_user,
+            module="ajustes",
+            action="test_email",
+            entity_type="SystemEmailSettings",
+            entity_id=settings.id,
+            company_id=settings.company_id,
+            label=settings.sender_email,
+            description=f"{current_user.full_name} probo el correo con error",
+            metadata={"resultado": "error", "destinatario": recipient, "mensaje": str(exc)},
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -123,5 +184,17 @@ def test_email_settings(
     settings.last_test_status = "ok"
     settings.last_test_message = f"Correo de prueba enviado a {recipient}"
     settings.last_tested_at = datetime.now(timezone.utc)
+    record_event(
+        db,
+        current_user,
+        module="ajustes",
+        action="test_email",
+        entity_type="SystemEmailSettings",
+        entity_id=settings.id,
+        company_id=settings.company_id,
+        label=settings.sender_email,
+        description=f"{current_user.full_name} probo el correo correctamente",
+        metadata={"resultado": "ok", "destinatario": recipient},
+    )
     db.commit()
     return EmailTestResult(ok=True, message=settings.last_test_message)

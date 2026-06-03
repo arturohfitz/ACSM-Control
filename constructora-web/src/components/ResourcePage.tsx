@@ -129,6 +129,8 @@ const permissionActionLabels: Record<string, string> = {
   receive: 'Recibir material',
   view_costs: 'Ver costos',
   view_profit: 'Ver utilidad',
+  test_email: 'Probar correo',
+  request_approval: 'Solicitar aprobacion',
 }
 
 function PermissionChecklist({

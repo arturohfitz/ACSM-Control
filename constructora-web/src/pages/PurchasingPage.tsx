@@ -181,6 +181,20 @@ function formatDate(value?: string | null) {
   )
 }
 
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -453,7 +467,7 @@ export default function PurchasingPage() {
         (entry) =>
           entry.status === 'approved' &&
           !entry.rfq_id &&
-          JSON.stringify(entry.payload_snapshot) === JSON.stringify(rfqDraftSnapshot),
+          stableStringify(entry.payload_snapshot) === stableStringify(rfqDraftSnapshot),
       ) ?? null,
     [rfqDraftSnapshot, rfqExceptions],
   )
@@ -462,7 +476,7 @@ export default function PurchasingPage() {
       rfqExceptions.find(
         (entry) =>
           entry.status === 'requested' &&
-          JSON.stringify(entry.payload_snapshot) === JSON.stringify(rfqDraftSnapshot),
+          stableStringify(entry.payload_snapshot) === stableStringify(rfqDraftSnapshot),
       ) ?? null,
     [rfqDraftSnapshot, rfqExceptions],
   )
