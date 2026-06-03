@@ -9,6 +9,15 @@ const user = {
   permissions: [],
 }
 
+const limitedUser = {
+  id: 2,
+  full_name: 'Capturista Desarrolladoras',
+  email: 'capturista@acsm-control.local',
+  is_active: true,
+  is_master_admin: false,
+  permissions: ['clients:view'],
+}
+
 const projects = [{ id: 1, name: 'Privada Encinos' }]
 
 const materials = [
@@ -61,7 +70,7 @@ const rfqs = [
   },
 ]
 
-async function mockApi(page: Page) {
+async function mockApi(page: Page, currentUser = user) {
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -78,7 +87,7 @@ async function mockApi(page: Page) {
     if (path === '/auth/login' && method === 'POST') {
       return json({ access_token: 'test-token', token_type: 'bearer' })
     }
-    if (path === '/auth/me') return json(user)
+    if (path === '/auth/me') return json(currentUser)
     if (path === '/projects') return json(projects)
     if (path === '/materials') return json(materials)
     if (path === '/purchasing/suppliers') return json(suppliers)
@@ -144,6 +153,18 @@ test('menu principal despliega y contrae submenus por modulo', async ({ page }) 
 
   await page.getByRole('link', { name: /^Inicio$/i }).click()
   await expect(page.getByRole('link', { name: /Recepcion por OC/i })).toBeHidden()
+})
+
+test('menu oculta modulos sin permiso para usuarios operativos', async ({ page }) => {
+  await mockApi(page, limitedUser)
+  await authenticate(page)
+  await page.goto('/')
+
+  await expect(page.getByRole('heading', { name: 'Inicio' })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Desarrolladoras/i })).toBeVisible()
+  await expect(page.getByRole('link', { name: /^Compras$/i })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /^Inventario$/i })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /^Roles$/i })).toHaveCount(0)
 })
 
 test('compras separa detalle de solicitud y captura de cotizacion', async ({ page }) => {
