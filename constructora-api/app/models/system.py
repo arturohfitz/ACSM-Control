@@ -31,3 +31,25 @@ class SystemEmailSettings(TimestampMixin, Base):
     last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_test_status: Mapped[str | None] = mapped_column(String(40))
     last_test_message: Mapped[str | None] = mapped_column(Text)
+
+
+class EmailOutboxMessage(TimestampMixin, Base):
+    __tablename__ = "email_outbox_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    message_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    related_entity_type: Mapped[str | None] = mapped_column(String(120), index=True)
+    related_entity_id: Mapped[str | None] = mapped_column(String(80), index=True)
+    recipient_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    recipient_name: Mapped[str | None] = mapped_column(String(200))
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    text_body: Mapped[str] = mapped_column(Text, nullable=False)
+    html_body: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="pending", nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

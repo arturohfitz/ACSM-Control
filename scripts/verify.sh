@@ -11,6 +11,14 @@ echo "== Backend: compilacion Python =="
 )
 
 echo
+echo "== Backend: pruebas unitarias =="
+(
+  cd "$ROOT_DIR/constructora-api"
+  source .venv/bin/activate
+  PYTHONPATH=. python -m unittest discover -s tests
+)
+
+echo
 echo "== Frontend: build =="
 (
   cd "$ROOT_DIR/constructora-web"

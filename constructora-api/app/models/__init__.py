@@ -39,7 +39,7 @@ from app.models.purchasing import (
     SupplierRFQItem,
     SupplierRFQSupplier,
 )
-from app.models.system import SystemEmailSettings
+from app.models.system import EmailOutboxMessage, SystemEmailSettings
 from app.models.user import Permission, Role, RolePermission, User, UserRole
 
 __all__ = [
@@ -51,6 +51,7 @@ __all__ = [
     "ConstructionConcept",
     "ExpectedMaterialItem",
     "ExpectedMaterialList",
+    "EmailOutboxMessage",
     "HouseModel",
     "HouseModelBudgetActivity",
     "HouseModelConcept",

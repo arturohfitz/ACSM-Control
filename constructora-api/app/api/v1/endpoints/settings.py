@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -6,15 +7,24 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.db.session import get_db
-from app.models import SystemEmailSettings, User
-from app.schemas.system_settings import EmailSettingsRead, EmailSettingsUpsert, EmailTestRequest, EmailTestResult
+from app.models import EmailOutboxMessage, SystemEmailSettings, User
+from app.schemas.system_settings import (
+    EmailOutboxMessageRead,
+    EmailOutboxProcessResult,
+    EmailSettingsRead,
+    EmailSettingsUpsert,
+    EmailTestRequest,
+    EmailTestResult,
+)
 from app.services.audit import record_event, snapshot
+from app.services.email_outbox import process_pending_email_outbox
 from app.services.emailer import send_email
 from app.services.secrets import encrypt_secret
 from app.services.tenancy import company_id_for_write, get_user_company_id
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _company_id(current_user: User, requested_company_id: int | None = None) -> int:
@@ -160,6 +170,7 @@ def test_email_settings(
             html_body="<p>Esta es una prueba de configuracion de correo desde <strong>ACSM Control</strong>.</p>",
         )
     except Exception as exc:
+        logger.exception("No fue posible enviar correo de prueba a %s", recipient)
         settings.last_test_status = "error"
         settings.last_test_message = str(exc)
         settings.last_tested_at = datetime.now(timezone.utc)
@@ -198,3 +209,48 @@ def test_email_settings(
     )
     db.commit()
     return EmailTestResult(ok=True, message=settings.last_test_message)
+
+
+@router.get("/email/outbox", response_model=list[EmailOutboxMessageRead])
+def list_email_outbox(
+    company_id: int | None = None,
+    delivery_status: str | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("settings", "view")),
+) -> list[EmailOutboxMessage]:
+    target_company_id = _company_id(current_user, company_id)
+    statement = (
+        select(EmailOutboxMessage)
+        .where(EmailOutboxMessage.company_id == target_company_id)
+        .order_by(EmailOutboxMessage.created_at.desc())
+        .limit(min(max(limit, 1), 500))
+    )
+    if delivery_status:
+        statement = statement.where(EmailOutboxMessage.status == delivery_status)
+    return list(db.scalars(statement).all())
+
+
+@router.post("/email/outbox/process", response_model=EmailOutboxProcessResult)
+def process_email_outbox(
+    company_id: int | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("settings", "test_email")),
+) -> EmailOutboxProcessResult:
+    target_company_id = _company_id(current_user, company_id)
+    result = process_pending_email_outbox(db, company_id=target_company_id, limit=min(max(limit, 1), 200))
+    record_event(
+        db,
+        current_user,
+        module="ajustes",
+        action="process_email_outbox",
+        entity_type="EmailOutboxMessage",
+        entity_id=None,
+        company_id=target_company_id,
+        label="Cola de correo",
+        description=f"{current_user.full_name} proceso la cola de correo",
+        metadata=result,
+    )
+    db.commit()
+    return EmailOutboxProcessResult(**result)

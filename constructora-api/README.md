@@ -204,6 +204,8 @@ Especiales:
 - `POST /api/v1/inventory/projects/{project_id}/quick-documents/parse-pdf`
 - `POST /api/v1/inventory/projects/{project_id}/quick-documents/parse-text`
 - `POST /api/v1/inventory/projects/{project_id}/quick-documents`
+- `GET /api/v1/settings/email/outbox`
+- `POST /api/v1/settings/email/outbox/process`
 - `POST /api/v1/purchasing/supplier-rfqs`
 - `POST /api/v1/purchasing/supplier-rfqs/{rfq_id}/send`
 - `POST /api/v1/purchasing/supplier-rfqs/{rfq_id}/quotes`

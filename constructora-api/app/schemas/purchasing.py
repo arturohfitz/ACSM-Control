@@ -21,6 +21,7 @@ RFQStatus = Literal[
 ]
 RFQSupplierStatus = Literal[
     "invited",
+    "queued",
     "sent",
     "missing_email",
     "email_error",

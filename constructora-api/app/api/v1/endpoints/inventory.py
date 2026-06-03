@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 import hashlib
 from io import BytesIO
+import logging
 from pathlib import Path
 import re
 import subprocess
@@ -54,6 +55,7 @@ from app.services.tenancy import ensure_same_company, scoped_select
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 SPANISH_MONTHS = {
@@ -405,18 +407,22 @@ def _extract_pdf_text(file_bytes: bytes, file_name: str) -> str:
             )
             if completed.stdout.strip():
                 return completed.stdout
-        except (FileNotFoundError, subprocess.SubprocessError):
-            pass
+        except FileNotFoundError:
+            logger.info("pdftotext no esta disponible para extraer %s", file_name)
+        except subprocess.SubprocessError as exc:
+            logger.warning("pdftotext fallo al extraer %s: %s", file_name, exc)
 
     try:
         reader = PdfReader(BytesIO(file_bytes))
         text = "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
     except Exception as exc:
+        logger.exception("No fue posible extraer texto del PDF de inventario %s", file_name)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No fue posible extraer texto del PDF",
         ) from exc
     if not text.strip():
+        logger.warning("El PDF de inventario %s no contiene texto extraible", file_name)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El PDF no contiene texto extraible",

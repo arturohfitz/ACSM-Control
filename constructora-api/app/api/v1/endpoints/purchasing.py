@@ -3,7 +3,7 @@ import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -27,7 +27,6 @@ from app.models import (
     SupplierRFQExceptionRequest,
     SupplierRFQItem,
     SupplierRFQSupplier,
-    SystemEmailSettings,
     User,
 )
 from app.schemas.purchasing import (
@@ -59,7 +58,12 @@ from app.schemas.purchasing import (
 )
 from app.services.audit import record_create, record_delete, record_event, record_update, snapshot
 from app.services.crud import get_or_404
-from app.services.emailer import EmailConfigurationError, rfq_email_content, send_email
+from app.services.email_outbox import (
+    has_active_or_sent_message,
+    process_email_outbox_for_company,
+    queue_email,
+)
+from app.services.emailer import rfq_email_content
 from app.services.permissions import user_has_permission
 from app.services.tenancy import company_id_for_write, ensure_same_company, scoped_select
 
@@ -191,25 +195,10 @@ def _sync_purchase_order_status(purchase_order: PurchaseOrder) -> None:
         purchase_order.status = "issued"
 
 
-def _send_rfq_emails(db: Session, rfq: SupplierRFQ) -> tuple[int, int]:
-    settings = db.scalar(
-        select(SystemEmailSettings).where(
-            SystemEmailSettings.company_id == rfq.company_id,
-            SystemEmailSettings.is_active.is_(True),
-        )
-    )
-    sent_at = _now()
-    sent_count = 0
+def _queue_rfq_emails(db: Session, rfq: SupplierRFQ, requested_by: int | None = None) -> tuple[int, int]:
+    queued_count = 0
     error_count = 0
     subject, text_body, html_body = rfq_email_content(rfq)
-
-    if settings is None:
-        rfq.status = "email_error"
-        rfq.notes = (rfq.notes or "") + "\nCorreo no enviado: falta configurar SMTP."
-        for link in rfq.supplier_links:
-            link.status = "email_error"
-            link.notes = "Falta configurar SMTP en Ajustes."
-        return sent_count, len(rfq.supplier_links)
 
     for link in rfq.supplier_links:
         supplier = link.supplier
@@ -219,29 +208,41 @@ def _send_rfq_emails(db: Session, rfq: SupplierRFQ) -> tuple[int, int]:
             link.notes = "Proveedor sin correo de contacto."
             error_count += 1
             continue
-        try:
-            send_email(settings, [recipient], subject, text_body, html_body)
-        except EmailConfigurationError as exc:
-            link.status = "email_error"
-            link.notes = str(exc)
-            error_count += 1
-            continue
-        except Exception as exc:
-            link.status = "email_error"
-            link.notes = f"No fue posible enviar correo: {exc}"
-            error_count += 1
-            continue
-        link.status = "sent"
-        link.sent_at = sent_at
-        link.notes = None
-        sent_count += 1
 
-    if sent_count:
+        if has_active_or_sent_message(
+            db,
+            related_entity_type="SupplierRFQSupplier",
+            related_entity_id=link.id,
+            recipient_email=recipient,
+        ):
+            link.status = "queued"
+            link.notes = "Correo ya esta en cola de envio."
+            queued_count += 1
+            continue
+
+        queue_email(
+            db,
+            company_id=rfq.company_id,
+            requested_by=requested_by,
+            message_type="supplier_rfq",
+            related_entity_type="SupplierRFQSupplier",
+            related_entity_id=link.id,
+            recipient_email=recipient,
+            recipient_name=supplier.name if supplier else None,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+        )
+        link.status = "queued"
+        link.notes = "Correo en cola de envio."
+        queued_count += 1
+
+    if queued_count:
         rfq.status = "sent"
-        rfq.sent_at = sent_at
+        rfq.sent_at = _now()
     else:
         rfq.status = "email_error"
-    return sent_count, error_count
+    return queued_count, error_count
 
 
 def _invoice_status_for_po(purchase_order: PurchaseOrder) -> tuple[str, int, str]:
@@ -520,6 +521,7 @@ def reject_supplier_rfq_exception(
 @router.post("/supplier-rfqs", response_model=SupplierRFQRead, status_code=status.HTTP_201_CREATED)
 def create_supplier_rfq(
     payload: SupplierRFQCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("supplier_rfq", "create")),
 ) -> SupplierRFQ:
@@ -575,7 +577,7 @@ def create_supplier_rfq(
     )
     if rfq is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    sent_count, error_count = _send_rfq_emails(db, rfq)
+    queued_count, error_count = _queue_rfq_emails(db, rfq, requested_by=current_user.id)
     record_event(
         db,
         current_user,
@@ -586,9 +588,11 @@ def create_supplier_rfq(
         company_id=rfq.company_id,
         label=rfq.rfq_number,
         description=f"{current_user.full_name} creo la solicitud a proveedores {rfq.rfq_number}",
-        metadata={"proveedores": len(rfq.supplier_links), "enviados": sent_count, "errores": error_count},
+        metadata={"proveedores": len(rfq.supplier_links), "encolados": queued_count, "errores": error_count},
     )
     db.commit()
+    if queued_count:
+        background_tasks.add_task(process_email_outbox_for_company, rfq.company_id)
     return get_supplier_rfq(rfq.id, db, current_user)
 
 
@@ -635,11 +639,12 @@ def update_supplier_rfq(
 @router.post("/supplier-rfqs/{rfq_id}/send", response_model=SupplierRFQRead)
 def send_supplier_rfq(
     rfq_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("supplier_rfq", "send")),
 ) -> SupplierRFQ:
     rfq = get_supplier_rfq(rfq_id, db, current_user)
-    sent_count, error_count = _send_rfq_emails(db, rfq)
+    queued_count, error_count = _queue_rfq_emails(db, rfq, requested_by=current_user.id)
     record_event(
         db,
         current_user,
@@ -650,9 +655,11 @@ def send_supplier_rfq(
         company_id=rfq.company_id,
         label=rfq.rfq_number,
         description=f"{current_user.full_name} envio la solicitud a proveedores {rfq.rfq_number}",
-        metadata={"enviados": sent_count, "errores": error_count},
+        metadata={"encolados": queued_count, "errores": error_count},
     )
     db.commit()
+    if queued_count:
+        background_tasks.add_task(process_email_outbox_for_company, rfq.company_id)
     return get_supplier_rfq(rfq_id, db, current_user)
 
 

@@ -52,3 +52,27 @@ class EmailTestRequest(BaseModel):
 class EmailTestResult(BaseModel):
     ok: bool
     message: str
+
+
+class EmailOutboxMessageRead(TimestampRead):
+    id: int
+    company_id: int
+    requested_by: int | None = None
+    message_type: str
+    related_entity_type: str | None = None
+    related_entity_id: str | None = None
+    recipient_email: str
+    recipient_name: str | None = None
+    subject: str
+    status: str
+    attempts: int
+    max_attempts: int
+    last_error: str | None = None
+    next_attempt_at: datetime | None = None
+    sent_at: datetime | None = None
+
+
+class EmailOutboxProcessResult(BaseModel):
+    procesados: int
+    enviados: int
+    errores: int

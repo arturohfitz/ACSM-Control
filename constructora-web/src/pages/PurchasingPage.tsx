@@ -280,6 +280,7 @@ function printRfqDocument(rfq: SupplierRFQ) {
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
     draft: 'Borrador',
+    queued: 'En cola',
     sent: 'Enviada',
     email_error: 'Error de correo',
     missing_email: 'Sin correo',
