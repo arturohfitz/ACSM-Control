@@ -689,6 +689,90 @@ def create_material_from_requirement(
     return item
 
 
+@router.post(
+    "/{house_model_id}/documents/{document_id}/integrate-materials",
+    response_model=HouseModelDocumentDetail,
+)
+def integrate_document_materials(
+    house_model_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("materials", "create")),
+) -> HouseModelDocument:
+    document = get_or_404(db, HouseModelDocument, document_id)
+    ensure_same_company(current_user, document)
+    if document.house_model_id != house_model_id or document.document_type != "explosion":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El documento no corresponde a la explosion del modelo indicado",
+        )
+    pending_items = list(
+        db.scalars(
+            select(HouseModelMaterialRequirement)
+            .where(
+                HouseModelMaterialRequirement.document_id == document_id,
+                HouseModelMaterialRequirement.validation_status != "ignored",
+                HouseModelMaterialRequirement.material_id.is_(None),
+            )
+            .order_by(HouseModelMaterialRequirement.sort_order)
+        ).all()
+    )
+    created = 0
+    linked = 0
+    for item in pending_items:
+        existing_id = _material_id_for_description(db, item.company_id, item.description)
+        if existing_id is not None:
+            item.material_id = existing_id
+            linked += 1
+        else:
+            material = Material(
+                company_id=item.company_id,
+                name=item.description,
+                unit=item.unit,
+                current_unit_price=item.unit_cost_reference or Decimal("0"),
+                supplier_name=None,
+                last_price_update=date.today(),
+                is_active=True,
+            )
+            db.add(material)
+            db.flush()
+            item.material_id = material.id
+            created += 1
+        item.validation_status = "validated"
+    if pending_items:
+        record_event(
+            db,
+            current_user,
+            module="modelos",
+            action="link",
+            entity_type="HouseModelDocument",
+            entity_id=document.id,
+            company_id=document.company_id,
+            label=document.file_name,
+            description=(
+                f"{current_user.full_name} integro masivamente materiales "
+                f"de la explosion {document.file_name}"
+            ),
+            metadata={
+                "modelo_id": house_model_id,
+                "documento_id": document.id,
+                "partidas_integradas": len(pending_items),
+                "materiales_creados": created,
+                "materiales_vinculados": linked,
+            },
+        )
+    _recalculate_document_totals(db, document.id)
+    db.commit()
+    return db.scalar(
+        select(HouseModelDocument)
+        .where(HouseModelDocument.id == document.id)
+        .options(
+            selectinload(HouseModelDocument.material_requirements),
+            selectinload(HouseModelDocument.budget_activities),
+        )
+    )
+
+
 @router.patch(
     "/{house_model_id}/budget-activities/{activity_id}",
     response_model=HouseModelBudgetActivityRead,
@@ -817,6 +901,90 @@ def create_concept_from_activity(
     db.commit()
     db.refresh(activity)
     return activity
+
+
+@router.post(
+    "/{house_model_id}/documents/{document_id}/integrate-concepts",
+    response_model=HouseModelDocumentDetail,
+)
+def integrate_document_concepts(
+    house_model_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("construction_concepts", "create")),
+) -> HouseModelDocument:
+    document = get_or_404(db, HouseModelDocument, document_id)
+    ensure_same_company(current_user, document)
+    if document.house_model_id != house_model_id or document.document_type != "budget":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El documento no corresponde al presupuesto del modelo indicado",
+        )
+    pending_activities = list(
+        db.scalars(
+            select(HouseModelBudgetActivity)
+            .where(
+                HouseModelBudgetActivity.document_id == document_id,
+                HouseModelBudgetActivity.validation_status != "ignored",
+                HouseModelBudgetActivity.construction_concept_id.is_(None),
+            )
+            .order_by(HouseModelBudgetActivity.sort_order)
+        ).all()
+    )
+    created = 0
+    linked = 0
+    for activity in pending_activities:
+        existing_id = _concept_id_for_code(db, activity.company_id, activity.source_code)
+        if existing_id is not None:
+            activity.construction_concept_id = existing_id
+            linked += 1
+        else:
+            concept = ConstructionConcept(
+                company_id=activity.company_id,
+                code=activity.source_code or f"HM-{activity.id}",
+                name=activity.description[:200],
+                unit=activity.unit,
+                description=activity.description,
+                default_waste_percent=Decimal("0"),
+                default_indirect_percent=Decimal("0"),
+            )
+            db.add(concept)
+            db.flush()
+            activity.construction_concept_id = concept.id
+            created += 1
+        activity.validation_status = "validated"
+    if pending_activities:
+        record_event(
+            db,
+            current_user,
+            module="modelos",
+            action="link",
+            entity_type="HouseModelDocument",
+            entity_id=document.id,
+            company_id=document.company_id,
+            label=document.file_name,
+            description=(
+                f"{current_user.full_name} integro masivamente conceptos "
+                f"del presupuesto {document.file_name}"
+            ),
+            metadata={
+                "modelo_id": house_model_id,
+                "documento_id": document.id,
+                "partidas_integradas": len(pending_activities),
+                "conceptos_creados": created,
+                "conceptos_vinculados": linked,
+            },
+        )
+    _recalculate_document_totals(db, document.id)
+    db.commit()
+    return db.scalar(
+        select(HouseModelDocument)
+        .where(HouseModelDocument.id == document.id)
+        .options(
+            selectinload(HouseModelDocument.material_requirements),
+            selectinload(HouseModelDocument.budget_activities),
+        )
+    )
 
 
 @router.patch("/{house_model_id}", response_model=HouseModelRead)
