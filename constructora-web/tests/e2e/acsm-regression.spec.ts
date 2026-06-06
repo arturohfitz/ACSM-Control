@@ -103,6 +103,8 @@ type SupplierQuote = {
 
 type PurchaseOrder = {
   id: number
+  project_id: number
+  warehouse_id: number
   po_number: string
   status: string
   issued_at: string
@@ -119,6 +121,27 @@ type PurchaseOrder = {
     line_total: string
     received_quantity: string
     status: string
+  }>
+}
+
+type ExpectedList = {
+  id: number
+  warehouse_id: number
+  purchase_order_id: number
+  name: string
+  document_number: string
+  supplier_name: string
+  source_document_name: string | null
+  source_document_hash: string | null
+  items: Array<{
+    id: number
+    purchase_order_item_id: number
+    description: string
+    unit: string
+    expected_quantity: string
+    received_quantity: string
+    status: string
+    notes: string | null
   }>
 }
 
@@ -183,6 +206,7 @@ function makeQuote(rfq: Rfq, supplier: Supplier, quoteId: number, price = 20): S
 }
 
 async function mockApi(page: Page, currentUser = user) {
+  const warehouses = [{ id: 1, project_id: 1, name: 'Bodega Privada Encinos', location: 'Obra' }]
   let rfqState = clone(rfqs)
   const quotesByRfq: Record<number, SupplierQuote[]> = {
     10: suppliers.map((supplier, index) => makeQuote(rfqs[0], supplier, 600 + index, 22 + index)),
@@ -190,12 +214,47 @@ async function mockApi(page: Page, currentUser = user) {
   }
   let approvals: Approval[] = []
   let purchaseOrders: PurchaseOrder[] = []
+  let expectedLists: ExpectedList[] = []
+  let receptions: Array<{
+    id: number
+    received_at: string
+    delivery_reference: string | null
+    received_by: string | null
+    items: Array<{ id: number; description: string; received_quantity: string; unit: string }>
+  }> = []
+  let stockItems: Array<{
+    id: number
+    warehouse_id: number
+    description: string
+    unit: string
+    quantity_on_hand: string
+  }> = []
   let nextRfqId = 20
   let nextQuoteId = 700
 
   const upsertRfq = (rfqId: number, patch: Partial<Rfq>) => {
     rfqState = rfqState.map((rfq) => (rfq.id === rfqId ? { ...rfq, ...patch } : rfq))
   }
+  const inventoryStatus = () =>
+    expectedLists.flatMap((list) =>
+      list.items.map((item) => {
+        const expected = Number(item.expected_quantity)
+        const received = Number(item.received_quantity)
+        const pending = Math.max(expected - received, 0)
+        return {
+          expected_item_id: item.id,
+          source_code: null,
+          description: item.description,
+          unit: item.unit,
+          expected_quantity: item.expected_quantity,
+          received_quantity: item.received_quantity,
+          pending_quantity: String(pending),
+          over_received_quantity: '0',
+          status: pending === 0 ? 'complete' : received > 0 ? 'partial' : 'pending',
+          notes: item.notes,
+        }
+      }),
+    )
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
@@ -222,6 +281,14 @@ async function mockApi(page: Page, currentUser = user) {
     if (path.startsWith('/purchasing/supplier-rfq-exceptions')) return json([])
     if (pathname === '/purchasing/purchase-orders' && method === 'GET') return json(purchaseOrders)
     if (pathname === '/purchasing/supplier-quote-approvals') return json(approvals)
+    if (pathname === '/inventory/projects/1/warehouses') return json(warehouses)
+    if (pathname === '/inventory/projects/1/expected-materials') return json(expectedLists)
+    if (pathname === '/inventory/projects/1/status') return json(inventoryStatus())
+    if (pathname === '/inventory/projects/1/missing-materials') {
+      return json(inventoryStatus().filter((item) => Number(item.pending_quantity) > 0))
+    }
+    if (pathname === '/inventory/projects/1/receptions' && method === 'GET') return json(receptions)
+    if (pathname === '/inventory/warehouses/1/stock') return json(stockItems)
 
     if (pathname === '/purchasing/supplier-rfqs' && method === 'POST') {
       const payload = await request.postDataJSON()
@@ -346,6 +413,8 @@ async function mockApi(page: Page, currentUser = user) {
       upsertRfq(quote.rfq_id, { status: 'awarded' })
       const order: PurchaseOrder = {
         id: 800,
+        project_id: 1,
+        warehouse_id: 1,
         po_number: 'OC-202606-0001',
         status: 'issued',
         issued_at: '2026-06-04T12:00:00-06:00',
@@ -365,6 +434,28 @@ async function mockApi(page: Page, currentUser = user) {
         })),
       }
       purchaseOrders = [order]
+      expectedLists = [
+        {
+          id: 810,
+          warehouse_id: 1,
+          purchase_order_id: order.id,
+          name: `Lista esperada ${order.po_number}`,
+          document_number: order.po_number,
+          supplier_name: order.supplier.name,
+          source_document_name: null,
+          source_document_hash: null,
+          items: order.items.map((item) => ({
+            id: 1000 + item.id,
+            purchase_order_item_id: item.id,
+            description: item.description,
+            unit: item.unit,
+            expected_quantity: item.quantity_ordered,
+            received_quantity: '0',
+            status: 'pending',
+            notes: null,
+          })),
+        },
+      ]
       approvals = []
       return json({ purchase_order: order, expected_list: { id: 1 } })
     }
@@ -377,6 +468,81 @@ async function mockApi(page: Page, currentUser = user) {
       )
       return json(purchaseOrders.find((order) => order.id === orderId))
     }
+
+    if (pathname === '/inventory/projects/1/receptions' && method === 'POST') {
+      const payload = await request.postDataJSON()
+      const expectedList = expectedLists.find((list) => list.id === Number(payload.expected_list_id))
+      if (!expectedList) return json({ detail: 'Lista esperada no encontrada' }, 404)
+      const receptionItems = payload.items.map(
+        (itemPayload: { expected_item_id: number; received_quantity: number }, index: number) => {
+          const expectedItem = expectedList.items.find((item) => item.id === itemPayload.expected_item_id)
+          if (!expectedItem) return null
+          const receivedQuantity = Number(itemPayload.received_quantity)
+          expectedItem.received_quantity = String(Number(expectedItem.received_quantity) + receivedQuantity)
+          expectedItem.status =
+            Number(expectedItem.received_quantity) >= Number(expectedItem.expected_quantity)
+              ? 'complete'
+              : 'partial'
+          purchaseOrders = purchaseOrders.map((order) => {
+            if (order.id !== expectedList.purchase_order_id) return order
+            const items = order.items.map((poItem) =>
+              poItem.id === expectedItem.purchase_order_item_id
+                ? {
+                    ...poItem,
+                    received_quantity: String(Number(poItem.received_quantity) + receivedQuantity),
+                    status:
+                      Number(poItem.received_quantity) + receivedQuantity >= Number(poItem.quantity_ordered)
+                        ? 'received'
+                        : 'partially_received',
+                  }
+                : poItem,
+            )
+            const isComplete = items.every(
+              (poItem) => Number(poItem.received_quantity) >= Number(poItem.quantity_ordered),
+            )
+            const hasReceived = items.some((poItem) => Number(poItem.received_quantity) > 0)
+            return {
+              ...order,
+              status: isComplete ? 'received' : hasReceived ? 'partially_received' : 'sent',
+              items,
+            }
+          })
+          const currentStock = stockItems.find(
+            (stock) => stock.description === expectedItem.description && stock.unit === expectedItem.unit,
+          )
+          if (currentStock) {
+            currentStock.quantity_on_hand = String(Number(currentStock.quantity_on_hand) + receivedQuantity)
+          } else {
+            stockItems = [
+              ...stockItems,
+              {
+                id: 1200 + index,
+                warehouse_id: Number(payload.warehouse_id),
+                description: expectedItem.description,
+                unit: expectedItem.unit,
+                quantity_on_hand: String(receivedQuantity),
+              },
+            ]
+          }
+          return {
+            id: 1100 + index,
+            description: expectedItem.description,
+            received_quantity: String(receivedQuantity),
+            unit: expectedItem.unit,
+          }
+        },
+      ).filter(Boolean) as Array<{ id: number; description: string; received_quantity: string; unit: string }>
+      const reception = {
+        id: 100,
+        received_at: '2026-06-05',
+        delivery_reference: payload.delivery_reference,
+        received_by: payload.received_by,
+        items: receptionItems,
+      }
+      receptions = [reception, ...receptions]
+      return json(reception, 201)
+    }
+
     if (path.startsWith('/inventory/projects/')) return json([])
 
     return json([], 200)
@@ -499,4 +665,39 @@ test('compras envia comparativo a aprobacion y gerencia genera orden de compra',
   await expect(page.getByRole('heading', { name: 'Ordenes de compra', level: 2 })).toBeVisible()
   await expect(page.getByText('OC-202606-0001')).toBeVisible()
   await expect(page.getByText('Aceros del Bajio')).toBeVisible()
+})
+
+test('inventario recibe parcialmente una orden de compra generada desde compras', async ({ page }) => {
+  await mockApi(page)
+  await authenticate(page)
+  await page.goto('/purchasing')
+
+  await page.getByRole('button', { name: 'Solicitar aprobacion' }).click()
+  await expect(page.getByText('Solicitud de aprobacion enviada.')).toBeVisible()
+
+  await page.getByRole('link', { name: /Aprobaciones/i }).click()
+  await page.getByRole('button', { name: /Aprobar cotizacion seleccionada y generar OC/i }).click()
+  await expect(page.getByText('Aprobacion registrada. Se genero la orden OC-202606-0001.')).toBeVisible()
+
+  await page.goto('/inventory/purchase-order-receiving')
+  await expect(page.getByRole('heading', { name: 'Recepcion contra orden de compra' })).toBeVisible()
+  await expect(page.getByText('1 pendientes')).toBeVisible()
+
+  await page.getByLabel('Orden de compra').selectOption('800')
+  await expect(page.getByText('Lista esperada OC-202606-0001')).toBeVisible()
+
+  await page.getByPlaceholder('Recibe').fill('Encargado de bodega')
+  await page.locator('tr', { hasText: 'Cemento gris 50kg' }).locator('input[type="number"]').fill('40')
+  await page.getByRole('button', { name: 'Registrar recepcion' }).click()
+  await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
+
+  await page.goto('/inventory/missing')
+  await expect(page.getByRole('heading', { name: 'Faltantes' })).toBeVisible()
+  const missingSection = page.locator('section', { has: page.getByRole('heading', { name: 'Faltantes' }) })
+  const statusSection = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Estatus de materiales' }),
+  })
+  await expect(missingSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('60 saco')).toBeVisible()
+  await expect(statusSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('40 saco')).toBeVisible()
+  await expect(statusSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('partial')).toBeVisible()
 })
