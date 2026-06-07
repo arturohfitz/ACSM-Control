@@ -160,6 +160,31 @@ type Approval = {
   rfq: Rfq
 }
 
+type SupplierInvoice = {
+  id: number
+  supplier_id: number
+  purchase_order_id: number
+  invoice_number: string
+  invoice_date: string
+  due_date: string
+  total: string
+  status: string
+  document_name: string | null
+  notes: string | null
+  supplier: Supplier
+  purchase_order: PurchaseOrder
+}
+
+type SupplierPayment = {
+  id: number
+  supplier_invoice_id: number
+  amount: string
+  scheduled_date: string | null
+  paid_at: string | null
+  status: string
+  reference: string | null
+}
+
 function comparisonFromQuotes(quotes: SupplierQuote[]) {
   return quotes.map((quote) => ({
     supplier_quote_id: quote.id,
@@ -215,6 +240,8 @@ async function mockApi(page: Page, currentUser = user) {
   let approvals: Approval[] = []
   let purchaseOrders: PurchaseOrder[] = []
   let expectedLists: ExpectedList[] = []
+  let supplierInvoices: SupplierInvoice[] = []
+  let supplierPayments: SupplierPayment[] = []
   let receptions: Array<{
     id: number
     received_at: string
@@ -231,9 +258,28 @@ async function mockApi(page: Page, currentUser = user) {
   }> = []
   let nextRfqId = 20
   let nextQuoteId = 700
+  let nextInvoiceId = 9000
+  let nextPaymentId = 9500
 
   const upsertRfq = (rfqId: number, patch: Partial<Rfq>) => {
     rfqState = rfqState.map((rfq) => (rfq.id === rfqId ? { ...rfq, ...patch } : rfq))
+  }
+  const invoiceStateForOrder = (order: PurchaseOrder) => {
+    const pendingItems = order.items.filter(
+      (item) => Number(item.received_quantity) < Number(item.quantity_ordered),
+    ).length
+    if (pendingItems > 0) {
+      return {
+        status: 'blocked',
+        pendingItems,
+        message: `Factura bloqueada: ${pendingItems} partida(s) pendiente(s) por recibir.`,
+      }
+    }
+    return {
+      status: 'approved_for_payment',
+      pendingItems: 0,
+      message: 'Factura validada y aprobada para pago.',
+    }
   }
   const inventoryStatus = () =>
     expectedLists.flatMap((list) =>
@@ -281,6 +327,8 @@ async function mockApi(page: Page, currentUser = user) {
     if (path.startsWith('/purchasing/supplier-rfq-exceptions')) return json([])
     if (pathname === '/purchasing/purchase-orders' && method === 'GET') return json(purchaseOrders)
     if (pathname === '/purchasing/supplier-quote-approvals') return json(approvals)
+    if (pathname === '/purchasing/supplier-invoices' && method === 'GET') return json(supplierInvoices)
+    if (pathname === '/purchasing/supplier-payments' && method === 'GET') return json(supplierPayments)
     if (pathname === '/inventory/projects/1/warehouses') return json(warehouses)
     if (pathname === '/inventory/projects/1/expected-materials') return json(expectedLists)
     if (pathname === '/inventory/projects/1/status') return json(inventoryStatus())
@@ -467,6 +515,92 @@ async function mockApi(page: Page, currentUser = user) {
         order.id === orderId ? { ...order, status: 'sent' } : order,
       )
       return json(purchaseOrders.find((order) => order.id === orderId))
+    }
+
+    if (pathname === '/purchasing/supplier-invoices' && method === 'POST') {
+      const payload = await request.postDataJSON()
+      const order = purchaseOrders.find((entry) => entry.id === Number(payload.purchase_order_id))
+      if (!order) return json({ detail: 'Orden de compra no encontrada' }, 404)
+      const status = invoiceStateForOrder(order)
+      const invoice: SupplierInvoice = {
+        id: nextInvoiceId++,
+        supplier_id: order.supplier_id,
+        purchase_order_id: order.id,
+        invoice_number: payload.invoice_number,
+        invoice_date: payload.invoice_date,
+        due_date: '2026-07-05',
+        total: String(payload.total),
+        status: status.status,
+        document_name: payload.document_name,
+        notes: status.message,
+        supplier: order.supplier,
+        purchase_order: order,
+      }
+      supplierInvoices = [invoice, ...supplierInvoices]
+      return json(invoice, 201)
+    }
+
+    const validateInvoiceMatch = pathname.match(/^\/purchasing\/supplier-invoices\/(\d+)\/validate$/)
+    if (validateInvoiceMatch && method === 'POST') {
+      const invoiceId = Number(validateInvoiceMatch[1])
+      const invoice = supplierInvoices.find((entry) => entry.id === invoiceId)
+      if (!invoice) return json({ detail: 'Factura no encontrada' }, 404)
+      const order = purchaseOrders.find((entry) => entry.id === invoice.purchase_order_id)
+      if (!order) return json({ detail: 'Orden de compra no encontrada' }, 404)
+      const status = invoiceStateForOrder(order)
+      supplierInvoices = supplierInvoices.map((entry) =>
+        entry.id === invoiceId
+          ? { ...entry, status: status.status, notes: status.message, purchase_order: order }
+          : entry,
+      )
+      return json({
+        invoice_id: invoiceId,
+        status: status.status,
+        pending_items: status.pendingItems,
+        message: status.message,
+      })
+    }
+
+    if (pathname === '/purchasing/supplier-payments' && method === 'POST') {
+      const payload = await request.postDataJSON()
+      const invoice = supplierInvoices.find((entry) => entry.id === Number(payload.supplier_invoice_id))
+      if (!invoice) return json({ detail: 'Factura no encontrada' }, 404)
+      if (!['approved_for_payment', 'scheduled'].includes(invoice.status)) {
+        return json({ detail: 'La factura no esta aprobada para pago' }, 400)
+      }
+      const payment: SupplierPayment = {
+        id: nextPaymentId++,
+        supplier_invoice_id: invoice.id,
+        amount: String(payload.amount),
+        scheduled_date: payload.scheduled_date,
+        paid_at: null,
+        status: payload.status,
+        reference: payload.reference,
+      }
+      supplierPayments = [payment, ...supplierPayments]
+      supplierInvoices = supplierInvoices.map((entry) =>
+        entry.id === invoice.id ? { ...entry, status: 'scheduled' } : entry,
+      )
+      return json(payment, 201)
+    }
+
+    const paymentMatch = pathname.match(/^\/purchasing\/supplier-payments\/(\d+)$/)
+    if (paymentMatch && method === 'PATCH') {
+      const paymentId = Number(paymentMatch[1])
+      const payload = await request.postDataJSON()
+      const payment = supplierPayments.find((entry) => entry.id === paymentId)
+      if (!payment) return json({ detail: 'Pago no encontrado' }, 404)
+      supplierPayments = supplierPayments.map((entry) =>
+        entry.id === paymentId
+          ? { ...entry, status: payload.status ?? entry.status, paid_at: payload.paid_at ?? entry.paid_at }
+          : entry,
+      )
+      if (payload.status === 'paid') {
+        supplierInvoices = supplierInvoices.map((entry) =>
+          entry.id === payment.supplier_invoice_id ? { ...entry, status: 'paid' } : entry,
+        )
+      }
+      return json(supplierPayments.find((entry) => entry.id === paymentId))
     }
 
     if (pathname === '/inventory/projects/1/receptions' && method === 'POST') {
@@ -700,4 +834,70 @@ test('inventario recibe parcialmente una orden de compra generada desde compras'
   await expect(missingSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('60 saco')).toBeVisible()
   await expect(statusSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('40 saco')).toBeVisible()
   await expect(statusSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('partial')).toBeVisible()
+})
+
+test('pagos bloquea factura con faltantes y permite pagar al completar recepcion', async ({ page }) => {
+  await mockApi(page)
+  await authenticate(page)
+  await page.goto('/purchasing')
+
+  await page.getByRole('button', { name: 'Solicitar aprobacion' }).click()
+  await expect(page.getByText('Solicitud de aprobacion enviada.')).toBeVisible()
+
+  await page.getByRole('link', { name: /Aprobaciones/i }).click()
+  await page.getByRole('button', { name: /Aprobar cotizacion seleccionada y generar OC/i }).click()
+  await expect(page.getByText('Aprobacion registrada. Se genero la orden OC-202606-0001.')).toBeVisible()
+
+  await page.goto('/inventory/purchase-order-receiving')
+  await page.getByLabel('Orden de compra').selectOption('800')
+  await page.getByPlaceholder('Recibe').fill('Encargado de bodega')
+  await page.locator('tr', { hasText: 'Cemento gris 50kg' }).locator('input[type="number"]').fill('40')
+  await page.getByRole('button', { name: 'Registrar recepcion' }).click()
+  await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
+
+  await page.goto('/supplier-payments')
+  const invoiceSection = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Facturas de proveedores' }),
+  })
+  await invoiceSection.locator('select').first().selectOption('800')
+  await invoiceSection.getByPlaceholder('Folio factura').fill('FAC-001')
+  await invoiceSection.locator('input[type="date"]').fill('2026-06-05')
+  await invoiceSection.getByPlaceholder('Total factura').fill('2200')
+  await invoiceSection.getByRole('button', { name: 'Guardar factura' }).click()
+
+  await expect(page.getByText('Factura FAC-001 registrada como Bloqueada por faltantes.')).toBeVisible()
+  await expect(invoiceSection.locator('tr', { hasText: 'FAC-001' }).getByText('Bloqueada por faltantes')).toBeVisible()
+
+  await invoiceSection.locator('tr', { hasText: 'FAC-001' }).getByRole('button', { name: 'Validar' }).click()
+  await expect(page.getByText('Factura bloqueada: 1 partida(s) pendiente(s) por recibir.')).toBeVisible()
+
+  await page.goto('/inventory/purchase-order-receiving')
+  await page.getByLabel('Orden de compra').selectOption('800')
+  await page.getByPlaceholder('Recibe').fill('Encargado de bodega')
+  await page.getByRole('button', { name: 'Registrar recepcion' }).click()
+  await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
+
+  await page.goto('/supplier-payments')
+  const refreshedInvoiceSection = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Facturas de proveedores' }),
+  })
+  await refreshedInvoiceSection.locator('tr', { hasText: 'FAC-001' }).getByRole('button', { name: 'Validar' }).click()
+  await expect(page.getByText('Factura validada y aprobada para pago.')).toBeVisible()
+  await expect(
+    refreshedInvoiceSection.locator('tr', { hasText: 'FAC-001' }).getByText('Aprobada para pago'),
+  ).toBeVisible()
+
+  const paymentSection = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Programar pago' }),
+  })
+  await paymentSection.locator('select').first().selectOption('9000')
+  await paymentSection.locator('input[type="date"]').fill('2026-07-04')
+  await paymentSection.getByPlaceholder('Referencia interna').fill('PAGO-FAC-001')
+  await paymentSection.getByRole('button', { name: 'Programar pago' }).click()
+  await expect(page.getByText('Pago programado para factura FAC-001.')).toBeVisible()
+  await expect(paymentSection.locator('tr', { hasText: 'FAC-001' }).getByText('Pago programado')).toBeVisible()
+
+  await paymentSection.locator('tr', { hasText: 'FAC-001' }).getByRole('button', { name: 'Pagado' }).click()
+  await expect(page.getByText('Pago marcado como realizado.')).toBeVisible()
+  await expect(paymentSection.locator('tr', { hasText: 'FAC-001' }).getByText('Pagada')).toBeVisible()
 })
