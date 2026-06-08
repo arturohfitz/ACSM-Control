@@ -127,6 +127,20 @@ El seed demo es idempotente y carga:
 - Bodegas, listas esperadas, recepciones parciales y stock por proyecto.
 - Flujo rapido de inventario para importar PDF, texto pegado desde Excel o texto extraido por OCR desde imagenes y generar listas esperadas.
 
+## Limpiar datos operativos/demo
+
+Antes de capturar informacion real o preparar una demo limpia, puedes borrar los datos operativos sin perder usuarios, roles, permisos, empresas ni configuracion SMTP:
+
+```bash
+cd constructora-api
+source .venv/bin/activate
+PYTHONPATH=. python -m app.clear_operational_data --yes --files
+```
+
+El comando elimina desarrolladoras, desarrollos, modelos, documentos cargados, materiales, mano de obra, conceptos, cotizaciones, proveedores, compras, ordenes de compra, inventario, pagos, correos en bandeja de salida y eventos de auditoria.
+
+Si quieres revisar primero que se borraria, ejecuta el mismo comando sin `--yes`.
+
 ## Levantar FastAPI
 
 ```bash
