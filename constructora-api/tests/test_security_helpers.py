@@ -13,6 +13,47 @@ class FakeSession:
 
 
 class SecurityHelpersTest(unittest.TestCase):
+    def _tenant_role_codes(self, role_name: str) -> set[str]:
+        from app.services.permissions import DEFAULT_TENANT_ROLE_TEMPLATES
+
+        for name, _description, codes in DEFAULT_TENANT_ROLE_TEMPLATES:
+            if name == role_name:
+                return codes
+        self.fail(f"No existe plantilla de rol {role_name}")
+
+    def test_tenant_role_templates_separate_operational_duties(self) -> None:
+        compras = self._tenant_role_codes("Compras")
+        gerencia = self._tenant_role_codes("Gerencia de compras")
+        inventario = self._tenant_role_codes("Inventario")
+        pagos = self._tenant_role_codes("Pagos a proveedores")
+        auditoria = self._tenant_role_codes("Auditoria")
+
+        self.assertIn("supplier_quotes:request_approval", compras)
+        self.assertIn("purchase_orders:send", compras)
+        self.assertNotIn("supplier_quotes:approve", compras)
+        self.assertNotIn("purchase_orders:approve", compras)
+        self.assertNotIn("supplier_payments:pay", compras)
+
+        self.assertIn("supplier_quotes:approve", gerencia)
+        self.assertIn("purchase_orders:approve", gerencia)
+        self.assertNotIn("supplier_quotes:create", gerencia)
+        self.assertNotIn("supplier_payments:pay", gerencia)
+
+        self.assertIn("inventory:receive", inventario)
+        self.assertIn("purchase_orders:view", inventario)
+        self.assertNotIn("supplier_payments:pay", inventario)
+        self.assertNotIn("supplier_quotes:approve", inventario)
+
+        self.assertIn("supplier_invoices:validate", pagos)
+        self.assertIn("supplier_payments:pay", pagos)
+        self.assertNotIn("inventory:receive", pagos)
+        self.assertNotIn("purchase_orders:approve", pagos)
+
+        self.assertIn("events:view", auditoria)
+        self.assertIn("supplier_payments:view", auditoria)
+        self.assertNotIn("supplier_payments:pay", auditoria)
+        self.assertNotIn("inventory:receive", auditoria)
+
     def test_secret_encryption_roundtrip(self) -> None:
         from app.core.config import settings
         from app.services import secrets

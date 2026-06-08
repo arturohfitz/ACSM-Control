@@ -244,7 +244,15 @@ Este flujo crea en una sola transaccion:
 - La constructora/licencia.
 - El usuario administrador de esa constructora.
 - El rol `Administrador de constructora`.
-- Roles base: `Proyectos y desarrolladoras`, `Inventario`, `Cotizaciones y costos` y `Solo lectura`.
+- Roles base operativos:
+  `Proyectos y desarrolladoras`,
+  `Inventario`,
+  `Cotizaciones y costos`,
+  `Compras`,
+  `Gerencia de compras`,
+  `Pagos a proveedores`,
+  `Auditoria` y
+  `Solo lectura`.
 
 El administrador creado no es `master_admin`; solo ve y administra datos de su propia constructora.
 
