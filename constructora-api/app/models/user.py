@@ -14,12 +14,19 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_master_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    client_access_mode: Mapped[str] = mapped_column(String(20), default="all", nullable=False)
 
     user_roles: Mapped[list["UserRole"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    user_client_accesses: Mapped[list["UserClientAccess"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
     roles: Mapped[list["Role"]] = relationship(
         secondary="user_roles", back_populates="users", viewonly=True
+    )
+    clients: Mapped[list["Client"]] = relationship(
+        secondary="user_client_access", viewonly=True
     )
     company: Mapped["Company | None"] = relationship(back_populates="users")
 
@@ -93,3 +100,18 @@ class UserRole(Base):
 
     user: Mapped[User] = relationship(back_populates="user_roles")
     role: Mapped[Role] = relationship(back_populates="user_roles")
+
+
+class UserClientAccess(Base):
+    __tablename__ = "user_client_access"
+    __table_args__ = (
+        UniqueConstraint("user_id", "client_id", name="uq_user_client_access_pair"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="user_client_accesses")
+    client: Mapped["Client"] = relationship()

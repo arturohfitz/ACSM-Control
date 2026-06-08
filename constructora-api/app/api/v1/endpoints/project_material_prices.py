@@ -19,7 +19,7 @@ router = APIRouter()
 
 def _project_for_user(db: Session, project_id: int, current_user: User) -> Project:
     project = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, project)
+    ensure_same_company(current_user, project, db=db)
     return project
 
 
@@ -30,7 +30,7 @@ def _material_for_project(
     current_user: User,
 ) -> Material:
     material = get_or_404(db, Material, material_id)
-    ensure_same_company(current_user, material)
+    ensure_same_company(current_user, material, db=db)
     if material.company_id != project.company_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -49,7 +49,7 @@ def _house_model_for_project(
         return None
 
     house_model = get_or_404(db, HouseModel, house_model_id)
-    ensure_same_company(current_user, house_model)
+    ensure_same_company(current_user, house_model, db=db)
     if house_model.client_id != project.client_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -179,7 +179,7 @@ def get_project_material_price(
     current_user: User = Depends(require_permission("materials", "view")),
 ) -> ProjectMaterialPrice:
     item = get_or_404(db, ProjectMaterialPrice, price_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     return item
 
 
@@ -191,7 +191,7 @@ def update_project_material_price(
     current_user: User = Depends(require_permission("materials", "edit")),
 ) -> ProjectMaterialPrice:
     item = get_or_404(db, ProjectMaterialPrice, price_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     data = payload.model_dump(exclude_unset=True, exclude={"company_id"})
     data = _validated_data(db, data, current_user, existing=item)
     return update_item(db, item, data)
@@ -204,5 +204,5 @@ def delete_project_material_price(
     current_user: User = Depends(require_permission("materials", "delete")),
 ) -> None:
     item = get_or_404(db, ProjectMaterialPrice, price_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     delete_item(db, item)

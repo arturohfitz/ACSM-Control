@@ -78,13 +78,13 @@ def _now() -> datetime:
 
 def _project_for_user(db: Session, project_id: int, current_user: User) -> Project:
     project = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, project)
+    ensure_same_company(current_user, project, db=db)
     return project
 
 
 def _supplier_for_user(db: Session, supplier_id: int, current_user: User) -> Supplier:
     supplier = get_or_404(db, Supplier, supplier_id)
-    ensure_same_company(current_user, supplier)
+    ensure_same_company(current_user, supplier, db=db)
     if supplier.status != "active":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -298,7 +298,7 @@ def get_supplier(
     current_user: User = Depends(require_permission("suppliers", "view")),
 ) -> Supplier:
     supplier = get_or_404(db, Supplier, supplier_id)
-    ensure_same_company(current_user, supplier)
+    ensure_same_company(current_user, supplier, db=db)
     return supplier
 
 
@@ -310,7 +310,7 @@ def update_supplier(
     current_user: User = Depends(require_permission("suppliers", "edit")),
 ) -> Supplier:
     supplier = get_or_404(db, Supplier, supplier_id)
-    ensure_same_company(current_user, supplier)
+    ensure_same_company(current_user, supplier, db=db)
     data = payload.model_dump(exclude_unset=True)
     if "company_id" in data:
         data["company_id"] = company_id_for_write(current_user, data.get("company_id"))
@@ -330,7 +330,7 @@ def delete_supplier(
     current_user: User = Depends(require_permission("suppliers", "delete")),
 ) -> None:
     supplier = get_or_404(db, Supplier, supplier_id)
-    ensure_same_company(current_user, supplier)
+    ensure_same_company(current_user, supplier, db=db)
     record_delete(db, current_user, module="proveedores", item=supplier)
     db.delete(supplier)
     db.commit()
@@ -413,7 +413,7 @@ def request_supplier_rfq_exception(
     for item in payload.items:
         if item.material_id is not None:
             material = get_or_404(db, Material, item.material_id)
-            ensure_same_company(current_user, material)
+            ensure_same_company(current_user, material, db=db)
     payload_snapshot = _rfq_exception_snapshot(payload)
     exception_request = SupplierRFQExceptionRequest(
         company_id=project.company_id,
@@ -461,6 +461,7 @@ def request_supplier_rfq_exception(
         entity_id=exception_request.id,
         entity_label=exception_request.title,
         action_url="/purchasing/approvals",
+        project_id=exception_request.project_id,
         metadata={"proveedores": supplier_count, "partidas": len(payload.items)},
     )
     db.commit()
@@ -485,7 +486,7 @@ def approve_supplier_rfq_exception(
     current_user: User = Depends(require_permission("supplier_quotes", "approve")),
 ) -> SupplierRFQExceptionRequest:
     exception_request = get_or_404(db, SupplierRFQExceptionRequest, exception_id)
-    ensure_same_company(current_user, exception_request)
+    ensure_same_company(current_user, exception_request, db=db)
     if exception_request.status != "requested":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La excepcion ya fue atendida")
     exception_request.status = "approved"
@@ -524,6 +525,7 @@ def approve_supplier_rfq_exception(
         entity_id=exception_request.id,
         entity_label=exception_request.title,
         action_url="/purchasing",
+        project_id=exception_request.project_id,
     )
     db.commit()
     db.refresh(exception_request)
@@ -538,7 +540,7 @@ def reject_supplier_rfq_exception(
     current_user: User = Depends(require_permission("supplier_quotes", "approve")),
 ) -> SupplierRFQExceptionRequest:
     exception_request = get_or_404(db, SupplierRFQExceptionRequest, exception_id)
-    ensure_same_company(current_user, exception_request)
+    ensure_same_company(current_user, exception_request, db=db)
     if exception_request.status != "requested":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La excepcion ya fue atendida")
     exception_request.status = "rejected"
@@ -577,6 +579,7 @@ def reject_supplier_rfq_exception(
         entity_id=exception_request.id,
         entity_label=exception_request.title,
         action_url="/purchasing",
+        project_id=exception_request.project_id,
         metadata={"decision_notes": exception_request.decision_notes},
     )
     db.commit()
@@ -604,7 +607,7 @@ def create_supplier_rfq(
                 detail="Se requiere una excepcion aprobada para crear solicitud con menos de 3 proveedores",
             )
         approved_exception = get_or_404(db, SupplierRFQExceptionRequest, payload.exception_request_id)
-        ensure_same_company(current_user, approved_exception)
+        ensure_same_company(current_user, approved_exception, db=db)
         _ensure_exception_matches_payload(approved_exception, payload)
     rfq = SupplierRFQ(
         company_id=project.company_id,
@@ -623,7 +626,7 @@ def create_supplier_rfq(
     for item in payload.items:
         if item.material_id is not None:
             material = get_or_404(db, Material, item.material_id)
-            ensure_same_company(current_user, material)
+            ensure_same_company(current_user, material, db=db)
         db.add(SupplierRFQItem(rfq_id=rfq.id, **item.model_dump()))
     for supplier in suppliers:
         db.add(SupplierRFQSupplier(rfq_id=rfq.id, supplier_id=supplier.id))
@@ -679,7 +682,7 @@ def get_supplier_rfq(
     )
     if rfq is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    ensure_same_company(current_user, rfq)
+    ensure_same_company(current_user, rfq, db=db)
     return rfq
 
 
@@ -691,7 +694,7 @@ def update_supplier_rfq(
     current_user: User = Depends(require_permission("supplier_rfq", "edit")),
 ) -> SupplierRFQ:
     rfq = get_or_404(db, SupplierRFQ, rfq_id)
-    ensure_same_company(current_user, rfq)
+    ensure_same_company(current_user, rfq, db=db)
     data = payload.model_dump(exclude_unset=True)
     before = snapshot(rfq, list(data.keys()))
     for field, value in data.items():
@@ -859,7 +862,7 @@ def delete_supplier_quote(
     )
     if quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    ensure_same_company(current_user, quote)
+    ensure_same_company(current_user, quote, db=db)
     if quote.rfq.status in {"approval_pending", "awarded"}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -959,7 +962,7 @@ def request_supplier_rfq_approval(
     )
     if rfq is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    ensure_same_company(current_user, rfq)
+    ensure_same_company(current_user, rfq, db=db)
     if rfq.status == "awarded":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1070,6 +1073,7 @@ def request_supplier_rfq_approval(
         entity_id=approval.id,
         entity_label=rfq.rfq_number,
         action_url="/purchasing/approvals",
+        project_id=rfq.project_id,
         metadata={
             "rfq_id": rfq.id,
             "quotes": len(complete_quotes),
@@ -1101,7 +1105,7 @@ def _supplier_quote_for_approval(db: Session, quote_id: int, current_user: User)
     )
     if quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    ensure_same_company(current_user, quote)
+    ensure_same_company(current_user, quote, db=db)
     return quote
 
 
@@ -1131,7 +1135,7 @@ def _get_supplier_quote_approval(
     )
     if approval is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    ensure_same_company(current_user, approval)
+    ensure_same_company(current_user, approval, db=db)
     return approval
 
 
@@ -1254,6 +1258,7 @@ def request_supplier_quote_approval(
         entity_id=approval.id,
         entity_label=quote.quote_number or quote.rfq.rfq_number,
         action_url="/purchasing/approvals",
+        project_id=quote.rfq.project_id,
         metadata={"rfq_id": quote.rfq_id, "supplier_id": quote.supplier_id, "subtotal": str(quote.subtotal)},
     )
     db.commit()
@@ -1427,6 +1432,7 @@ def approve_supplier_quote(
         entity_id=purchase_order.id,
         entity_label=purchase_order.po_number,
         action_url="/purchasing",
+        project_id=rfq.project_id,
         metadata={"rfq_id": rfq.id, "quote_id": quote.id, "purchase_order_id": purchase_order.id},
     )
     notify_permission(
@@ -1444,6 +1450,7 @@ def approve_supplier_quote(
         entity_id=purchase_order.id,
         entity_label=purchase_order.po_number,
         action_url="/inventory/purchase-order-receiving",
+        project_id=rfq.project_id,
         metadata={"supplier_id": quote.supplier_id, "subtotal": str(quote.subtotal)},
     )
     db.commit()
@@ -1512,6 +1519,7 @@ def reject_supplier_quote_approval(
         entity_id=quote.approval.id,
         entity_label=quote.quote_number or quote.rfq.rfq_number,
         action_url="/purchasing",
+        project_id=quote.rfq.project_id,
         metadata={"decision_notes": quote.approval.decision_notes},
     )
     db.commit()
@@ -1549,7 +1557,7 @@ def get_purchase_order(
     )
     if purchase_order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    ensure_same_company(current_user, purchase_order)
+    ensure_same_company(current_user, purchase_order, db=db)
     return purchase_order
 
 
@@ -1649,6 +1657,7 @@ def create_supplier_invoice(
             entity_id=invoice.id,
             entity_label=invoice.invoice_number,
             action_url="/supplier-payments",
+            project_id=purchase_order.project_id,
             metadata={"purchase_order_id": purchase_order.id, "total": str(invoice.total)},
         )
     else:
@@ -1667,6 +1676,7 @@ def create_supplier_invoice(
             entity_id=invoice.id,
             entity_label=invoice.invoice_number,
             action_url="/inventory/purchase-order-receiving",
+            project_id=purchase_order.project_id,
             metadata={"purchase_order_id": purchase_order.id, "total": str(invoice.total)},
         )
     db.commit()
@@ -1687,7 +1697,7 @@ def validate_supplier_invoice(
     )
     if invoice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    ensure_same_company(current_user, invoice)
+    ensure_same_company(current_user, invoice, db=db)
     next_status, pending_items, message = _invoice_status_for_po(invoice.purchase_order)
     invoice.status = next_status
     invoice.validated_at = _now()
@@ -1728,6 +1738,7 @@ def validate_supplier_invoice(
             entity_id=invoice.id,
             entity_label=invoice.invoice_number,
             action_url="/supplier-payments",
+            project_id=invoice.purchase_order.project_id,
             metadata={"purchase_order_id": invoice.purchase_order_id, "total": str(invoice.total)},
         )
     db.commit()
@@ -1763,7 +1774,7 @@ def create_supplier_payment(
     current_user: User = Depends(require_permission("supplier_payments", "schedule")),
 ) -> SupplierPayment:
     invoice = get_or_404(db, SupplierInvoice, payload.supplier_invoice_id)
-    ensure_same_company(current_user, invoice)
+    ensure_same_company(current_user, invoice, db=db)
     if invoice.status not in {"approved_for_payment", "scheduled"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1806,7 +1817,7 @@ def update_supplier_payment(
     current_user: User = Depends(require_permission("supplier_payments", "pay")),
 ) -> SupplierPayment:
     payment = get_or_404(db, SupplierPayment, payment_id)
-    ensure_same_company(current_user, payment)
+    ensure_same_company(current_user, payment, db=db)
     data = payload.model_dump(exclude_unset=True)
     before = snapshot(payment, list(data.keys()) + ["status"])
     for field, value in data.items():

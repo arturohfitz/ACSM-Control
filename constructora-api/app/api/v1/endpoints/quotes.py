@@ -51,7 +51,7 @@ def create_quote(
             detail="No se permite crear cotizacion sin proyecto valido",
         )
     _ensure_quote_can_change_status(payload.status)
-    ensure_same_company(current_user, project)
+    ensure_same_company(current_user, project, db=db)
     company_id = (
         company_id_for_write(current_user, payload.company_id or project.company_id)
         if current_user.is_master_admin
@@ -83,7 +83,7 @@ def get_quote(
     current_user: User = Depends(require_permission("quotes", "view")),
 ) -> Quote:
     quote = get_or_404(db, Quote, quote_id)
-    ensure_same_company(current_user, quote)
+    ensure_same_company(current_user, quote, db=db)
     return quote
 
 
@@ -95,7 +95,7 @@ def update_quote(
     current_user: User = Depends(require_permission("quotes", "edit")),
 ) -> Quote:
     quote = get_or_404(db, Quote, quote_id)
-    ensure_same_company(current_user, quote)
+    ensure_same_company(current_user, quote, db=db)
     if quote.status == "approved":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -119,7 +119,7 @@ def delete_quote(
     current_user: User = Depends(require_permission("quotes", "edit")),
 ) -> None:
     quote = get_or_404(db, Quote, quote_id)
-    ensure_same_company(current_user, quote)
+    ensure_same_company(current_user, quote, db=db)
     if quote.status == "approved":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -139,7 +139,7 @@ def calculate_project_quote(
 ) -> Quote:
     payload = payload or QuoteCalculateRequest()
     project = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, project)
+    ensure_same_company(current_user, project, db=db)
     quote = create_project_quote(
         db=db,
         project_id=project_id,
@@ -161,7 +161,7 @@ def approve_quote(
     current_user: User = Depends(require_permission("quotes", "approve")),
 ) -> Quote:
     quote = get_or_404(db, Quote, quote_id)
-    ensure_same_company(current_user, quote)
+    ensure_same_company(current_user, quote, db=db)
     if quote.status in {"cancelled", "rejected"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

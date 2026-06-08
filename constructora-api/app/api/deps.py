@@ -29,7 +29,11 @@ def get_current_user(
     user = db.scalar(
         select(User)
         .where(User.id == int(subject))
-        .options(selectinload(User.roles).selectinload(Role.permissions), selectinload(User.company))
+        .options(
+            selectinload(User.roles).selectinload(Role.permissions),
+            selectinload(User.company),
+            selectinload(User.user_client_accesses),
+        )
     )
     if user is None or not user.is_active:
         raise HTTPException(

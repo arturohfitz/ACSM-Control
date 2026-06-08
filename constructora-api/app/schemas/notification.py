@@ -17,6 +17,8 @@ class NotificationRead(TimestampRead):
     id: int
     company_id: int
     user_id: int
+    client_id: int | None = None
+    project_id: int | None = None
     notification_type: str
     title: str
     body: str

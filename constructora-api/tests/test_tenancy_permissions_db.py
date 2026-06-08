@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.core.security import create_access_token, get_password_hash
 from app.db.session import SessionLocal, engine
 from app.main import app
-from app.models import Client, Company, Role, User, UserRole
+from app.models import Client, Company, Project, Role, User, UserClientAccess, UserRole
 from app.services.permissions import ensure_default_permissions, permission_code, set_role_permissions
 
 
@@ -46,7 +46,30 @@ class TenancyPermissionsDBTest(unittest.TestCase):
         )
 
         self.client_a = self._create_client(self.company_a, "Desarrolladora A")
+        self.client_a_restricted_hidden = self._create_client(
+            self.company_a,
+            "Desarrolladora A oculta",
+        )
         self.client_b = self._create_client(self.company_b, "Desarrolladora B")
+        self.project_a = self._create_project(self.company_a, self.client_a, "Proyecto A")
+        self.project_a_hidden = self._create_project(
+            self.company_a,
+            self.client_a_restricted_hidden,
+            "Proyecto A oculto",
+        )
+        self.restricted_user = self._create_user(
+            self.company_a,
+            "Usuario restringido",
+            permissions=["clients:view", "projects:view"],
+        )
+        self.restricted_user.client_access_mode = "restricted"
+        self.db.add(
+            UserClientAccess(
+                company_id=self.company_a.id,
+                user_id=self.restricted_user.id,
+                client_id=self.client_a.id,
+            )
+        )
         self.db.commit()
 
     def tearDown(self) -> None:
@@ -111,6 +134,17 @@ class TenancyPermissionsDBTest(unittest.TestCase):
         self.db.flush()
         return client
 
+    def _create_project(self, company: Company, client: Client, name: str) -> Project:
+        project = Project(
+            company_id=company.id,
+            client_id=client.id,
+            name=f"{name} {self.suffix}",
+            status="draft",
+        )
+        self.db.add(project)
+        self.db.flush()
+        return project
+
     def _headers_for(self, user: User) -> dict[str, str]:
         return {"Authorization": f"Bearer {create_access_token(str(user.id))}"}
 
@@ -120,7 +154,33 @@ class TenancyPermissionsDBTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         client_names = {item["name"] for item in response.json()}
         self.assertIn(self.client_a.name, client_names)
+        self.assertIn(self.client_a_restricted_hidden.name, client_names)
         self.assertNotIn(self.client_b.name, client_names)
+
+    def test_restricted_user_only_sees_assigned_clients(self) -> None:
+        response = self.client.get("/api/v1/clients", headers=self._headers_for(self.restricted_user))
+
+        self.assertEqual(response.status_code, 200)
+        client_names = {item["name"] for item in response.json()}
+        self.assertIn(self.client_a.name, client_names)
+        self.assertNotIn(self.client_a_restricted_hidden.name, client_names)
+        self.assertNotIn(self.client_b.name, client_names)
+
+    def test_restricted_user_only_sees_projects_for_assigned_clients(self) -> None:
+        response = self.client.get("/api/v1/projects", headers=self._headers_for(self.restricted_user))
+
+        self.assertEqual(response.status_code, 200)
+        project_names = {item["name"] for item in response.json()}
+        self.assertIn(self.project_a.name, project_names)
+        self.assertNotIn(self.project_a_hidden.name, project_names)
+
+    def test_restricted_user_gets_not_found_for_unassigned_client(self) -> None:
+        response = self.client.get(
+            f"/api/v1/clients/{self.client_a_restricted_hidden.id}",
+            headers=self._headers_for(self.restricted_user),
+        )
+
+        self.assertEqual(response.status_code, 404)
 
     def test_foreign_client_is_hidden_as_not_found_for_tenant_user(self) -> None:
         response = self.client.get(

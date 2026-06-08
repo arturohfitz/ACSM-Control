@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models import Notification, User
+from app.models import Notification, Project, User, UserClientAccess
 from app.schemas.notification import NotificationBulkRead, NotificationCountRead, NotificationRead
 from app.services.notifications import sync_operational_notifications
 
@@ -20,13 +20,32 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _scope_notification_statement(statement, current_user: User):
+    if current_user.is_master_admin or current_user.client_access_mode != "restricted":
+        return statement
+    allowed_clients = select(UserClientAccess.client_id).where(
+        UserClientAccess.user_id == current_user.id,
+        UserClientAccess.company_id == current_user.company_id,
+    )
+    allowed_projects = select(Project.id).where(Project.client_id.in_(allowed_clients))
+    return statement.where(
+        or_(
+            Notification.client_id.in_(allowed_clients),
+            Notification.project_id.in_(allowed_projects),
+            and_(Notification.client_id.is_(None), Notification.project_id.is_(None)),
+        )
+    )
+
+
 def _notification_for_user(db: Session, notification_id: int, current_user: User) -> Notification:
-    notification = db.scalar(
+    statement = _scope_notification_statement(
         select(Notification).where(
             Notification.id == notification_id,
             Notification.user_id == current_user.id,
-        )
+        ),
+        current_user,
     )
+    notification = db.scalar(statement)
     if notification is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notificacion no encontrada")
     return notification
@@ -43,7 +62,10 @@ def list_notifications(
         sync_operational_notifications(db, company_id=current_user.company_id)
         db.commit()
 
-    statement = select(Notification).where(Notification.user_id == current_user.id)
+    statement = _scope_notification_statement(
+        select(Notification).where(Notification.user_id == current_user.id),
+        current_user,
+    )
     if status_filter == "open":
         statement = statement.where(Notification.status.in_(("unread", "read")))
     elif status_filter != "all":
@@ -72,18 +94,22 @@ def notification_counts(
         sync_operational_notifications(db, company_id=current_user.company_id)
         db.commit()
 
-    unread = db.scalar(
+    unread_statement = _scope_notification_statement(
         select(func.count(Notification.id)).where(
             Notification.user_id == current_user.id,
             Notification.status == "unread",
-        )
-    ) or 0
-    open_count = db.scalar(
+        ),
+        current_user,
+    )
+    open_statement = _scope_notification_statement(
         select(func.count(Notification.id)).where(
             Notification.user_id == current_user.id,
             Notification.status.in_(("unread", "read")),
-        )
-    ) or 0
+        ),
+        current_user,
+    )
+    unread = db.scalar(unread_statement) or 0
+    open_count = db.scalar(open_statement) or 0
     return NotificationCountRead(unread=unread, open=open_count)
 
 
@@ -126,9 +152,12 @@ def mark_all_notifications_read(
     now = _now()
     updated = 0
     notifications = db.scalars(
-        select(Notification).where(
-            Notification.user_id == current_user.id,
-            Notification.status == "unread",
+        _scope_notification_statement(
+            select(Notification).where(
+                Notification.user_id == current_user.id,
+                Notification.status == "unread",
+            ),
+            current_user,
         )
     ).all()
     for notification in notifications:

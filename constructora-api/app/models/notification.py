@@ -14,6 +14,8 @@ class Notification(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), index=True)
     notification_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(180), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)

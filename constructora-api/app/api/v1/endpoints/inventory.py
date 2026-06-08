@@ -87,7 +87,7 @@ PDF_ROW_RE = re.compile(
 
 def _project_for_user(db: Session, project_id: int, current_user: User) -> Project:
     project = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, project)
+    ensure_same_company(current_user, project, db=db)
     return project
 
 
@@ -415,7 +415,7 @@ def _warehouse_for_project(
     current_user: User,
 ) -> ProjectWarehouse:
     warehouse = get_or_404(db, ProjectWarehouse, warehouse_id)
-    ensure_same_company(current_user, warehouse)
+    ensure_same_company(current_user, warehouse, db=db)
     if warehouse.project_id != project.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -431,7 +431,7 @@ def _expected_list_for_project(
     current_user: User,
 ) -> ExpectedMaterialList:
     expected_list = get_or_404(db, ExpectedMaterialList, expected_list_id)
-    ensure_same_company(current_user, expected_list)
+    ensure_same_company(current_user, expected_list, db=db)
     if expected_list.project_id != project.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -452,7 +452,7 @@ def _fill_expected_item_data(
     material = None
     if material_id is not None:
         material = get_or_404(db, Material, material_id)
-        ensure_same_company(current_user, material)
+        ensure_same_company(current_user, material, db=db)
         if material.company_id != company_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -733,6 +733,7 @@ def _sync_reception_notifications(
         entity_id=purchase_order.id,
         entity_label=purchase_order.po_number,
         action_url="/inventory/purchase-order-receiving",
+        project_id=expected_list.project_id,
         metadata={
             "expected_list_id": expected_list.id,
             "pending_items": pending_items,
@@ -779,7 +780,7 @@ def update_warehouse(
     current_user: User = Depends(require_permission("inventory", "edit")),
 ) -> ProjectWarehouse:
     warehouse = get_or_404(db, ProjectWarehouse, warehouse_id)
-    ensure_same_company(current_user, warehouse)
+    ensure_same_company(current_user, warehouse, db=db)
     data = payload.model_dump(exclude_unset=True)
     before = snapshot(warehouse, list(data.keys()))
     for field, value in data.items():
@@ -797,7 +798,7 @@ def delete_warehouse(
     current_user: User = Depends(require_permission("inventory", "delete")),
 ) -> None:
     warehouse = get_or_404(db, ProjectWarehouse, warehouse_id)
-    ensure_same_company(current_user, warehouse)
+    ensure_same_company(current_user, warehouse, db=db)
     record_delete(db, current_user, module="inventario", item=warehouse)
     db.delete(warehouse)
     db.commit()
@@ -852,7 +853,7 @@ def create_expected_material_list(
         _warehouse_for_project(db, payload.warehouse_id, project, current_user)
     if payload.purchase_order_id is not None:
         purchase_order = get_or_404(db, PurchaseOrder, payload.purchase_order_id)
-        ensure_same_company(current_user, purchase_order)
+        ensure_same_company(current_user, purchase_order, db=db)
         if purchase_order.project_id != project.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1148,7 +1149,7 @@ def add_expected_material_item(
     current_user: User = Depends(require_permission("inventory", "edit")),
 ) -> ExpectedMaterialItem:
     expected_list = get_or_404(db, ExpectedMaterialList, expected_list_id)
-    ensure_same_company(current_user, expected_list)
+    ensure_same_company(current_user, expected_list, db=db)
     data = _fill_expected_item_data(db, payload, expected_list.company_id, current_user)
     item = ExpectedMaterialItem(
         company_id=expected_list.company_id,
@@ -1173,7 +1174,7 @@ def update_expected_material_item(
     current_user: User = Depends(require_permission("inventory", "edit")),
 ) -> ExpectedMaterialItem:
     item = get_or_404(db, ExpectedMaterialItem, item_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     if item.received_quantity > 0 and payload.expected_quantity is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1228,7 +1229,7 @@ def create_reception(
 
     for item_payload in payload.items:
         expected_item = get_or_404(db, ExpectedMaterialItem, item_payload.expected_item_id)
-        ensure_same_company(current_user, expected_item)
+        ensure_same_company(current_user, expected_item, db=db)
         if expected_item.expected_list_id != expected_list.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1347,7 +1348,7 @@ def warehouse_stock(
     current_user: User = Depends(require_permission("inventory", "view")),
 ) -> list[WarehouseStock]:
     warehouse = get_or_404(db, ProjectWarehouse, warehouse_id)
-    ensure_same_company(current_user, warehouse)
+    ensure_same_company(current_user, warehouse, db=db)
     return list(
         db.scalars(
             select(WarehouseStock)

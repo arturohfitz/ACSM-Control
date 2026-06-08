@@ -89,7 +89,7 @@ def _apply_client_company(
         )
 
     client = get_or_404(db, Client, data["client_id"])
-    ensure_same_company(current_user, client)
+    ensure_same_company(current_user, client, db=db)
     requested_company_id = data.get("company_id") or fallback_company_id or client.company_id
     company_id = company_id_for_write(current_user, requested_company_id)
     if company_id != client.company_id:
@@ -281,8 +281,8 @@ def _require_model_child(
     child: HouseModelMaterialRequirement | HouseModelBudgetActivity,
 ) -> None:
     model = get_or_404(db, HouseModel, house_model_id)
-    ensure_same_company(current_user, model)
-    ensure_same_company(current_user, child)
+    ensure_same_company(current_user, model, db=db)
+    ensure_same_company(current_user, child, db=db)
     if child.house_model_id != house_model_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -355,7 +355,7 @@ def get_house_model(
     current_user: User = Depends(require_permission("house_models", "view")),
 ) -> HouseModel:
     item = get_or_404(db, HouseModel, house_model_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     return item
 
 
@@ -367,7 +367,7 @@ def list_house_model_documents(
     current_user: User = Depends(require_permission("house_models", "view")),
 ) -> list[HouseModelDocument]:
     model = get_or_404(db, HouseModel, house_model_id)
-    ensure_same_company(current_user, model)
+    ensure_same_company(current_user, model, db=db)
     statement = (
         select(HouseModelDocument)
         .where(HouseModelDocument.house_model_id == house_model_id)
@@ -397,7 +397,7 @@ async def upload_house_model_document(
     current_user: User = Depends(require_permission("house_models", "edit")),
 ) -> HouseModelDocument:
     model = get_or_404(db, HouseModel, house_model_id)
-    ensure_same_company(current_user, model)
+    ensure_same_company(current_user, model, db=db)
     if model.client_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -528,9 +528,9 @@ def delete_house_model_document(
     current_user: User = Depends(require_permission("house_models", "edit")),
 ) -> None:
     model = get_or_404(db, HouseModel, house_model_id)
-    ensure_same_company(current_user, model)
+    ensure_same_company(current_user, model, db=db)
     document = get_or_404(db, HouseModelDocument, document_id)
-    ensure_same_company(current_user, document)
+    ensure_same_company(current_user, document, db=db)
     if document.house_model_id != house_model_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -559,7 +559,7 @@ def update_material_requirement(
         data["material_id"] = None
     if "material_id" in data and data["material_id"] is not None:
         material = get_or_404(db, Material, data["material_id"])
-        ensure_same_company(current_user, material)
+        ensure_same_company(current_user, material, db=db)
         if material.company_id != item.company_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -681,7 +681,7 @@ def integrate_document_materials(
     current_user: User = Depends(require_permission("materials", "create")),
 ) -> HouseModelDocument:
     document = get_or_404(db, HouseModelDocument, document_id)
-    ensure_same_company(current_user, document)
+    ensure_same_company(current_user, document, db=db)
     if document.house_model_id != house_model_id or document.document_type != "explosion":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -772,7 +772,7 @@ def update_budget_activity(
         data["construction_concept_id"] = None
     if "construction_concept_id" in data and data["construction_concept_id"] is not None:
         concept = get_or_404(db, ConstructionConcept, data["construction_concept_id"])
-        ensure_same_company(current_user, concept)
+        ensure_same_company(current_user, concept, db=db)
         if concept.company_id != activity.company_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -895,7 +895,7 @@ def integrate_document_concepts(
     current_user: User = Depends(require_permission("construction_concepts", "create")),
 ) -> HouseModelDocument:
     document = get_or_404(db, HouseModelDocument, document_id)
-    ensure_same_company(current_user, document)
+    ensure_same_company(current_user, document, db=db)
     if document.house_model_id != house_model_id or document.document_type != "budget":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -976,7 +976,7 @@ def update_house_model(
     current_user: User = Depends(require_permission("house_models", "edit")),
 ) -> HouseModel:
     item = get_or_404(db, HouseModel, house_model_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     data = payload.model_dump(exclude_unset=True, exclude={"company_id"})
     if "client_id" in data:
         _apply_client_company(db, current_user, data, fallback_company_id=item.company_id)
@@ -1013,7 +1013,7 @@ def delete_house_model(
     current_user: User = Depends(require_permission("house_models", "delete")),
 ) -> None:
     item = get_or_404(db, HouseModel, house_model_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     ensure_house_model_has_no_approved_quote(db, house_model_id)
     record_delete(db, current_user, module="modelos", item=item)
     db.delete(item)
@@ -1032,9 +1032,9 @@ def add_concept_to_house_model(
     current_user: User = Depends(require_permission("house_models", "edit")),
 ) -> HouseModelConcept:
     model = get_or_404(db, HouseModel, house_model_id)
-    ensure_same_company(current_user, model)
+    ensure_same_company(current_user, model, db=db)
     concept = get_or_404(db, ConstructionConcept, payload.construction_concept_id)
-    ensure_same_company(current_user, concept)
+    ensure_same_company(current_user, concept, db=db)
     concept = HouseModelConcept(house_model_id=house_model_id, **payload.model_dump())
     db.add(concept)
     db.commit()

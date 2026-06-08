@@ -49,17 +49,24 @@ class RoleRead(RoleBase, TimestampRead):
     permissions: list[PermissionRead] = Field(default_factory=list)
 
 
+class UserClientScopeRead(ORMModel):
+    id: int
+    name: str
+
+
 class UserBase(BaseModel):
     company_id: int | None = None
     full_name: str = Field(min_length=1, max_length=200)
     email: str = Field(min_length=3, max_length=255)
     is_active: bool = True
     is_master_admin: bool = False
+    client_access_mode: str = Field(default="all", pattern="^(all|restricted)$")
 
 
 class UserCreate(UserBase):
     password: str = Field(min_length=8)
     role_ids: list[int] = Field(default_factory=list)
+    client_ids: list[int] = Field(default_factory=list)
 
 
 class UserUpdate(BaseModel):
@@ -69,12 +76,15 @@ class UserUpdate(BaseModel):
     password: str | None = Field(default=None, min_length=8)
     is_active: bool | None = None
     is_master_admin: bool | None = None
+    client_access_mode: str | None = Field(default=None, pattern="^(all|restricted)$")
     role_ids: list[int] | None = None
+    client_ids: list[int] | None = None
 
 
 class UserRead(UserBase, TimestampRead):
     id: int
     roles: list[RoleRead] = Field(default_factory=list)
+    clients: list[UserClientScopeRead] = Field(default_factory=list)
 
 
 class UserMe(ORMModel):
@@ -84,6 +94,7 @@ class UserMe(ORMModel):
     email: str
     is_active: bool
     is_master_admin: bool
+    client_access_mode: str
     created_at: datetime
     updated_at: datetime
     permissions: list[str] = Field(default_factory=list)

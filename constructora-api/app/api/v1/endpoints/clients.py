@@ -51,7 +51,7 @@ def get_client(
     current_user: User = Depends(require_permission("clients", "view")),
 ) -> Client:
     item = get_or_404(db, Client, client_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     return item
 
 
@@ -63,7 +63,7 @@ def update_client(
     current_user: User = Depends(require_permission("clients", "edit")),
 ) -> Client:
     item = get_or_404(db, Client, client_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     data = payload.model_dump(exclude_unset=True)
     if "company_id" in data:
         data["company_id"] = company_id_for_write(current_user, data.get("company_id"))
@@ -83,7 +83,7 @@ def delete_client(
     current_user: User = Depends(require_permission("clients", "delete")),
 ) -> None:
     item = get_or_404(db, Client, client_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     ensure_can_delete_client(db, client_id)
     record_delete(db, current_user, module="desarrolladoras", item=item)
     db.delete(item)

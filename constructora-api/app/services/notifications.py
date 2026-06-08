@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import (
     Notification,
     Permission,
+    Project,
     PurchaseOrder,
     Role,
     RolePermission,
@@ -17,6 +18,7 @@ from app.models import (
     User,
     UserRole,
 )
+from app.services.tenancy import user_can_access_client_id
 
 
 OPEN_STATUSES = {"unread", "read"}
@@ -51,7 +53,7 @@ def users_with_permission(
     statement = (
         select(User)
         .where(User.is_active.is_(True), User.company_id == company_id)
-        .options(selectinload(User.roles))
+        .options(selectinload(User.roles), selectinload(User.user_client_accesses))
     )
     if role_ids:
         statement = statement.where(
@@ -78,6 +80,8 @@ def create_notification(
     title: str,
     body: str,
     source_module: str,
+    client_id: int | None = None,
+    project_id: int | None = None,
     category: str = "task",
     priority: str = "normal",
     entity_type: str | None = None,
@@ -87,6 +91,8 @@ def create_notification(
     metadata: dict | None = None,
     due_at: datetime | None = None,
 ) -> Notification | None:
+    if project_id is not None and client_id is None:
+        client_id = db.scalar(select(Project.client_id).where(Project.id == project_id))
     entity_id_text = str(entity_id) if entity_id is not None else None
     existing = db.scalar(
         select(Notification).where(
@@ -104,6 +110,8 @@ def create_notification(
         existing.category = category
         existing.priority = priority
         existing.source_module = source_module
+        existing.client_id = client_id
+        existing.project_id = project_id
         existing.entity_label = entity_label
         existing.action_url = action_url
         existing.event_metadata = metadata
@@ -113,6 +121,8 @@ def create_notification(
     notification = Notification(
         company_id=company_id,
         user_id=user_id,
+        client_id=client_id,
+        project_id=project_id,
         notification_type=notification_type,
         title=title,
         body=body,
@@ -137,7 +147,14 @@ def notify_users(
     **kwargs,
 ) -> int:
     count = 0
+    client_id = kwargs.get("client_id")
+    project_id = kwargs.get("project_id")
+    if project_id is not None and client_id is None:
+        client_id = db.scalar(select(Project.client_id).where(Project.id == project_id))
+        kwargs["client_id"] = client_id
     for user in users:
+        if not user_can_access_client_id(user, client_id):
+            continue
         if create_notification(db, user_id=user.id, **kwargs) is not None:
             count += 1
     return count
@@ -162,8 +179,19 @@ def notify_permission(
 def notify_user_id(db: Session, *, user_id: int | None, company_id: int, **kwargs) -> int:
     if user_id is None:
         return 0
-    user = db.scalar(select(User).where(User.id == user_id, User.is_active.is_(True)))
+    user = db.scalar(
+        select(User)
+        .where(User.id == user_id, User.is_active.is_(True))
+        .options(selectinload(User.user_client_accesses))
+    )
     if user is None or user.company_id != company_id:
+        return 0
+    client_id = kwargs.get("client_id")
+    project_id = kwargs.get("project_id")
+    if project_id is not None and client_id is None:
+        client_id = db.scalar(select(Project.client_id).where(Project.id == project_id))
+        kwargs["client_id"] = client_id
+    if not user_can_access_client_id(user, client_id):
         return 0
     return 1 if create_notification(db, user_id=user.id, company_id=company_id, **kwargs) else 0
 
@@ -211,7 +239,7 @@ def _sync_invoice_due_notifications(db: Session, *, company_id: int) -> None:
             SupplierInvoice.status.notin_(("paid", "rejected")),
             SupplierInvoice.due_date <= warning_day,
         )
-        .options(selectinload(SupplierInvoice.supplier))
+        .options(selectinload(SupplierInvoice.supplier), selectinload(SupplierInvoice.purchase_order))
     ).all()
     for invoice in invoices:
         days = (invoice.due_date - today).days
@@ -240,6 +268,7 @@ def _sync_invoice_due_notifications(db: Session, *, company_id: int) -> None:
             category="deadline",
             priority=priority,
             source_module="pagos_proveedores",
+            project_id=invoice.purchase_order.project_id if invoice.purchase_order else None,
             entity_type="SupplierInvoice",
             entity_id=invoice.id,
             entity_label=invoice.invoice_number,
@@ -294,6 +323,7 @@ def _sync_incomplete_purchase_order_notifications(db: Session, *, company_id: in
             category="warning",
             priority="high" if purchase_order.status == "partially_received" else "normal",
             source_module="inventario",
+            project_id=purchase_order.project_id,
             entity_type="PurchaseOrder",
             entity_id=purchase_order.id,
             entity_label=purchase_order.po_number,

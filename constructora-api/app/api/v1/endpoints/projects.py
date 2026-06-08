@@ -30,7 +30,7 @@ def _ensure_client_exists(db: Session, client_id: int, current_user: User) -> Cl
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No se permite crear proyecto sin cliente valido",
         )
-    ensure_same_company(current_user, client)
+    ensure_same_company(current_user, client, db=db)
     return client
 
 
@@ -68,7 +68,7 @@ def get_project(
     current_user: User = Depends(require_permission("projects", "view")),
 ) -> Project:
     project = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, project)
+    ensure_same_company(current_user, project, db=db)
     return project
 
 
@@ -80,7 +80,7 @@ def update_project(
     current_user: User = Depends(require_permission("projects", "edit")),
 ) -> Project:
     item = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     if payload.client_id is not None:
         client = _ensure_client_exists(db, payload.client_id, current_user)
         mismatched_model = db.scalar(
@@ -112,7 +112,7 @@ def delete_project(
     current_user: User = Depends(require_permission("projects", "delete")),
 ) -> None:
     item = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, item)
+    ensure_same_company(current_user, item, db=db)
     ensure_project_has_no_approved_quote(db, project_id)
     delete_item(db, item)
 
@@ -129,9 +129,9 @@ def assign_house_model(
     current_user: User = Depends(require_permission("projects", "edit")),
 ) -> ProjectHouseModel:
     project = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, project)
+    ensure_same_company(current_user, project, db=db)
     house_model = get_or_404(db, HouseModel, payload.house_model_id)
-    ensure_same_company(current_user, house_model)
+    ensure_same_company(current_user, house_model, db=db)
     if house_model.client_id != project.client_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -166,7 +166,7 @@ def project_summary(
     current_user: User = Depends(require_permission("projects", "view")),
 ) -> dict:
     project = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, project)
+    ensure_same_company(current_user, project, db=db)
     assigned_models = list(
         db.scalars(
             select(ProjectHouseModel)

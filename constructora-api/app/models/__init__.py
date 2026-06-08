@@ -41,7 +41,7 @@ from app.models.purchasing import (
     SupplierRFQSupplier,
 )
 from app.models.system import EmailOutboxMessage, SystemEmailSettings
-from app.models.user import Permission, Role, RolePermission, User, UserRole
+from app.models.user import Permission, Role, RolePermission, User, UserClientAccess, UserRole
 
 __all__ = [
     "Client",
@@ -86,6 +86,7 @@ __all__ = [
     "SupplierRFQSupplier",
     "SystemEmailSettings",
     "User",
+    "UserClientAccess",
     "UserRole",
     "WarehouseStock",
 ]
