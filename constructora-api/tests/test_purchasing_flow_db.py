@@ -23,6 +23,7 @@ from app.api.v1.endpoints.purchasing import (
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
 from app.models import (
+    AuditEvent,
     Client,
     Company,
     Project,
@@ -348,6 +349,7 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.assertEqual(payment.status, "scheduled")
         self.db.refresh(invoice)
         self.assertEqual(invoice.status, "scheduled")
+        self._assert_core_audit_events()
 
     def _get_purchase_order(self, purchase_order_id: int) -> PurchaseOrder:
         purchase_order = self.db.scalar(
@@ -357,6 +359,22 @@ class PurchasingFlowDBTest(unittest.TestCase):
         )
         assert purchase_order is not None
         return purchase_order
+
+    def _assert_core_audit_events(self) -> None:
+        events = list(
+            self.db.scalars(
+                select(AuditEvent).where(AuditEvent.company_id == self.company.id)
+            ).all()
+        )
+        event_keys = {(event.module, event.action, event.entity_type) for event in events}
+        self.assertIn(("compras", "create", "SupplierRFQ"), event_keys)
+        self.assertIn(("compras", "create", "SupplierQuote"), event_keys)
+        self.assertIn(("compras", "request_approval", "SupplierRFQ"), event_keys)
+        self.assertIn(("ordenes_compra", "create", "PurchaseOrder"), event_keys)
+        self.assertIn(("inventario", "receive", "MaterialReception"), event_keys)
+        self.assertIn(("facturas_proveedor", "create", "SupplierInvoice"), event_keys)
+        self.assertIn(("facturas_proveedor", "validate", "SupplierInvoice"), event_keys)
+        self.assertIn(("pagos_proveedores", "schedule", "SupplierPayment"), event_keys)
 
 
 if __name__ == "__main__":

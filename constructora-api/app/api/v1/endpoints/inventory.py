@@ -46,7 +46,8 @@ from app.schemas.inventory import (
     QuickInventoryParseTextRequest,
     WarehouseStockRead,
 )
-from app.services.crud import delete_item, get_or_404, update_item
+from app.services.audit import record_create, record_delete, record_event, record_update, snapshot
+from app.services.crud import get_or_404
 from app.services.pdf_text import PDFTextEmptyError, PDFTextExtractionError, extract_pdf_text
 from app.services.tenancy import ensure_same_company, scoped_select
 
@@ -672,6 +673,10 @@ def _status_response(items: list[ExpectedMaterialItem]) -> list[dict]:
     return response
 
 
+def _received_quantity_total(values: list[Decimal]) -> str:
+    return str(sum(values, Decimal("0")))
+
+
 @router.get("/warehouses", response_model=list[ProjectWarehouseRead])
 def list_warehouses(
     skip: int = 0,
@@ -695,6 +700,8 @@ def create_warehouse(
         **payload.model_dump(),
     )
     db.add(warehouse)
+    db.flush()
+    record_create(db, current_user, module="inventario", item=warehouse)
     db.commit()
     db.refresh(warehouse)
     return warehouse
@@ -709,7 +716,14 @@ def update_warehouse(
 ) -> ProjectWarehouse:
     warehouse = get_or_404(db, ProjectWarehouse, warehouse_id)
     ensure_same_company(current_user, warehouse)
-    return update_item(db, warehouse, payload.model_dump(exclude_unset=True))
+    data = payload.model_dump(exclude_unset=True)
+    before = snapshot(warehouse, list(data.keys()))
+    for field, value in data.items():
+        setattr(warehouse, field, value)
+    record_update(db, current_user, module="inventario", item=warehouse, before=before)
+    db.commit()
+    db.refresh(warehouse)
+    return warehouse
 
 
 @router.delete("/warehouses/{warehouse_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -720,7 +734,9 @@ def delete_warehouse(
 ) -> None:
     warehouse = get_or_404(db, ProjectWarehouse, warehouse_id)
     ensure_same_company(current_user, warehouse)
-    delete_item(db, warehouse)
+    record_delete(db, current_user, module="inventario", item=warehouse)
+    db.delete(warehouse)
+    db.commit()
 
 
 @router.get("/projects/{project_id}/warehouses", response_model=list[ProjectWarehouseRead])
@@ -814,6 +830,25 @@ def create_expected_material_list(
                 **data,
             )
         )
+    record_event(
+        db,
+        current_user,
+        module="inventario",
+        action="create",
+        entity_type="ExpectedMaterialList",
+        entity_id=expected_list.id,
+        company_id=expected_list.company_id,
+        label=expected_list.name,
+        description=f"{current_user.full_name} creo lista esperada de materiales: {expected_list.name}",
+        metadata={
+            "project_id": project.id,
+            "warehouse_id": expected_list.warehouse_id,
+            "purchase_order_id": expected_list.purchase_order_id,
+            "document_number": expected_list.document_number,
+            "source_document_name": expected_list.source_document_name,
+            "items_count": len(payload.items),
+        },
+    )
     db.commit()
     db.refresh(expected_list)
     return expected_list
@@ -984,6 +1019,51 @@ def create_quick_inventory_document(
             _sync_purchase_order_item(db, expected_item, line.received_quantity or Decimal("0"))
             _upsert_stock(db, warehouse, expected_item, line.received_quantity or Decimal("0"))
 
+    record_event(
+        db,
+        current_user,
+        module="inventario",
+        action="upload",
+        entity_type="ExpectedMaterialList",
+        entity_id=expected_list.id,
+        company_id=expected_list.company_id,
+        label=expected_list.name,
+        description=f"{current_user.full_name} cargo documento de material: {expected_list.name}",
+        metadata={
+            "project_id": project.id,
+            "warehouse_id": warehouse.id,
+            "document_number": expected_list.document_number,
+            "source_document_name": expected_list.source_document_name,
+            "source_document_hash": expected_list.source_document_hash,
+            "supplier_name": expected_list.supplier_name,
+            "items_count": len(payload.items),
+            "received_items_count": len(received_lines),
+        },
+    )
+    if reception is not None:
+        record_event(
+            db,
+            current_user,
+            module="inventario",
+            action="receive",
+            entity_type="MaterialReception",
+            entity_id=reception.id,
+            company_id=reception.company_id,
+            label=reception.delivery_reference or expected_list.name,
+            description=f"{current_user.full_name} registro recepcion de material: {expected_list.name}",
+            metadata={
+                "project_id": project.id,
+                "warehouse_id": warehouse.id,
+                "expected_list_id": expected_list.id,
+                "purchase_order_id": expected_list.purchase_order_id,
+                "delivery_reference": reception.delivery_reference,
+                "received_by": reception.received_by,
+                "items_count": len(received_lines),
+                "received_quantity_total": _received_quantity_total(
+                    [line.received_quantity or Decimal("0") for _, line in received_lines]
+                ),
+            },
+        )
     db.commit()
     db.refresh(expected_list)
     if reception is not None:
@@ -1013,6 +1093,8 @@ def add_expected_material_item(
         **data,
     )
     db.add(item)
+    db.flush()
+    record_create(db, current_user, module="inventario", item=item)
     db.commit()
     db.refresh(item)
     return item
@@ -1033,9 +1115,11 @@ def update_expected_material_item(
             detail="No se puede cambiar la cantidad esperada si ya hay recepciones",
         )
     data = _fill_expected_item_data(db, payload, item.company_id, current_user, existing=item)
+    before = snapshot(item, list(data.keys()) + ["status"])
     for field, value in data.items():
         setattr(item, field, value)
     item.status = _status_for_item(item)
+    record_update(db, current_user, module="inventario", item=item, before=before)
     db.commit()
     db.refresh(item)
     return item
@@ -1105,6 +1189,30 @@ def create_reception(
         _sync_purchase_order_item(db, expected_item, item_payload.received_quantity)
         _upsert_stock(db, warehouse, expected_item, item_payload.received_quantity)
 
+    record_event(
+        db,
+        current_user,
+        module="inventario",
+        action="receive",
+        entity_type="MaterialReception",
+        entity_id=reception.id,
+        company_id=reception.company_id,
+        label=reception.delivery_reference or expected_list.name,
+        description=f"{current_user.full_name} registro recepcion de material: {expected_list.name}",
+        metadata={
+            "project_id": project.id,
+            "warehouse_id": warehouse.id,
+            "expected_list_id": expected_list.id,
+            "purchase_order_id": expected_list.purchase_order_id,
+            "delivery_reference": reception.delivery_reference,
+            "delivered_by": reception.delivered_by,
+            "received_by": reception.received_by,
+            "items_count": len(payload.items),
+            "received_quantity_total": _received_quantity_total(
+                [item.received_quantity for item in payload.items]
+            ),
+        },
+    )
     db.commit()
     db.refresh(reception)
     return reception

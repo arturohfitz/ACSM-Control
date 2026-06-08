@@ -20,6 +20,7 @@ ACTION_LABELS = {
     "schedule": "programo",
     "pay": "pago",
     "upload": "cargo",
+    "receive": "recibio",
     "test_email": "probo correo",
 }
 
