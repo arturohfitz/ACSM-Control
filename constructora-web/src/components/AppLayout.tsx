@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity,
+  Bell,
   Boxes,
   Building2,
+  CheckCircle2,
   Calculator,
   ChevronDown,
+  Clock,
   ClipboardList,
+  ExternalLink,
   FileUp,
   FolderKanban,
   Hammer,
@@ -21,11 +25,13 @@ import {
   Store,
   Users,
   Warehouse,
+  X,
 } from 'lucide-react'
 
 import { useAuth } from '../auth/AuthContext'
 import { brand } from '../config/brand'
 import { buildInfo } from '../config/buildInfo'
+import { apiRequest } from '../lib/api'
 
 const navItems = [
   { to: '/', label: 'Inicio', icon: Home, permission: null },
@@ -153,14 +159,65 @@ const titles: Record<string, string> = {
   '/settings': 'Ajustes',
 }
 
+type NotificationItem = {
+  id: number
+  notification_type: string
+  title: string
+  body: string
+  category: 'task' | 'deadline' | 'warning' | 'info' | 'exception'
+  priority: 'low' | 'normal' | 'high' | 'critical'
+  status: 'unread' | 'read' | 'resolved' | 'dismissed'
+  source_module: string
+  entity_label?: string | null
+  action_url?: string | null
+  due_at?: string | null
+  created_at: string
+}
+
+type NotificationCounts = {
+  unread: number
+  open: number
+}
+
+const priorityStyles: Record<NotificationItem['priority'], string> = {
+  low: 'border-slate-200 bg-slate-50 text-slate-700',
+  normal: 'border-sky-200 bg-sky-50 text-sky-800',
+  high: 'border-amber-200 bg-amber-50 text-amber-800',
+  critical: 'border-rose-200 bg-rose-50 text-rose-800',
+}
+
+const priorityLabels: Record<NotificationItem['priority'], string> = {
+  low: 'Baja',
+  normal: 'Normal',
+  high: 'Alta',
+  critical: 'Critica',
+}
+
+function formatNotificationDate(value: string) {
+  return new Intl.DateTimeFormat('es-MX', {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
+
 export default function AppLayout() {
   const { user, logout, hasPermission } = useAuth()
   const location = useLocation()
+  const navigate = useNavigate()
   const title = titles[location.pathname] ?? 'ACSM Control'
   const isPurchasingRoute = location.pathname.startsWith('/purchasing')
   const isInventoryRoute = location.pathname.startsWith('/inventory')
   const [purchasingOpen, setPurchasingOpen] = useState(isPurchasingRoute)
   const [inventoryOpen, setInventoryOpen] = useState(isInventoryRoute)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>({
+    unread: 0,
+    open: 0,
+  })
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
   const visiblePurchasingSubItems = useMemo(
     () => purchasingSubItems.filter((item) => hasPermission(item.permission)),
     [hasPermission],
@@ -181,6 +238,70 @@ export default function AppLayout() {
   useEffect(() => {
     setInventoryOpen(isInventoryRoute)
   }, [isInventoryRoute])
+
+  const loadNotificationCounts = useCallback(async () => {
+    try {
+      const counts = await apiRequest<NotificationCounts>('/notifications/counts')
+      setNotificationCounts(counts)
+    } catch {
+      setNotificationCounts({ unread: 0, open: 0 })
+    }
+  }, [])
+
+  const loadNotifications = useCallback(async () => {
+    setNotificationsLoading(true)
+    try {
+      const [counts, items] = await Promise.all([
+        apiRequest<NotificationCounts>('/notifications/counts'),
+        apiRequest<NotificationItem[]>('/notifications?status_filter=open&limit=20'),
+      ])
+      setNotificationCounts(counts)
+      setNotifications(items)
+    } catch {
+      setNotifications([])
+    } finally {
+      setNotificationsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!user) return
+    loadNotificationCounts()
+    const timer = window.setInterval(loadNotificationCounts, 60000)
+    return () => window.clearInterval(timer)
+  }, [loadNotificationCounts, user])
+
+  useEffect(() => {
+    if (notificationsOpen) {
+      loadNotifications()
+    }
+  }, [loadNotifications, notificationsOpen])
+
+  async function markNotificationRead(notificationId: number) {
+    await apiRequest<NotificationItem>(`/notifications/${notificationId}/read`, { method: 'POST' })
+    await loadNotifications()
+  }
+
+  async function resolveNotification(notificationId: number) {
+    await apiRequest<NotificationItem>(`/notifications/${notificationId}/resolve`, { method: 'POST' })
+    await loadNotifications()
+  }
+
+  async function openNotification(notification: NotificationItem) {
+    if (notification.status === 'unread') {
+      await apiRequest<NotificationItem>(`/notifications/${notification.id}/read`, { method: 'POST' })
+    }
+    setNotificationsOpen(false)
+    await loadNotificationCounts()
+    if (notification.action_url) {
+      navigate(notification.action_url)
+    }
+  }
+
+  async function markAllNotificationsRead() {
+    await apiRequest('/notifications/mark-all-read', { method: 'POST' })
+    await loadNotifications()
+  }
 
   return (
     <div className="acsm-app-shell min-h-screen overflow-x-hidden bg-acsm-canvas text-acsm-ink lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">
@@ -344,6 +465,21 @@ export default function AppLayout() {
             <h1 className="text-xl font-semibold text-white">{title}</h1>
           </div>
           <div className="hidden items-center gap-3 lg:flex">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setNotificationsOpen((value) => !value)}
+                className="relative inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] transition hover:bg-white/20"
+                aria-label="Notificaciones"
+              >
+                <Bell className="h-5 w-5" aria-hidden="true" />
+                {notificationCounts.unread > 0 ? (
+                  <span className="absolute -right-1 -top-1 flex min-h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#081321] bg-rose-500 px-1 text-[10px] font-bold text-white shadow-lg">
+                    {notificationCounts.unread > 99 ? '99+' : notificationCounts.unread}
+                  </span>
+                ) : null}
+              </button>
+            </div>
             <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-right">
               <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-acsm-sidebar-muted">
                 Sesion activa
@@ -361,6 +497,19 @@ export default function AppLayout() {
           </div>
           <button
             type="button"
+            onClick={() => setNotificationsOpen((value) => !value)}
+            className="relative inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/20 lg:hidden"
+            aria-label="Notificaciones"
+          >
+            <Bell className="h-4 w-4" aria-hidden="true" />
+            {notificationCounts.unread > 0 ? (
+              <span className="absolute -right-1 -top-1 flex min-h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#081321] bg-rose-500 px-1 text-[10px] font-bold text-white">
+                {notificationCounts.unread > 99 ? '99+' : notificationCounts.unread}
+              </span>
+            ) : null}
+          </button>
+          <button
+            type="button"
             onClick={logout}
             className="inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/20 lg:hidden"
           >
@@ -368,6 +517,129 @@ export default function AppLayout() {
             Salir
           </button>
         </header>
+
+        {notificationsOpen ? (
+          <div className="fixed right-4 top-20 z-40 w-[min(430px,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-sky-100 bg-white shadow-[0_28px_90px_rgba(3,27,54,0.34)]">
+            <div className="flex items-start justify-between gap-4 border-b border-sky-100 bg-[linear-gradient(135deg,#ffffff_0%,#e8f5ff_100%)] px-5 py-4">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-acsm-muted">
+                  Centro de alertas
+                </div>
+                <h2 className="text-lg font-bold text-acsm-ink">Notificaciones</h2>
+                <p className="text-sm text-acsm-muted">
+                  {notificationCounts.open} pendiente(s), {notificationCounts.unread} nueva(s)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNotificationsOpen(false)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-sky-100 bg-white text-acsm-muted hover:text-acsm-ink"
+                aria-label="Cerrar notificaciones"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-b border-sky-100 px-5 py-3">
+              <span className="text-sm font-semibold text-acsm-ink">
+                Pendientes de atencion
+              </span>
+              <button
+                type="button"
+                onClick={markAllNotificationsRead}
+                disabled={!notificationCounts.unread}
+                className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Marcar leidas
+              </button>
+            </div>
+            <div className="max-h-[68vh] space-y-3 overflow-y-auto bg-slate-50/80 p-4">
+              {notificationsLoading ? (
+                <div className="rounded-2xl border border-sky-100 bg-white px-4 py-5 text-sm text-acsm-muted">
+                  Cargando notificaciones...
+                </div>
+              ) : notifications.length === 0 ? (
+                <div className="rounded-2xl border border-sky-100 bg-white px-4 py-6 text-center">
+                  <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" aria-hidden="true" />
+                  <div className="mt-2 font-bold text-acsm-ink">Sin pendientes</div>
+                  <p className="text-sm text-acsm-muted">Todo esta al dia por ahora.</p>
+                </div>
+              ) : (
+                notifications.map((notification) => (
+                  <article
+                    key={notification.id}
+                    className={[
+                      'rounded-2xl border bg-white p-4 shadow-[0_12px_30px_rgba(16,60,105,0.08)]',
+                      notification.status === 'unread'
+                        ? 'border-sky-300 ring-2 ring-sky-100'
+                        : 'border-sky-100',
+                    ].join(' ')}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={[
+                              'rounded-full border px-2.5 py-1 text-[11px] font-bold',
+                              priorityStyles[notification.priority],
+                            ].join(' ')}
+                          >
+                            {priorityLabels[notification.priority]}
+                          </span>
+                          {notification.status === 'unread' ? (
+                            <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-bold text-rose-700">
+                              Nueva
+                            </span>
+                          ) : null}
+                        </div>
+                        <h3 className="mt-2 text-base font-bold text-acsm-ink">
+                          {notification.title}
+                        </h3>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1 text-xs text-acsm-muted">
+                        <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                        {formatNotificationDate(notification.created_at)}
+                      </div>
+                    </div>
+                    <p className="mt-2 text-sm leading-5 text-acsm-muted">{notification.body}</p>
+                    {notification.entity_label ? (
+                      <div className="mt-3 rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs font-semibold text-sky-800">
+                        {notification.entity_label}
+                      </div>
+                    ) : null}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {notification.action_url ? (
+                        <button
+                          type="button"
+                          onClick={() => openNotification(notification)}
+                          className="inline-flex h-9 items-center gap-2 rounded-xl bg-[linear-gradient(180deg,#0d8bd3,#07578d)] px-3 text-sm font-bold text-white shadow-[0_10px_22px_rgba(0,91,160,0.22)]"
+                        >
+                          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                          Abrir
+                        </button>
+                      ) : null}
+                      {notification.status === 'unread' ? (
+                        <button
+                          type="button"
+                          onClick={() => markNotificationRead(notification.id)}
+                          className="inline-flex h-9 items-center rounded-xl border border-sky-200 bg-white px-3 text-sm font-bold text-acsm-ink"
+                        >
+                          Leida
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => resolveNotification(notification.id)}
+                        className="inline-flex h-9 items-center rounded-xl border border-sky-200 bg-white px-3 text-sm font-bold text-acsm-muted"
+                      >
+                        Resolver
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        ) : null}
 
         <main className="min-w-0 overflow-x-hidden px-4 py-6 lg:px-7">
           <Outlet />

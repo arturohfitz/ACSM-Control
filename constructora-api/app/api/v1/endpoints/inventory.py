@@ -48,6 +48,7 @@ from app.schemas.inventory import (
 )
 from app.services.audit import record_create, record_delete, record_event, record_update, snapshot
 from app.services.crud import get_or_404
+from app.services.notifications import notify_permission, resolve_notifications
 from app.services.pdf_text import PDFTextEmptyError, PDFTextExtractionError, extract_pdf_text
 from app.services.tenancy import ensure_same_company, scoped_select
 
@@ -677,6 +678,69 @@ def _received_quantity_total(values: list[Decimal]) -> str:
     return str(sum(values, Decimal("0")))
 
 
+def _sync_reception_notifications(
+    db: Session,
+    expected_list: ExpectedMaterialList,
+    current_user: User,
+) -> None:
+    if expected_list.purchase_order_id is None:
+        return
+    pending_items = db.scalar(
+        select(func.count(ExpectedMaterialItem.id)).where(
+            ExpectedMaterialItem.expected_list_id == expected_list.id,
+            ExpectedMaterialItem.received_quantity < ExpectedMaterialItem.expected_quantity,
+        )
+    ) or 0
+    purchase_order = db.scalar(
+        select(PurchaseOrder)
+        .where(PurchaseOrder.id == expected_list.purchase_order_id)
+        .options(selectinload(PurchaseOrder.supplier))
+    )
+    if purchase_order is None:
+        return
+    if pending_items == 0:
+        resolve_notifications(
+            db,
+            company_id=expected_list.company_id,
+            notification_type="purchase_order_ready_to_receive",
+            entity_type="PurchaseOrder",
+            entity_id=purchase_order.id,
+        )
+        resolve_notifications(
+            db,
+            company_id=expected_list.company_id,
+            notification_type="purchase_order_incomplete",
+            entity_type="PurchaseOrder",
+            entity_id=purchase_order.id,
+        )
+        return
+
+    notify_permission(
+        db,
+        company_id=expected_list.company_id,
+        module="inventory",
+        action="receive",
+        notification_type="purchase_order_incomplete",
+        title="Recepcion parcial registrada",
+        body=(
+            f"{purchase_order.po_number} todavia tiene {pending_items} "
+            "partida(s) pendiente(s) de completar."
+        ),
+        category="warning",
+        priority="high",
+        source_module="inventario",
+        entity_type="PurchaseOrder",
+        entity_id=purchase_order.id,
+        entity_label=purchase_order.po_number,
+        action_url="/inventory/purchase-order-receiving",
+        metadata={
+            "expected_list_id": expected_list.id,
+            "pending_items": pending_items,
+            "received_by": current_user.full_name,
+        },
+    )
+
+
 @router.get("/warehouses", response_model=list[ProjectWarehouseRead])
 def list_warehouses(
     skip: int = 0,
@@ -1064,6 +1128,7 @@ def create_quick_inventory_document(
                 ),
             },
         )
+        _sync_reception_notifications(db, expected_list, current_user)
     db.commit()
     db.refresh(expected_list)
     if reception is not None:
@@ -1213,6 +1278,7 @@ def create_reception(
             ),
         },
     )
+    _sync_reception_notifications(db, expected_list, current_user)
     db.commit()
     db.refresh(reception)
     return reception

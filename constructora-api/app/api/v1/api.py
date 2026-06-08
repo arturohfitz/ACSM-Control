@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     inventory,
     labor_rates,
     materials,
+    notifications,
     permissions,
     project_material_prices,
     projects,
@@ -32,6 +33,7 @@ api_router.include_router(clients.router, prefix="/clients", tags=["clients"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(house_models.router, prefix="/house-models", tags=["house-models"])
 api_router.include_router(materials.router, prefix="/materials", tags=["materials"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(
     project_material_prices.router,
     prefix="/project-material-prices",

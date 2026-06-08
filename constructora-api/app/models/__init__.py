@@ -1,5 +1,6 @@
 from app.models.audit import AuditEvent
 from app.models.company import Company
+from app.models.notification import Notification
 from app.models.inventory import (
     ExpectedMaterialItem,
     ExpectedMaterialList,
@@ -61,6 +62,7 @@ __all__ = [
     "MaterialReception",
     "MaterialReceptionItem",
     "Material",
+    "Notification",
     "Permission",
     "PurchaseOrder",
     "PurchaseOrderItem",

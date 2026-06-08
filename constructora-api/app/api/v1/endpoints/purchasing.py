@@ -64,6 +64,7 @@ from app.services.email_outbox import (
     queue_email,
 )
 from app.services.emailer import rfq_email_content
+from app.services.notifications import notify_permission, notify_user_id, resolve_notifications
 from app.services.permissions import user_has_permission
 from app.services.tenancy import company_id_for_write, ensure_same_company, scoped_select
 
@@ -442,6 +443,26 @@ def request_supplier_rfq_exception(
         description=f"{current_user.full_name} solicito excepcion para cotizar con menos de 3 proveedores",
         metadata={"proveedores": supplier_count, "partidas": len(payload.items)},
     )
+    notify_permission(
+        db,
+        company_id=exception_request.company_id,
+        module="supplier_quotes",
+        action="approve",
+        notification_type="rfq_exception_requested",
+        title="Excepcion de proveedores pendiente",
+        body=(
+            f"{current_user.full_name} solicito cotizar '{exception_request.title}' "
+            f"con {supplier_count} proveedor(es)."
+        ),
+        category="exception",
+        priority="high",
+        source_module="compras",
+        entity_type="SupplierRFQExceptionRequest",
+        entity_id=exception_request.id,
+        entity_label=exception_request.title,
+        action_url="/purchasing/approvals",
+        metadata={"proveedores": supplier_count, "partidas": len(payload.items)},
+    )
     db.commit()
     created_exception = db.scalar(
         select(SupplierRFQExceptionRequest)
@@ -482,6 +503,28 @@ def approve_supplier_rfq_exception(
         label=exception_request.title,
         description=f"{current_user.full_name} aprobo excepcion para solicitud de cotizacion",
     )
+    resolve_notifications(
+        db,
+        company_id=exception_request.company_id,
+        notification_type="rfq_exception_requested",
+        entity_type="SupplierRFQExceptionRequest",
+        entity_id=exception_request.id,
+    )
+    notify_user_id(
+        db,
+        user_id=exception_request.requested_by,
+        company_id=exception_request.company_id,
+        notification_type="rfq_exception_approved",
+        title="Excepcion aprobada",
+        body=f"Ya puedes crear la solicitud '{exception_request.title}' con menos de 3 proveedores.",
+        category="info",
+        priority="normal",
+        source_module="compras",
+        entity_type="SupplierRFQExceptionRequest",
+        entity_id=exception_request.id,
+        entity_label=exception_request.title,
+        action_url="/purchasing",
+    )
     db.commit()
     db.refresh(exception_request)
     return exception_request
@@ -512,6 +555,29 @@ def reject_supplier_rfq_exception(
         company_id=exception_request.company_id,
         label=exception_request.title,
         description=f"{current_user.full_name} rechazo excepcion para solicitud de cotizacion",
+    )
+    resolve_notifications(
+        db,
+        company_id=exception_request.company_id,
+        notification_type="rfq_exception_requested",
+        entity_type="SupplierRFQExceptionRequest",
+        entity_id=exception_request.id,
+    )
+    notify_user_id(
+        db,
+        user_id=exception_request.requested_by,
+        company_id=exception_request.company_id,
+        notification_type="rfq_exception_rejected",
+        title="Excepcion rechazada",
+        body=f"La excepcion para '{exception_request.title}' fue rechazada.",
+        category="warning",
+        priority="high",
+        source_module="compras",
+        entity_type="SupplierRFQExceptionRequest",
+        entity_id=exception_request.id,
+        entity_label=exception_request.title,
+        action_url="/purchasing",
+        metadata={"decision_notes": exception_request.decision_notes},
     )
     db.commit()
     db.refresh(exception_request)
@@ -966,6 +1032,7 @@ def request_supplier_rfq_approval(
         approval.decided_at = None
     reference_quote.status = "approval_requested"
     rfq.status = "approval_pending"
+    db.flush()
     record_event(
         db,
         current_user,
@@ -980,6 +1047,31 @@ def request_supplier_rfq_approval(
             f"{rfq.rfq_number}"
         ),
         metadata={
+            "quotes": len(complete_quotes),
+            "is_exception": payload.is_exception,
+            "reference_quote_id": reference_quote.id,
+        },
+    )
+    notify_permission(
+        db,
+        company_id=rfq.company_id,
+        module="supplier_quotes",
+        action="approve",
+        notification_type="supplier_quote_approval_requested",
+        title="Comparativo pendiente de aprobar",
+        body=(
+            f"{current_user.full_name} solicito aprobar '{rfq.title}' "
+            f"con {len(complete_quotes)} cotizacion(es)."
+        ),
+        category="exception" if payload.is_exception else "task",
+        priority="high",
+        source_module="compras",
+        entity_type="SupplierQuoteApproval",
+        entity_id=approval.id,
+        entity_label=rfq.rfq_number,
+        action_url="/purchasing/approvals",
+        metadata={
+            "rfq_id": rfq.id,
             "quotes": len(complete_quotes),
             "is_exception": payload.is_exception,
             "reference_quote_id": reference_quote.id,
@@ -1128,6 +1220,7 @@ def request_supplier_quote_approval(
         approval.decided_at = None
     quote.status = "approval_requested"
     quote.rfq.status = "approval_pending"
+    db.flush()
     record_event(
         db,
         current_user,
@@ -1141,6 +1234,26 @@ def request_supplier_quote_approval(
             f"{current_user.full_name} solicito aprobacion para la cotizacion "
             f"de {quote.supplier.name if quote.supplier else 'proveedor'}"
         ),
+        metadata={"rfq_id": quote.rfq_id, "supplier_id": quote.supplier_id, "subtotal": str(quote.subtotal)},
+    )
+    notify_permission(
+        db,
+        company_id=quote.company_id,
+        module="supplier_quotes",
+        action="approve",
+        notification_type="supplier_quote_approval_requested",
+        title="Cotizacion pendiente de aprobar",
+        body=(
+            f"{current_user.full_name} solicito aprobar la cotizacion de "
+            f"{quote.supplier.name if quote.supplier else 'proveedor'} para {quote.rfq.rfq_number}."
+        ),
+        category="task",
+        priority="high",
+        source_module="compras",
+        entity_type="SupplierQuoteApproval",
+        entity_id=approval.id,
+        entity_label=quote.quote_number or quote.rfq.rfq_number,
+        action_url="/purchasing/approvals",
         metadata={"rfq_id": quote.rfq_id, "supplier_id": quote.supplier_id, "subtotal": str(quote.subtotal)},
     )
     db.commit()
@@ -1290,6 +1403,49 @@ def approve_supplier_quote(
             rfq_quote.status = "discarded"
     for link in rfq.supplier_links:
         link.status = "awarded" if link.supplier_id == quote.supplier_id else "declined"
+    resolve_notifications(
+        db,
+        company_id=quote.company_id,
+        notification_type="supplier_quote_approval_requested",
+        entity_type="SupplierQuoteApproval",
+        entity_id=pending_approval.id,
+    )
+    notify_user_id(
+        db,
+        user_id=pending_approval.requested_by or rfq.created_by,
+        company_id=quote.company_id,
+        notification_type="supplier_quote_approved",
+        title="Cotizacion aprobada",
+        body=(
+            f"Se aprobo {quote.supplier.name if quote.supplier else 'el proveedor'} "
+            f"y se genero la orden {purchase_order.po_number}."
+        ),
+        category="info",
+        priority="normal",
+        source_module="compras",
+        entity_type="PurchaseOrder",
+        entity_id=purchase_order.id,
+        entity_label=purchase_order.po_number,
+        action_url="/purchasing",
+        metadata={"rfq_id": rfq.id, "quote_id": quote.id, "purchase_order_id": purchase_order.id},
+    )
+    notify_permission(
+        db,
+        company_id=quote.company_id,
+        module="inventory",
+        action="receive",
+        notification_type="purchase_order_ready_to_receive",
+        title="OC lista para recibir",
+        body=f"{purchase_order.po_number} quedo lista para recepcion en inventario.",
+        category="task",
+        priority="normal",
+        source_module="inventario",
+        entity_type="PurchaseOrder",
+        entity_id=purchase_order.id,
+        entity_label=purchase_order.po_number,
+        action_url="/inventory/purchase-order-receiving",
+        metadata={"supplier_id": quote.supplier_id, "subtotal": str(quote.subtotal)},
+    )
     db.commit()
     db.refresh(purchase_order)
     db.refresh(expected_list)
@@ -1334,6 +1490,29 @@ def reject_supplier_quote_approval(
         label=quote.quote_number or quote.rfq.rfq_number,
         description=f"{current_user.full_name} rechazo la cotizacion solicitada para aprobacion",
         metadata={"rfq_id": quote.rfq_id, "supplier_id": quote.supplier_id},
+    )
+    resolve_notifications(
+        db,
+        company_id=quote.company_id,
+        notification_type="supplier_quote_approval_requested",
+        entity_type="SupplierQuoteApproval",
+        entity_id=quote.approval.id,
+    )
+    notify_user_id(
+        db,
+        user_id=quote.approval.requested_by or quote.rfq.created_by,
+        company_id=quote.company_id,
+        notification_type="supplier_quote_rejected",
+        title="Cotizacion rechazada",
+        body=f"La aprobacion de {quote.rfq.rfq_number} fue rechazada.",
+        category="warning",
+        priority="high",
+        source_module="compras",
+        entity_type="SupplierQuoteApproval",
+        entity_id=quote.approval.id,
+        entity_label=quote.quote_number or quote.rfq.rfq_number,
+        action_url="/purchasing",
+        metadata={"decision_notes": quote.approval.decision_notes},
     )
     db.commit()
     return _get_supplier_quote_approval(db, quote.approval.id, current_user)
@@ -1454,6 +1633,42 @@ def create_supplier_invoice(
         purchase_order.status = "factured"
     db.flush()
     record_create(db, current_user, module="facturas_proveedor", item=invoice)
+    if invoice_status == "approved_for_payment":
+        notify_permission(
+            db,
+            company_id=invoice.company_id,
+            module="supplier_payments",
+            action="view",
+            notification_type="supplier_invoice_ready_to_pay",
+            title="Factura lista para pago",
+            body=f"La factura {invoice.invoice_number} esta validada y lista para gestion de pago.",
+            category="task",
+            priority="normal",
+            source_module="pagos_proveedores",
+            entity_type="SupplierInvoice",
+            entity_id=invoice.id,
+            entity_label=invoice.invoice_number,
+            action_url="/supplier-payments",
+            metadata={"purchase_order_id": purchase_order.id, "total": str(invoice.total)},
+        )
+    else:
+        notify_permission(
+            db,
+            company_id=invoice.company_id,
+            module="inventory",
+            action="receive",
+            notification_type="supplier_invoice_blocked",
+            title="Factura bloqueada por material pendiente",
+            body=f"La factura {invoice.invoice_number} no puede pagarse hasta completar la recepcion.",
+            category="warning",
+            priority="high",
+            source_module="inventario",
+            entity_type="SupplierInvoice",
+            entity_id=invoice.id,
+            entity_label=invoice.invoice_number,
+            action_url="/inventory/purchase-order-receiving",
+            metadata={"purchase_order_id": purchase_order.id, "total": str(invoice.total)},
+        )
     db.commit()
     db.refresh(invoice)
     return invoice
@@ -1490,6 +1705,31 @@ def validate_supplier_invoice(
         description=f"{current_user.full_name} valido la factura {invoice.invoice_number}",
         metadata={"status": next_status, "pendientes": pending_items},
     )
+    if next_status == "approved_for_payment":
+        resolve_notifications(
+            db,
+            company_id=invoice.company_id,
+            notification_type="supplier_invoice_blocked",
+            entity_type="SupplierInvoice",
+            entity_id=invoice.id,
+        )
+        notify_permission(
+            db,
+            company_id=invoice.company_id,
+            module="supplier_payments",
+            action="view",
+            notification_type="supplier_invoice_ready_to_pay",
+            title="Factura lista para pago",
+            body=f"La factura {invoice.invoice_number} ya no tiene material pendiente.",
+            category="task",
+            priority="normal",
+            source_module="pagos_proveedores",
+            entity_type="SupplierInvoice",
+            entity_id=invoice.id,
+            entity_label=invoice.invoice_number,
+            action_url="/supplier-payments",
+            metadata={"purchase_order_id": invoice.purchase_order_id, "total": str(invoice.total)},
+        )
     db.commit()
     return SupplierInvoiceValidation(
         invoice_id=invoice.id,

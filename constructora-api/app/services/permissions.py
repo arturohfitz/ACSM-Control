@@ -36,6 +36,7 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     ("settings", "edit", "Editar configuracion"),
     ("settings", "test_email", "Probar configuracion de correo"),
     ("events", "view", "Ver bitacora de eventos"),
+    ("notifications", "view", "Ver notificaciones"),
     ("companies", "view", "Ver empresas"),
     ("companies", "create", "Crear empresas"),
     ("companies", "edit", "Editar empresas"),
@@ -108,6 +109,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
         {
             "companies:view",
             "events:view",
+            "notifications:view",
             "clients:view",
             "clients:create",
             "clients:edit",
@@ -154,6 +156,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
             "supplier_rfq:view",
             "purchase_orders:view",
             "supplier_invoices:view",
+            "notifications:view",
         },
     ),
     (
@@ -189,6 +192,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
             "supplier_quotes:compare",
             "supplier_quotes:request_approval",
             "purchase_orders:view",
+            "notifications:view",
             "purchase_orders:send",
         },
     ),
@@ -216,6 +220,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
             "supplier_quotes:request_approval",
             "purchase_orders:view",
             "purchase_orders:send",
+            "notifications:view",
         },
     ),
     (
@@ -234,6 +239,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
             "purchase_orders:view",
             "purchase_orders:approve",
             "events:view",
+            "notifications:view",
         },
     ),
     (
@@ -252,6 +258,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
             "supplier_payments:schedule",
             "supplier_payments:pay",
             "events:view",
+            "notifications:view",
         },
     ),
     (
@@ -277,6 +284,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
             "purchase_orders:view",
             "supplier_invoices:view",
             "supplier_payments:view",
+            "notifications:view",
         },
     ),
     (
@@ -300,6 +308,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
             "purchase_orders:view",
             "supplier_invoices:view",
             "supplier_payments:view",
+            "notifications:view",
         },
     ),
 ]
