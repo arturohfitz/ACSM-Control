@@ -1050,7 +1050,7 @@ export default function HouseModelsByDeveloperPage() {
   }
 
   return (
-    <section className="mx-auto max-w-[1500px] overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_20px_50px_rgba(31,66,110,0.18)]">
+    <section className="w-full overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_20px_50px_rgba(31,66,110,0.18)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#8fb4d4] bg-[linear-gradient(180deg,#ffffff_0%,#e5f0f9_100%)] px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-acsm-green">
@@ -1074,7 +1074,7 @@ export default function HouseModelsByDeveloperPage() {
         </button>
       </div>
 
-      <div className="grid min-h-[620px] bg-slate-100/70 lg:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="grid min-h-[calc(100vh-150px)] bg-slate-100/70 lg:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="border-b border-[#8fb4d4] bg-[#dfeaf3] lg:border-b-0 lg:border-r">
           <div className="border-b border-[#8fb4d4] bg-[#cfdeeb] px-3 py-3">
             <div className="text-xs font-semibold uppercase text-acsm-muted">Desarrolladoras</div>
@@ -1083,7 +1083,7 @@ export default function HouseModelsByDeveloperPage() {
             </div>
           </div>
 
-          <div className="max-h-[580px] space-y-1.5 overflow-auto p-2">
+          <div className="max-h-[calc(100vh-270px)] space-y-1.5 overflow-auto p-2">
             {clients.map((client) => {
               const clientModels = models.filter((model) => model.client_id === client.id)
               const isSelected = String(client.id) === selectedClientId

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, CreditCard, FileCheck2, RefreshCw } from 'lucide-react'
 
 import { apiRequest } from '../lib/api'
+import { showActionNotice } from '../lib/actionNotice'
 
 type Supplier = {
   id: number
@@ -138,7 +139,9 @@ export default function SupplierPaymentsPage() {
           document_name: documentName || null,
         }),
       })
-      setMessage(`Factura ${created.invoice_number} registrada como ${statusLabel(created.status)}.`)
+      const successMessage = `Factura ${created.invoice_number} registrada como ${statusLabel(created.status)}.`
+      setMessage(successMessage)
+      showActionNotice(successMessage)
       setInvoiceNumber('')
       setDocumentName('')
       setTotal('')
@@ -157,6 +160,7 @@ export default function SupplierPaymentsPage() {
         { method: 'POST' },
       )
       setMessage(result.message)
+      showActionNotice(result.message)
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible validar la factura')
@@ -179,7 +183,9 @@ export default function SupplierPaymentsPage() {
           reference: reference || null,
         }),
       })
-      setMessage(`Pago programado para factura ${invoice.invoice_number}.`)
+      const successMessage = `Pago programado para factura ${invoice.invoice_number}.`
+      setMessage(successMessage)
+      showActionNotice(successMessage)
       setInvoiceToPay('')
       setReference('')
       await loadData()
@@ -199,7 +205,9 @@ export default function SupplierPaymentsPage() {
           paid_at: new Date().toISOString().slice(0, 10),
         }),
       })
-      setMessage('Pago marcado como realizado.')
+      const successMessage = 'Pago marcado como realizado.'
+      setMessage(successMessage)
+      showActionNotice(successMessage)
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible marcar el pago')
@@ -212,16 +220,11 @@ export default function SupplierPaymentsPage() {
 
   return (
     <div className="space-y-5">
-      {(message || error) && (
+      {error && (
         <div
-          className={[
-            'rounded-md border px-4 py-3 text-sm font-medium',
-            error
-              ? 'border-red-200 bg-red-50 text-red-700'
-              : 'border-blue-200 bg-blue-50 text-blue-800',
-          ].join(' ')}
+          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
         >
-          {error || message}
+          {error}
         </div>
       )}
 

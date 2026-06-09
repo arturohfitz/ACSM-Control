@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 
 import { apiRequest } from '../lib/api'
+import { showActionNotice, type ActionNoticeKind } from '../lib/actionNotice'
 
 type Project = {
   id: number
@@ -354,6 +355,11 @@ export default function PurchasingPage() {
     () => rfqs.find((rfq) => rfq.id === selectedRfqId) ?? rfqs[0],
     [rfqs, selectedRfqId],
   )
+
+  function notifySuccess(text: string, kind: ActionNoticeKind = 'success') {
+    setMessage(text)
+    showActionNotice(text, kind)
+  }
   const detailRfq = useMemo(
     () => rfqs.find((rfq) => rfq.id === detailRfqId) ?? null,
     [detailRfqId, rfqs],
@@ -636,7 +642,7 @@ export default function PurchasingPage() {
             })),
         }),
       })
-      setMessage(`Solicitud ${created.rfq_number} creada. Estado: ${statusLabel(created.status)}.`)
+      notifySuccess(`Solicitud ${created.rfq_number} creada. Estado: ${statusLabel(created.status)}.`)
       setTitle('')
       setSupplierIds([])
       setItems([{ ...emptyItem }])
@@ -654,7 +660,7 @@ export default function PurchasingPage() {
       const updated = await apiRequest<SupplierRFQ>(`/purchasing/supplier-rfqs/${rfqId}/send`, {
         method: 'POST',
       })
-      setMessage(`Solicitud ${updated.rfq_number} procesada para envio por correo.`)
+      notifySuccess(`Solicitud ${updated.rfq_number} procesada para envio por correo.`)
       await loadData(rfqId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible enviar la solicitud')
@@ -686,7 +692,7 @@ export default function PurchasingPage() {
             })),
         }),
       })
-      setMessage('Datos guardados para su comparativo.')
+      notifySuccess('Datos guardados para su comparativo.')
       resetQuoteCapture(selectedRfq)
       await loadRfqDetails(selectedRfq.id)
       await loadData(selectedRfq.id)
@@ -710,10 +716,11 @@ export default function PurchasingPage() {
           }),
         },
       )
-      setMessage(
+      notifySuccess(
         isException
           ? 'Solicitud de aprobacion por excepcion enviada.'
           : 'Solicitud de aprobacion enviada.',
+        'info',
       )
       setExceptionOpen(false)
       setExceptionNotes('')
@@ -750,7 +757,7 @@ export default function PurchasingPage() {
           request_notes: rfqExceptionNotes.trim(),
         }),
       })
-      setMessage('Solicitud de excepcion enviada a aprobacion.')
+      notifySuccess('Solicitud de excepcion enviada a aprobacion.', 'info')
       setRfqExceptionOpen(false)
       setRfqExceptionNotes('')
       await loadData(selectedRfq?.id)
@@ -767,8 +774,9 @@ export default function PurchasingPage() {
         method: 'DELETE',
       })
       resetQuoteCapture(selectedRfq)
-      setMessage(
+      notifySuccess(
         `Cotizacion de ${row.supplier_name} borrada. Tienes que volver a seleccionar el proveedor y recapturar los datos.`,
+        'warning',
       )
       await loadData(selectedRfq?.id)
       if (selectedRfq?.id) await loadRfqDetails(selectedRfq.id)
@@ -787,7 +795,7 @@ export default function PurchasingPage() {
       const updated = await apiRequest<PurchaseOrder>(`/purchasing/purchase-orders/${orderId}/send`, {
         method: 'POST',
       })
-      setMessage(`Orden ${updated.po_number} enviada al proveedor. Ya puedes consultarla en Ordenes de compra.`)
+      notifySuccess(`Orden ${updated.po_number} enviada al proveedor. Ya puedes consultarla en Ordenes de compra.`)
       await loadData(selectedRfq?.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible enviar la orden de compra')
@@ -796,16 +804,11 @@ export default function PurchasingPage() {
 
   return (
     <div className="space-y-5">
-      {(message || error) && (
+      {error && (
         <div
-          className={[
-            'rounded-md border px-4 py-3 text-sm font-medium',
-            error
-              ? 'border-red-200 bg-red-50 text-red-700'
-              : 'border-blue-200 bg-blue-50 text-blue-800',
-          ].join(' ')}
+          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
         >
-          {error || message}
+          {error}
         </div>
       )}
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, ClipboardCheck, RefreshCw, XCircle } from 'lucide-react'
 
 import { apiRequest } from '../lib/api'
+import { showActionNotice, type ActionNoticeKind } from '../lib/actionNotice'
 
 type Supplier = {
   id: number
@@ -178,6 +179,11 @@ export default function PurchasingApprovalsPage() {
     [selectedApproval?.request_notes],
   )
 
+  function notifySuccess(text: string, kind: ActionNoticeKind = 'success') {
+    setMessage(text)
+    showActionNotice(text, kind)
+  }
+
   async function loadApprovals(nextSelectedId = selectedApprovalId) {
     setLoading(true)
     setError('')
@@ -239,7 +245,7 @@ export default function PurchasingApprovalsPage() {
         `/purchasing/supplier-quotes/${selectedQuote.id}/approve`,
         { method: 'POST' },
       )
-      setMessage(`Aprobacion registrada. Se genero la orden ${result.purchase_order.po_number}.`)
+      notifySuccess(`Aprobacion registrada. Se genero la orden ${result.purchase_order.po_number}.`)
       await loadApprovals()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible aprobar la cotizacion')
@@ -255,7 +261,7 @@ export default function PurchasingApprovalsPage() {
         method: 'POST',
         body: JSON.stringify({ decision_notes: decisionNotes || null }),
       })
-      setMessage('Cotizacion rechazada. El comprador podra seleccionar otra opcion.')
+      notifySuccess('Cotizacion rechazada. El comprador podra seleccionar otra opcion.', 'warning')
       await loadApprovals()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible rechazar la cotizacion')
@@ -271,7 +277,7 @@ export default function PurchasingApprovalsPage() {
         method: 'POST',
         body: JSON.stringify({ decision_notes: decisionNotes || null }),
       })
-      setMessage('Excepcion aprobada. El comprador ya puede crear la solicitud con menos de 3 proveedores.')
+      notifySuccess('Excepcion aprobada. El comprador ya puede crear la solicitud con menos de 3 proveedores.')
       setSelectedExceptionId(null)
       await loadApprovals()
     } catch (err) {
@@ -288,7 +294,7 @@ export default function PurchasingApprovalsPage() {
         method: 'POST',
         body: JSON.stringify({ decision_notes: decisionNotes || null }),
       })
-      setMessage('Excepcion rechazada.')
+      notifySuccess('Excepcion rechazada.', 'warning')
       setSelectedExceptionId(null)
       await loadApprovals()
     } catch (err) {
@@ -298,14 +304,11 @@ export default function PurchasingApprovalsPage() {
 
   return (
     <div className="space-y-5">
-      {(message || error) && (
+      {error && (
         <div
-          className={[
-            'rounded-md border px-4 py-3 text-sm font-medium',
-            error ? 'border-red-200 bg-red-50 text-red-700' : 'border-blue-200 bg-blue-50 text-blue-800',
-          ].join(' ')}
+          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
         >
-          {error || message}
+          {error}
         </div>
       )}
 

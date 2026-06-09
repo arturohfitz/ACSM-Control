@@ -32,6 +32,7 @@ import { useAuth } from '../auth/AuthContext'
 import { brand } from '../config/brand'
 import { buildInfo } from '../config/buildInfo'
 import { apiRequest } from '../lib/api'
+import { ACTION_NOTICE_EVENT, type ActionNoticePayload } from '../lib/actionNotice'
 
 const navItems = [
   { to: '/', label: 'Inicio', icon: Home, permission: null },
@@ -218,6 +219,9 @@ export default function AppLayout() {
     open: 0,
   })
   const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [actionNotice, setActionNotice] = useState<
+    (Required<ActionNoticePayload> & { id: number }) | null
+  >(null)
   const visiblePurchasingSubItems = useMemo(
     () => purchasingSubItems.filter((item) => hasPermission(item.permission)),
     [hasPermission],
@@ -276,6 +280,27 @@ export default function AppLayout() {
       loadNotifications()
     }
   }, [loadNotifications, notificationsOpen])
+
+  useEffect(() => {
+    function handleActionNotice(event: Event) {
+      const detail = (event as CustomEvent<ActionNoticePayload>).detail
+      if (!detail?.message) return
+      setActionNotice({
+        id: Date.now(),
+        message: detail.message,
+        kind: detail.kind ?? 'success',
+      })
+    }
+
+    window.addEventListener(ACTION_NOTICE_EVENT, handleActionNotice)
+    return () => window.removeEventListener(ACTION_NOTICE_EVENT, handleActionNotice)
+  }, [])
+
+  useEffect(() => {
+    if (!actionNotice) return undefined
+    const timer = window.setTimeout(() => setActionNotice(null), 5200)
+    return () => window.clearTimeout(timer)
+  }, [actionNotice])
 
   async function markNotificationRead(notificationId: number) {
     await apiRequest<NotificationItem>(`/notifications/${notificationId}/read`, { method: 'POST' })
@@ -458,13 +483,43 @@ export default function AppLayout() {
 
       <div className="min-w-0 lg:col-start-2">
         <header className="sticky top-0 z-20 flex h-[72px] min-w-0 items-center justify-between border-b border-white/10 bg-[linear-gradient(180deg,#081321_0%,#0d2139_100%)] px-4 text-white shadow-[0_12px_34px_rgba(2,13,31,0.28)] lg:px-6">
-          <div>
+          <div className="shrink-0">
             <div className="text-[11px] font-bold uppercase tracking-[0.24em] text-blue-100/70">
               Operacion
             </div>
             <h1 className="text-xl font-semibold text-white">{title}</h1>
           </div>
-          <div className="hidden items-center gap-3 lg:flex">
+          <div className="mx-5 hidden min-w-0 flex-1 justify-center lg:flex">
+            {actionNotice ? (
+              <div
+                key={actionNotice.id}
+                role="status"
+                aria-live="polite"
+                className={[
+                  'flex min-h-11 max-w-[720px] items-center gap-3 rounded-2xl border px-4 py-2 text-sm font-bold shadow-[0_18px_42px_rgba(0,0,0,0.26),inset_0_1px_0_rgba(255,255,255,0.84)]',
+                  actionNotice.kind === 'error'
+                    ? 'border-rose-200 bg-[linear-gradient(180deg,#fff5f6,#ffe5e9)] text-rose-800'
+                    : actionNotice.kind === 'warning'
+                      ? 'border-amber-200 bg-[linear-gradient(180deg,#fffdf3,#fff1cc)] text-amber-900'
+                      : actionNotice.kind === 'info'
+                        ? 'border-sky-200 bg-[linear-gradient(180deg,#f8fcff,#dff0ff)] text-sky-900'
+                        : 'border-emerald-200 bg-[linear-gradient(180deg,#fbfffd,#dcfbea)] text-emerald-900',
+                ].join(' ')}
+              >
+                <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 truncate">{actionNotice.message}</span>
+                <button
+                  type="button"
+                  onClick={() => setActionNotice(null)}
+                  className="ml-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-white/55 text-current transition hover:bg-white/80"
+                  aria-label="Cerrar notificacion"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div className="hidden shrink-0 items-center gap-3 lg:flex">
             <div className="relative">
               <button
                 type="button"
@@ -517,6 +572,36 @@ export default function AppLayout() {
             Salir
           </button>
         </header>
+
+        {actionNotice ? (
+          <div className="fixed left-4 right-4 top-20 z-40 lg:hidden">
+            <div
+              role="status"
+              aria-live="polite"
+              className={[
+                'flex min-h-11 items-center gap-3 rounded-2xl border px-4 py-2 text-sm font-bold shadow-[0_18px_42px_rgba(0,0,0,0.26),inset_0_1px_0_rgba(255,255,255,0.84)]',
+                actionNotice.kind === 'error'
+                  ? 'border-rose-200 bg-[linear-gradient(180deg,#fff5f6,#ffe5e9)] text-rose-800'
+                  : actionNotice.kind === 'warning'
+                    ? 'border-amber-200 bg-[linear-gradient(180deg,#fffdf3,#fff1cc)] text-amber-900'
+                    : actionNotice.kind === 'info'
+                      ? 'border-sky-200 bg-[linear-gradient(180deg,#f8fcff,#dff0ff)] text-sky-900'
+                      : 'border-emerald-200 bg-[linear-gradient(180deg,#fbfffd,#dcfbea)] text-emerald-900',
+              ].join(' ')}
+            >
+              <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1">{actionNotice.message}</span>
+              <button
+                type="button"
+                onClick={() => setActionNotice(null)}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-white/55 text-current"
+                aria-label="Cerrar notificacion"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {notificationsOpen ? (
           <div className="fixed right-4 top-20 z-40 w-[min(430px,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-sky-100 bg-white shadow-[0_28px_90px_rgba(3,27,54,0.34)]">

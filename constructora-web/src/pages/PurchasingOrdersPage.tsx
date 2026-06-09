@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Eye, FileText, Printer, RefreshCw, Search, Send, X } from 'lucide-react'
 
 import { apiRequest } from '../lib/api'
+import { showActionNotice } from '../lib/actionNotice'
 
 type Supplier = {
   id: number
@@ -233,7 +234,9 @@ export default function PurchasingOrdersPage() {
       const updated = await apiRequest<PurchaseOrder>(`/purchasing/purchase-orders/${orderId}/send`, {
         method: 'POST',
       })
-      setMessage(`Orden ${updated.po_number} marcada como enviada al proveedor.`)
+      const successMessage = `Orden ${updated.po_number} marcada como enviada al proveedor.`
+      setMessage(successMessage)
+      showActionNotice(successMessage)
       await loadOrders()
       setSelectedOrderId(updated.id)
     } catch (err) {
@@ -247,14 +250,11 @@ export default function PurchasingOrdersPage() {
 
   return (
     <div className="space-y-5">
-      {(message || error) && (
+      {error && (
         <div
-          className={[
-            'rounded-xl border px-4 py-3 text-sm font-semibold',
-            error ? 'border-red-200 bg-red-50 text-red-700' : 'border-blue-200 bg-blue-50 text-blue-800',
-          ].join(' ')}
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
         >
-          {error || message}
+          {error}
         </div>
       )}
 
