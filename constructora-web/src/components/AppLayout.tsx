@@ -328,6 +328,15 @@ export default function AppLayout() {
     await loadNotifications()
   }
 
+  const actionNoticeTitle = actionNotice
+    ? {
+        success: 'Accion completada',
+        info: 'Aviso registrado',
+        warning: 'Requiere atencion',
+        error: 'No se pudo completar',
+      }[actionNotice.kind]
+    : ''
+
   return (
     <div className="acsm-app-shell min-h-screen overflow-x-hidden bg-acsm-canvas text-acsm-ink lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] border-r border-acsm-sidebar-line bg-[linear-gradient(180deg,#081321_0%,#102a4b_54%,#09172a_100%)] text-white shadow-[18px_0_48px_rgba(2,13,31,0.34)] lg:flex lg:flex-col">
@@ -489,36 +498,7 @@ export default function AppLayout() {
             </div>
             <h1 className="text-xl font-semibold text-white">{title}</h1>
           </div>
-          <div className="mx-5 hidden min-w-0 flex-1 justify-center lg:flex">
-            {actionNotice ? (
-              <div
-                key={actionNotice.id}
-                role="status"
-                aria-live="polite"
-                className={[
-                  'flex min-h-11 max-w-[720px] items-center gap-3 rounded-2xl border px-4 py-2 text-sm font-bold shadow-[0_18px_42px_rgba(0,0,0,0.26),inset_0_1px_0_rgba(255,255,255,0.84)]',
-                  actionNotice.kind === 'error'
-                    ? 'border-rose-200 bg-[linear-gradient(180deg,#fff5f6,#ffe5e9)] text-rose-800'
-                    : actionNotice.kind === 'warning'
-                      ? 'border-amber-200 bg-[linear-gradient(180deg,#fffdf3,#fff1cc)] text-amber-900'
-                      : actionNotice.kind === 'info'
-                        ? 'border-sky-200 bg-[linear-gradient(180deg,#f8fcff,#dff0ff)] text-sky-900'
-                        : 'border-emerald-200 bg-[linear-gradient(180deg,#fbfffd,#dcfbea)] text-emerald-900',
-                ].join(' ')}
-              >
-                <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
-                <span className="min-w-0 truncate">{actionNotice.message}</span>
-                <button
-                  type="button"
-                  onClick={() => setActionNotice(null)}
-                  className="ml-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-white/55 text-current transition hover:bg-white/80"
-                  aria-label="Cerrar notificacion"
-                >
-                  <X className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
-            ) : null}
-          </div>
+          <div className="mx-5 hidden min-w-0 flex-1 lg:block" />
           <div className="hidden shrink-0 items-center gap-3 lg:flex">
             <div className="relative">
               <button
@@ -574,31 +554,66 @@ export default function AppLayout() {
         </header>
 
         {actionNotice ? (
-          <div className="fixed left-4 right-4 top-20 z-40 lg:hidden">
+          <div className="fixed left-4 right-4 top-24 z-50 sm:left-auto sm:right-6 sm:w-[390px]">
             <div
+              key={actionNotice.id}
               role="status"
               aria-live="polite"
               className={[
-                'flex min-h-11 items-center gap-3 rounded-2xl border px-4 py-2 text-sm font-bold shadow-[0_18px_42px_rgba(0,0,0,0.26),inset_0_1px_0_rgba(255,255,255,0.84)]',
+                'overflow-hidden rounded-3xl border bg-white shadow-[0_26px_70px_rgba(2,13,31,0.36),inset_0_1px_0_rgba(255,255,255,0.86)]',
                 actionNotice.kind === 'error'
-                  ? 'border-rose-200 bg-[linear-gradient(180deg,#fff5f6,#ffe5e9)] text-rose-800'
+                  ? 'border-rose-200'
                   : actionNotice.kind === 'warning'
-                    ? 'border-amber-200 bg-[linear-gradient(180deg,#fffdf3,#fff1cc)] text-amber-900'
+                    ? 'border-amber-200'
                     : actionNotice.kind === 'info'
-                      ? 'border-sky-200 bg-[linear-gradient(180deg,#f8fcff,#dff0ff)] text-sky-900'
-                      : 'border-emerald-200 bg-[linear-gradient(180deg,#fbfffd,#dcfbea)] text-emerald-900',
+                      ? 'border-sky-200'
+                      : 'border-emerald-200',
               ].join(' ')}
             >
-              <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1">{actionNotice.message}</span>
-              <button
-                type="button"
-                onClick={() => setActionNotice(null)}
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-white/55 text-current"
-                aria-label="Cerrar notificacion"
-              >
-                <X className="h-4 w-4" aria-hidden="true" />
-              </button>
+              <div
+                className={[
+                  'h-1.5',
+                  actionNotice.kind === 'error'
+                    ? 'bg-rose-500'
+                    : actionNotice.kind === 'warning'
+                      ? 'bg-amber-400'
+                      : actionNotice.kind === 'info'
+                        ? 'bg-sky-500'
+                        : 'bg-emerald-500',
+                ].join(' ')}
+              />
+              <div className="flex items-start gap-3 p-4">
+                <div
+                  className={[
+                    'mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border',
+                    actionNotice.kind === 'error'
+                      ? 'border-rose-200 bg-rose-50 text-rose-700'
+                      : actionNotice.kind === 'warning'
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : actionNotice.kind === 'info'
+                          ? 'border-sky-200 bg-sky-50 text-sky-800'
+                          : 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                  ].join(' ')}
+                >
+                  <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-acsm-muted">
+                    {actionNoticeTitle}
+                  </div>
+                  <div className="mt-1 text-sm font-bold leading-5 text-acsm-ink">
+                    {actionNotice.message}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActionNotice(null)}
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-acsm-muted transition hover:border-sky-200 hover:text-acsm-ink"
+                  aria-label="Cerrar notificacion"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
