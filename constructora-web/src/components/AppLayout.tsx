@@ -509,7 +509,7 @@ export default function AppLayout() {
               >
                 <Bell className="h-5 w-5" aria-hidden="true" />
                 {notificationCounts.unread > 0 ? (
-                  <span className="absolute right-[-7px] top-[-7px] inline-flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#081321] bg-rose-500 px-1 text-center text-[10px] font-bold leading-none text-white shadow-lg tabular-nums">
+                  <span className="absolute right-1 top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[#081321] bg-rose-500 px-1 text-center text-[10px] font-bold leading-none text-white shadow-lg tabular-nums">
                     {notificationCounts.unread > 99 ? '99+' : notificationCounts.unread}
                   </span>
                 ) : null}
@@ -538,7 +538,7 @@ export default function AppLayout() {
           >
             <Bell className="h-4 w-4" aria-hidden="true" />
             {notificationCounts.unread > 0 ? (
-              <span className="absolute right-[-7px] top-[-7px] inline-flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#081321] bg-rose-500 px-1 text-center text-[10px] font-bold leading-none text-white tabular-nums">
+              <span className="absolute right-1 top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[#081321] bg-rose-500 px-1 text-center text-[10px] font-bold leading-none text-white tabular-nums">
                 {notificationCounts.unread > 99 ? '99+' : notificationCounts.unread}
               </span>
             ) : null}
