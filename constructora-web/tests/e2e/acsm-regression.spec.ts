@@ -797,7 +797,7 @@ test('compras envia comparativo a aprobacion y gerencia genera orden de compra',
 
   await page.getByRole('link', { name: /Ordenes de compra/i }).click()
   await expect(page.getByRole('heading', { name: 'Ordenes de compra', level: 2 })).toBeVisible()
-  await expect(page.getByText('OC-202606-0001')).toBeVisible()
+  await expect(page.getByRole('button', { name: /OC-202606-0001\s+Ver documento/i })).toBeVisible()
   await expect(page.getByText('Aceros del Bajio')).toBeVisible()
 })
 
