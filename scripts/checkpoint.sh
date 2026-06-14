@@ -31,9 +31,14 @@ echo "Checkpoint creado:"
 git -C "$ROOT_DIR" log -1 --oneline --decorate
 
 if git -C "$ROOT_DIR" remote get-url origin >/dev/null 2>&1; then
+  BRANCH="$(git -C "$ROOT_DIR" branch --show-current)"
+  if [[ -z "$BRANCH" ]]; then
+    echo "No se pudo detectar la rama actual para hacer push automatico."
+    exit 1
+  fi
   echo
-  echo "Remote origin detectado. Para respaldar en GitHub:"
-  echo "  git push"
+  echo "Respaldando en GitHub..."
+  git -C "$ROOT_DIR" push -u origin "$BRANCH"
 else
   echo
   echo "No hay remote origin configurado. Agrega GitHub con:"

@@ -105,6 +105,7 @@ const permissionModuleLabels: Record<string, string> = {
   quotes: 'Cotizaciones',
   inventory: 'Inventario',
   suppliers: 'Proveedores',
+  supplier_agreements: 'Convenios de proveedores',
   supplier_rfq: 'Solicitudes de cotizacion',
   supplier_quotes: 'Cotizaciones de proveedores',
   purchase_orders: 'Ordenes de compra',
@@ -131,6 +132,7 @@ const permissionActionLabels: Record<string, string> = {
   view_profit: 'Ver utilidad',
   test_email: 'Probar correo',
   request_approval: 'Solicitar aprobacion',
+  use: 'Usar',
 }
 
 function PermissionChecklist({

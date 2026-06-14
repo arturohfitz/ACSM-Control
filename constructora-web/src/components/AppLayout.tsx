@@ -14,6 +14,7 @@ import {
   FileUp,
   FolderKanban,
   Hammer,
+  Handshake,
   Home,
   Layers3,
   LogOut,
@@ -43,6 +44,7 @@ const navItems = [
   { to: '/project-material-prices', label: 'Tabulador', icon: ClipboardList, permission: 'materials:view' },
   { to: '/materials', label: 'Catalogo materiales', icon: Package, permission: 'materials:view' },
   { to: '/suppliers', label: 'Proveedores', icon: Store, permission: 'suppliers:view' },
+  { to: '/supplier-agreements', label: 'Convenios', icon: Handshake, permission: 'supplier_agreements:view' },
   { to: '/labor-rates', label: 'Mano de obra', icon: Hammer, permission: 'labor:view' },
   {
     to: '/construction-concepts',
@@ -140,6 +142,7 @@ const titles: Record<string, string> = {
   '/project-material-prices': 'Tabulador del desarrollo',
   '/materials': 'Catalogo de materiales',
   '/suppliers': 'Proveedores',
+  '/supplier-agreements': 'Convenios de proveedores',
   '/labor-rates': 'Mano de obra',
   '/construction-concepts': 'Conceptos de obra',
   '/quotes': 'Cotizaciones',
@@ -504,12 +507,12 @@ export default function AppLayout() {
               <button
                 type="button"
                 onClick={() => setNotificationsOpen((value) => !value)}
-                className="relative inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] transition hover:bg-white/20"
+                className="acsm-notification-button relative inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] transition hover:bg-white/20"
                 aria-label="Notificaciones"
               >
                 <Bell className="h-5 w-5" aria-hidden="true" />
                 {notificationCounts.unread > 0 ? (
-                  <span className="absolute right-1 top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[#081321] bg-rose-500 px-1 text-center text-[10px] font-bold leading-none text-white shadow-lg tabular-nums">
+                  <span className="acsm-notification-badge absolute right-0 top-0 inline-flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#081321] bg-rose-500 px-1.5 text-center text-[10px] font-bold leading-none text-white shadow-lg tabular-nums">
                     {notificationCounts.unread > 99 ? '99+' : notificationCounts.unread}
                   </span>
                 ) : null}
@@ -533,12 +536,12 @@ export default function AppLayout() {
           <button
             type="button"
             onClick={() => setNotificationsOpen((value) => !value)}
-            className="relative inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/20 lg:hidden"
+            className="acsm-notification-button relative inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/20 lg:hidden"
             aria-label="Notificaciones"
           >
             <Bell className="h-4 w-4" aria-hidden="true" />
             {notificationCounts.unread > 0 ? (
-              <span className="absolute right-1 top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-[#081321] bg-rose-500 px-1 text-center text-[10px] font-bold leading-none text-white tabular-nums">
+              <span className="acsm-notification-badge absolute right-0 top-0 inline-flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#081321] bg-rose-500 px-1.5 text-center text-[10px] font-bold leading-none text-white tabular-nums">
                 {notificationCounts.unread > 99 ? '99+' : notificationCounts.unread}
               </span>
             ) : null}

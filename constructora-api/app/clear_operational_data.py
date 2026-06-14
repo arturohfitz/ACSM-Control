@@ -46,6 +46,8 @@ TABLES_TO_CLEAR = (
     "construction_concepts",
     "labor_rates",
     "materials",
+    "supplier_agreement_items",
+    "supplier_agreements",
     "suppliers",
     "house_models",
     "projects",

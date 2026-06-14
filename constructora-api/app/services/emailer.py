@@ -60,7 +60,7 @@ def send_email(
         server.send_message(message)
 
 
-def rfq_email_content(rfq: SupplierRFQ) -> tuple[str, str, str]:
+def rfq_email_content(rfq: SupplierRFQ, portal_url: str | None = None) -> tuple[str, str, str]:
     subject = f"Solicitud de cotizacion {rfq.rfq_number} - {rfq.title}"
     required_by = rfq.required_by.isoformat() if rfq.required_by else "Sin fecha definida"
     deadline = rfq.response_deadline.isoformat() if rfq.response_deadline else "Sin fecha definida"
@@ -81,6 +81,16 @@ def rfq_email_content(rfq: SupplierRFQ) -> tuple[str, str, str]:
         quantity = f"{item.quantity.normalize():f}".rstrip("0").rstrip(".")
         lines.append(f"- {item.description} | {quantity} {item.unit} | {item.notes or 'Sin notas'}")
     lines.extend(["", "Gracias."])
+    if portal_url:
+        lines.extend(
+            [
+                "",
+                "Para cargar su cotizacion, ingrese a la siguiente liga segura:",
+                portal_url,
+                "",
+                "Esta liga es unica para su empresa. No la comparta con terceros.",
+            ]
+        )
     text_body = "\n".join(lines)
 
     rows = "".join(
@@ -92,6 +102,16 @@ def rfq_email_content(rfq: SupplierRFQ) -> tuple[str, str, str]:
         "</tr>"
         for item in rfq.items
     )
+    portal_block = ""
+    if portal_url:
+        safe_url = escape(portal_url)
+        portal_block = f"""
+        <div style="margin: 20px 0; padding: 16px; border:1px solid #b7d8f4; border-radius: 12px; background:#eef8ff;">
+          <p style="margin:0 0 12px;">Puede cargar su cotizacion PDF o Excel en la siguiente liga segura:</p>
+          <a href="{safe_url}" style="display:inline-block; padding:12px 16px; border-radius:10px; background:#006da8; color:white; text-decoration:none; font-weight:700;">Cargar cotizacion</a>
+          <p style="margin:12px 0 0; color:#53657d; font-size:12px;">Esta liga es unica para su empresa. No la comparta con terceros.</p>
+        </div>
+        """
     html_body = f"""
     <div style="font-family: Arial, sans-serif; color: #172033; line-height: 1.45;">
       <h2 style="margin: 0 0 12px;">Solicitud de cotizacion {escape(rfq.rfq_number)}</h2>
@@ -114,6 +134,7 @@ def rfq_email_content(rfq: SupplierRFQ) -> tuple[str, str, str]:
         </thead>
         <tbody>{rows}</tbody>
       </table>
+      {portal_block}
       <p style="margin-top: 18px;">Gracias.</p>
     </div>
     """

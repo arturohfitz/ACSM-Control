@@ -24,12 +24,15 @@ import PurchasingApprovalsPage from './pages/PurchasingApprovalsPage'
 import PurchasingOrdersPage from './pages/PurchasingOrdersPage'
 import PurchasingPage from './pages/PurchasingPage'
 import SettingsPage from './pages/SettingsPage'
+import SupplierAgreementsPage from './pages/SupplierAgreementsPage'
 import SupplierPaymentsPage from './pages/SupplierPaymentsPage'
+import SupplierQuotePortalPage from './pages/SupplierQuotePortalPage'
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/supplier/quote/:token" element={<SupplierQuotePortalPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route index element={<DashboardPage />} />
@@ -40,6 +43,7 @@ export default function App() {
           <Route path="/project-material-prices" element={<ProjectMaterialPricesPage />} />
           <Route path="/materials" element={<MaterialsPage />} />
           <Route path="/suppliers" element={<SuppliersPage />} />
+          <Route path="/supplier-agreements" element={<SupplierAgreementsPage />} />
           <Route path="/labor-rates" element={<LaborRatesPage />} />
           <Route path="/construction-concepts" element={<ConstructionConceptsPage />} />
           <Route path="/quotes" element={<QuotesPage />} />

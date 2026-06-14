@@ -18,6 +18,7 @@ from app.api.v1.endpoints import (
     quotes,
     roles,
     settings,
+    supplier_portal,
     users,
 )
 
@@ -48,4 +49,5 @@ api_router.include_router(
 api_router.include_router(quotes.router, prefix="/quotes", tags=["quotes"])
 api_router.include_router(inventory.router, prefix="/inventory", tags=["inventory"])
 api_router.include_router(purchasing.router, prefix="/purchasing", tags=["purchasing"])
+api_router.include_router(supplier_portal.router, prefix="/supplier-portal", tags=["supplier-portal"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])

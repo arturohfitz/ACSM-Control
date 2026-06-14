@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     login_window_seconds: int = 15 * 60
     login_lock_seconds: int = 15 * 60
     email_encryption_key: str | None = None
+    public_app_url: str = "http://127.0.0.1:5173"
+    supplier_quote_upload_dir: str = "storage/supplier_quote_uploads"
+    supplier_quote_upload_max_mb: int = 15
+    supplier_quote_token_expire_days: int = 14
 
     admin_full_name: str = "Administrador Maestro"
     admin_email: str = "admin@acsm-control.local"

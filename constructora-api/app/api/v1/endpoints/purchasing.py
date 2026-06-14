@@ -1,28 +1,38 @@
 import hashlib
 import json
-from datetime import date, datetime, timezone
+import secrets
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, require_permission
+from app.core.config import settings
 from app.db.session import get_db
 from app.models import (
+    Client,
     ExpectedMaterialItem,
     ExpectedMaterialList,
+    HouseModel,
     Material,
     Project,
+    ProjectHouseModel,
     ProjectWarehouse,
     PurchaseOrder,
     PurchaseOrderItem,
     Supplier,
+    SupplierAgreement,
+    SupplierAgreementItem,
     SupplierInvoice,
     SupplierPayment,
     SupplierQuote,
     SupplierQuoteApproval,
     SupplierQuoteItem,
+    SupplierQuoteUpload,
     SupplierRFQ,
     SupplierRFQExceptionRequest,
     SupplierRFQItem,
@@ -32,6 +42,13 @@ from app.models import (
 from app.schemas.purchasing import (
     PurchaseOrderApprovalRead,
     PurchaseOrderRead,
+    SupplierAgreementCreate,
+    SupplierAgreementEligibility,
+    SupplierAgreementItemCreate,
+    SupplierAgreementItemRead,
+    SupplierAgreementItemUpdate,
+    SupplierAgreementRead,
+    SupplierAgreementUpdate,
     SupplierCreate,
     SupplierInvoiceCreate,
     SupplierInvoiceRead,
@@ -44,6 +61,7 @@ from app.schemas.purchasing import (
     SupplierQuoteApprovalRead,
     SupplierQuoteApprovalRequest,
     SupplierQuoteRead,
+    SupplierQuoteUploadRead,
     SupplierRFQApprovalRequest,
     SupplierRFQComparisonRow,
     SupplierRFQCreate,
@@ -93,6 +111,59 @@ def _supplier_for_user(db: Session, supplier_id: int, current_user: User) -> Sup
     return supplier
 
 
+def _agreement_options():
+    return (
+        selectinload(SupplierAgreement.supplier),
+        selectinload(SupplierAgreement.items),
+    )
+
+
+def _validate_agreement_scope(
+    db: Session,
+    agreement: SupplierAgreement,
+    project: Project,
+    supplier_ids: list[int],
+    items: list,
+) -> None:
+    today = date.today()
+    if agreement.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El convenio no esta activo",
+        )
+    if agreement.valid_from and agreement.valid_from > today:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El convenio aun no inicia vigencia",
+        )
+    if agreement.valid_until and agreement.valid_until < today:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El convenio esta vencido",
+        )
+    if agreement.client_id != project.client_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El convenio no pertenece a la desarrolladora del desarrollo seleccionado",
+        )
+    is_project_model = db.scalar(
+        select(ProjectHouseModel.id).where(
+            ProjectHouseModel.project_id == project.id,
+            ProjectHouseModel.house_model_id == agreement.house_model_id,
+        )
+    )
+    if is_project_model is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El modelo del convenio no esta asignado al desarrollo seleccionado",
+        )
+    if len(set(supplier_ids)) != 1 or supplier_ids[0] != agreement.supplier_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La solicitud por convenio debe enviarse solo al proveedor del convenio",
+        )
+
+
 def _warehouse_for_project(db: Session, warehouse_id: int | None, project: Project) -> ProjectWarehouse | None:
     if warehouse_id is None:
         return db.scalar(
@@ -121,7 +192,17 @@ def _next_number(db: Session, model: type, field_name: str, prefix: str, company
 
 
 def _rfq_exception_snapshot(payload: SupplierRFQCreate | SupplierRFQExceptionCreate) -> dict:
-    data = payload.model_dump(mode="json", exclude={"exception_request_id", "request_notes", "rfq_number", "notes", "warehouse_id"})
+    data = payload.model_dump(
+        mode="json",
+        exclude={
+            "exception_request_id",
+            "supplier_agreement_id",
+            "request_notes",
+            "rfq_number",
+            "notes",
+            "warehouse_id",
+        },
+    )
     return {
         "project_id": data["project_id"],
         "title": data["title"].strip(),
@@ -196,10 +277,29 @@ def _sync_purchase_order_status(purchase_order: PurchaseOrder) -> None:
         purchase_order.status = "issued"
 
 
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _new_supplier_portal_token(link: SupplierRFQSupplier, rfq: SupplierRFQ) -> str:
+    token = secrets.token_urlsafe(32)
+    link.portal_token_hash = _token_hash(token)
+    expires_at = _now() + timedelta(days=settings.supplier_quote_token_expire_days)
+    if rfq.response_deadline:
+        deadline = datetime.combine(rfq.response_deadline, datetime.max.time(), tzinfo=timezone.utc)
+        expires_at = max(expires_at, deadline)
+    link.portal_token_expires_at = expires_at
+    link.portal_last_accessed_at = None
+    return token
+
+
+def _supplier_portal_url(token: str) -> str:
+    return f"{settings.public_app_url.rstrip('/')}/supplier/quote/{token}"
+
+
 def _queue_rfq_emails(db: Session, rfq: SupplierRFQ, requested_by: int | None = None) -> tuple[int, int]:
     queued_count = 0
     error_count = 0
-    subject, text_body, html_body = rfq_email_content(rfq)
 
     for link in rfq.supplier_links:
         supplier = link.supplier
@@ -221,6 +321,8 @@ def _queue_rfq_emails(db: Session, rfq: SupplierRFQ, requested_by: int | None = 
             queued_count += 1
             continue
 
+        token = _new_supplier_portal_token(link, rfq)
+        subject, text_body, html_body = rfq_email_content(rfq, portal_url=_supplier_portal_url(token))
         queue_email(
             db,
             company_id=rfq.company_id,
@@ -336,6 +438,278 @@ def delete_supplier(
     db.commit()
 
 
+def _agreement_for_user(db: Session, agreement_id: int, current_user: User) -> SupplierAgreement:
+    agreement = db.scalar(
+        select(SupplierAgreement)
+        .where(SupplierAgreement.id == agreement_id)
+        .options(*_agreement_options())
+    )
+    if agreement is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    ensure_same_company(current_user, agreement, db=db)
+    return agreement
+
+
+def _validate_agreement_payload(
+    db: Session,
+    current_user: User,
+    data: dict,
+    existing: SupplierAgreement | None = None,
+) -> dict:
+    company_id = company_id_for_write(
+        current_user,
+        data.get("company_id", existing.company_id if existing else None),
+    )
+    supplier_id = data.get("supplier_id", existing.supplier_id if existing else None)
+    client_id = data.get("client_id", existing.client_id if existing else None)
+    house_model_id = data.get("house_model_id", existing.house_model_id if existing else None)
+    if supplier_id is None or client_id is None or house_model_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Proveedor, desarrolladora y modelo son obligatorios",
+        )
+    supplier = _supplier_for_user(db, supplier_id, current_user)
+    client = get_or_404(db, Client, client_id)
+    house_model = get_or_404(db, HouseModel, house_model_id)
+    ensure_same_company(current_user, client, db=db)
+    ensure_same_company(current_user, house_model, db=db)
+    if supplier.company_id != company_id or client.company_id != company_id or house_model.company_id != company_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El convenio debe pertenecer a la misma constructora",
+        )
+    if house_model.client_id != client.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El modelo seleccionado no pertenece a la desarrolladora",
+        )
+    data["company_id"] = company_id
+    data["supplier_id"] = supplier.id
+    data["client_id"] = client.id
+    data["house_model_id"] = house_model.id
+    return data
+
+
+def _validate_agreement_item_payload(
+    db: Session,
+    current_user: User,
+    agreement: SupplierAgreement,
+    data: dict,
+    existing: SupplierAgreementItem | None = None,
+) -> dict:
+    material_id = data.get("material_id", existing.material_id if existing else None)
+    if material_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El material es obligatorio",
+        )
+    material = get_or_404(db, Material, material_id)
+    ensure_same_company(current_user, material, db=db)
+    if material.company_id != agreement.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El material no pertenece a la constructora del convenio",
+        )
+    data["material_id"] = material.id
+    if existing is None and not data.get("description"):
+        data["description"] = material.name
+    elif "description" in data and not data.get("description"):
+        data["description"] = material.name
+    if existing is None and not data.get("unit"):
+        data["unit"] = material.unit
+    elif "unit" in data and not data.get("unit"):
+        data["unit"] = material.unit
+    return data
+
+
+@router.get("/supplier-agreements", response_model=list[SupplierAgreementRead])
+def list_supplier_agreements(
+    supplier_id: int | None = None,
+    client_id: int | None = None,
+    house_model_id: int | None = None,
+    status_filter: str | None = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "view")),
+) -> list[SupplierAgreement]:
+    statement = scoped_select(select(SupplierAgreement), SupplierAgreement, current_user)
+    if supplier_id is not None:
+        statement = statement.where(SupplierAgreement.supplier_id == supplier_id)
+    if client_id is not None:
+        statement = statement.where(SupplierAgreement.client_id == client_id)
+    if house_model_id is not None:
+        statement = statement.where(SupplierAgreement.house_model_id == house_model_id)
+    if status_filter:
+        statement = statement.where(SupplierAgreement.status == status_filter)
+    return list(
+        db.scalars(
+            statement.options(*_agreement_options())
+            .order_by(SupplierAgreement.status, SupplierAgreement.name)
+            .offset(skip)
+            .limit(limit)
+        ).all()
+    )
+
+
+@router.post("/supplier-agreements", response_model=SupplierAgreementRead, status_code=status.HTTP_201_CREATED)
+def create_supplier_agreement(
+    payload: SupplierAgreementCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "create")),
+) -> SupplierAgreement:
+    data = payload.model_dump(exclude={"items"})
+    data = _validate_agreement_payload(db, current_user, data)
+    agreement = SupplierAgreement(**data, created_by=current_user.id)
+    db.add(agreement)
+    db.flush()
+    for item_payload in payload.items:
+        item_data = _validate_agreement_item_payload(
+            db,
+            current_user,
+            agreement,
+            item_payload.model_dump(),
+        )
+        db.add(SupplierAgreementItem(agreement_id=agreement.id, **item_data))
+    record_create(db, current_user, module="convenios_proveedor", item=agreement)
+    db.commit()
+    return _agreement_for_user(db, agreement.id, current_user)
+
+
+@router.get("/supplier-agreements/eligible", response_model=list[SupplierAgreementEligibility])
+def list_eligible_supplier_agreements(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "view")),
+) -> list[SupplierAgreementEligibility]:
+    project = _project_for_user(db, project_id, current_user)
+    today = date.today()
+    project_model_ids = select(ProjectHouseModel.house_model_id).where(ProjectHouseModel.project_id == project.id)
+    statement = scoped_select(select(SupplierAgreement), SupplierAgreement, current_user).where(
+        SupplierAgreement.client_id == project.client_id,
+        SupplierAgreement.house_model_id.in_(project_model_ids),
+        SupplierAgreement.status == "active",
+    )
+    agreements = db.scalars(statement.options(*_agreement_options()).order_by(SupplierAgreement.name)).all()
+    result: list[SupplierAgreementEligibility] = []
+    for agreement in agreements:
+        if agreement.valid_from and agreement.valid_from > today:
+            continue
+        if agreement.valid_until and agreement.valid_until < today:
+            continue
+        result.append(
+            SupplierAgreementEligibility(
+                agreement=agreement,
+                covered_material_ids=[],
+                missing_material_ids=[],
+                is_full_match=True,
+            )
+        )
+    return result
+
+
+@router.get("/supplier-agreements/{agreement_id}", response_model=SupplierAgreementRead)
+def get_supplier_agreement(
+    agreement_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "view")),
+) -> SupplierAgreement:
+    return _agreement_for_user(db, agreement_id, current_user)
+
+
+@router.patch("/supplier-agreements/{agreement_id}", response_model=SupplierAgreementRead)
+def update_supplier_agreement(
+    agreement_id: int,
+    payload: SupplierAgreementUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "edit")),
+) -> SupplierAgreement:
+    agreement = _agreement_for_user(db, agreement_id, current_user)
+    data = payload.model_dump(exclude_unset=True)
+    if data:
+        data = _validate_agreement_payload(db, current_user, data, agreement)
+        before = snapshot(agreement, list(data.keys()))
+        for field, value in data.items():
+            setattr(agreement, field, value)
+        record_update(db, current_user, module="convenios_proveedor", item=agreement, before=before)
+    db.commit()
+    return _agreement_for_user(db, agreement_id, current_user)
+
+
+@router.delete("/supplier-agreements/{agreement_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_supplier_agreement(
+    agreement_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "delete")),
+) -> None:
+    agreement = _agreement_for_user(db, agreement_id, current_user)
+    record_delete(db, current_user, module="convenios_proveedor", item=agreement)
+    db.delete(agreement)
+    db.commit()
+
+
+@router.post(
+    "/supplier-agreements/{agreement_id}/items",
+    response_model=SupplierAgreementItemRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_supplier_agreement_item(
+    agreement_id: int,
+    payload: SupplierAgreementItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "edit")),
+) -> SupplierAgreementItem:
+    agreement = _agreement_for_user(db, agreement_id, current_user)
+    data = _validate_agreement_item_payload(db, current_user, agreement, payload.model_dump())
+    item = SupplierAgreementItem(agreement_id=agreement.id, **data)
+    db.add(item)
+    db.flush()
+    record_create(db, current_user, module="convenios_proveedor", item=item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.patch("/supplier-agreements/{agreement_id}/items/{item_id}", response_model=SupplierAgreementItemRead)
+def update_supplier_agreement_item(
+    agreement_id: int,
+    item_id: int,
+    payload: SupplierAgreementItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "edit")),
+) -> SupplierAgreementItem:
+    agreement = _agreement_for_user(db, agreement_id, current_user)
+    item = get_or_404(db, SupplierAgreementItem, item_id)
+    if item.agreement_id != agreement.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    data = payload.model_dump(exclude_unset=True)
+    if data:
+        data = _validate_agreement_item_payload(db, current_user, agreement, data, item)
+        before = snapshot(item, list(data.keys()))
+        for field, value in data.items():
+            setattr(item, field, value)
+        record_update(db, current_user, module="convenios_proveedor", item=item, before=before)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/supplier-agreements/{agreement_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_supplier_agreement_item(
+    agreement_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "edit")),
+) -> None:
+    agreement = _agreement_for_user(db, agreement_id, current_user)
+    item = get_or_404(db, SupplierAgreementItem, item_id)
+    if item.agreement_id != agreement.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    record_delete(db, current_user, module="convenios_proveedor", item=item)
+    db.delete(item)
+    db.commit()
+
+
 @router.get("/supplier-rfqs", response_model=list[SupplierRFQRead])
 def list_supplier_rfqs(
     skip: int = 0,
@@ -348,6 +722,7 @@ def list_supplier_rfqs(
         db.scalars(
             statement.options(
                 selectinload(SupplierRFQ.creator),
+                selectinload(SupplierRFQ.supplier_agreement),
                 selectinload(SupplierRFQ.items),
                 selectinload(SupplierRFQ.supplier_links).selectinload(SupplierRFQSupplier.supplier),
             )
@@ -600,15 +975,31 @@ def create_supplier_rfq(
     suppliers = [_supplier_for_user(db, supplier_id, current_user) for supplier_id in payload.supplier_ids]
     supplier_count = len({supplier.id for supplier in suppliers})
     approved_exception: SupplierRFQExceptionRequest | None = None
+    supplier_agreement: SupplierAgreement | None = None
+    if payload.supplier_agreement_id is not None:
+        if not user_has_permission(current_user, "supplier_agreements", "use"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permiso requerido: supplier_agreements:use",
+            )
+        supplier_agreement = _agreement_for_user(db, payload.supplier_agreement_id, current_user)
+        _validate_agreement_scope(
+            db,
+            supplier_agreement,
+            project,
+            [supplier.id for supplier in suppliers],
+            payload.items,
+        )
     if supplier_count < 3:
-        if payload.exception_request_id is None:
+        if payload.exception_request_id is None and supplier_agreement is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Se requiere una excepcion aprobada para crear solicitud con menos de 3 proveedores",
+                detail="Se requiere una excepcion aprobada o convenio activo para crear solicitud con menos de 3 proveedores",
             )
-        approved_exception = get_or_404(db, SupplierRFQExceptionRequest, payload.exception_request_id)
-        ensure_same_company(current_user, approved_exception, db=db)
-        _ensure_exception_matches_payload(approved_exception, payload)
+        if payload.exception_request_id is not None:
+            approved_exception = get_or_404(db, SupplierRFQExceptionRequest, payload.exception_request_id)
+            ensure_same_company(current_user, approved_exception, db=db)
+            _ensure_exception_matches_payload(approved_exception, payload)
     rfq = SupplierRFQ(
         company_id=project.company_id,
         project_id=project.id,
@@ -616,6 +1007,8 @@ def create_supplier_rfq(
         rfq_number=payload.rfq_number
         or _next_number(db, SupplierRFQ, "rfq_number", "SC", project.company_id),
         title=payload.title,
+        request_type="agreement" if supplier_agreement else ("exception" if approved_exception else "standard"),
+        supplier_agreement_id=supplier_agreement.id if supplier_agreement else None,
         required_by=payload.required_by,
         response_deadline=payload.response_deadline,
         notes=payload.notes,
@@ -640,6 +1033,7 @@ def create_supplier_rfq(
         .where(SupplierRFQ.id == rfq.id)
         .options(
             selectinload(SupplierRFQ.creator),
+            selectinload(SupplierRFQ.supplier_agreement),
             selectinload(SupplierRFQ.items),
             selectinload(SupplierRFQ.supplier_links).selectinload(SupplierRFQSupplier.supplier),
         )
@@ -651,14 +1045,49 @@ def create_supplier_rfq(
         db,
         current_user,
         module="compras",
-        action="create",
+        action="create_agreement_rfq" if supplier_agreement else "create",
         entity_type="SupplierRFQ",
         entity_id=rfq.id,
         company_id=rfq.company_id,
         label=rfq.rfq_number,
-        description=f"{current_user.full_name} creo la solicitud a proveedores {rfq.rfq_number}",
-        metadata={"proveedores": len(rfq.supplier_links), "encolados": queued_count, "errores": error_count},
+        description=(
+            f"{current_user.full_name} creo la solicitud por convenio {rfq.rfq_number}"
+            if supplier_agreement
+            else f"{current_user.full_name} creo la solicitud a proveedores {rfq.rfq_number}"
+        ),
+        metadata={
+            "proveedores": len(rfq.supplier_links),
+            "encolados": queued_count,
+            "errores": error_count,
+            "request_type": rfq.request_type,
+            "supplier_agreement_id": rfq.supplier_agreement_id,
+        },
     )
+    if supplier_agreement is not None:
+        notify_permission(
+            db,
+            company_id=rfq.company_id,
+            module="supplier_quotes",
+            action="approve",
+            notification_type="agreement_rfq_created",
+            title="Cotizacion directa por convenio",
+            body=(
+                f"{current_user.full_name} envio {rfq.rfq_number} a "
+                f"{supplier_agreement.supplier.name} por convenio, sin terna de proveedores."
+            ),
+            category="info",
+            priority="normal",
+            source_module="compras",
+            entity_type="SupplierRFQ",
+            entity_id=rfq.id,
+            entity_label=rfq.rfq_number,
+            action_url="/purchasing",
+            project_id=rfq.project_id,
+            metadata={
+                "supplier_agreement_id": supplier_agreement.id,
+                "supplier_id": supplier_agreement.supplier_id,
+            },
+        )
     db.commit()
     if queued_count:
         background_tasks.add_task(process_email_outbox_for_company, rfq.company_id)
@@ -676,6 +1105,7 @@ def get_supplier_rfq(
         .where(SupplierRFQ.id == rfq_id)
         .options(
             selectinload(SupplierRFQ.creator),
+            selectinload(SupplierRFQ.supplier_agreement),
             selectinload(SupplierRFQ.items),
             selectinload(SupplierRFQ.supplier_links).selectinload(SupplierRFQSupplier.supplier),
         )
@@ -841,6 +1271,54 @@ def list_supplier_quotes(
     )
 
 
+@router.get("/supplier-rfqs/{rfq_id}/quote-uploads", response_model=list[SupplierQuoteUploadRead])
+def list_supplier_quote_uploads(
+    rfq_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "view")),
+) -> list[SupplierQuoteUpload]:
+    rfq = get_supplier_rfq(rfq_id, db, current_user)
+    return list(
+        db.scalars(
+            select(SupplierQuoteUpload)
+            .where(SupplierQuoteUpload.rfq_id == rfq.id)
+            .options(selectinload(SupplierQuoteUpload.supplier))
+            .order_by(SupplierQuoteUpload.uploaded_at.desc())
+        ).all()
+    )
+
+
+@router.get("/supplier-quote-uploads/{upload_id}/download")
+def download_supplier_quote_upload(
+    upload_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "view")),
+) -> FileResponse:
+    upload = db.scalar(
+        select(SupplierQuoteUpload)
+        .where(SupplierQuoteUpload.id == upload_id)
+        .options(selectinload(SupplierQuoteUpload.supplier))
+    )
+    if upload is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo no encontrado")
+    ensure_same_company(current_user, upload, db=db)
+    path = Path(upload.stored_file_path)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo no disponible")
+    media_types = {
+        ".pdf": "application/pdf",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xls": "application/vnd.ms-excel",
+    }
+    media_type = media_types.get(upload.file_extension.lower(), "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=upload.original_file_name,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
 @router.delete("/supplier-quotes/{quote_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_supplier_quote(
     quote_id: int,
@@ -953,6 +1431,7 @@ def request_supplier_rfq_approval(
         select(SupplierRFQ)
         .where(SupplierRFQ.id == rfq_id)
         .options(
+            selectinload(SupplierRFQ.supplier_agreement).selectinload(SupplierAgreement.supplier),
             selectinload(SupplierRFQ.items),
             selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.supplier),
             selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.items),
@@ -990,6 +1469,7 @@ def request_supplier_rfq_approval(
         ],
         key=lambda quote: quote.subtotal,
     )
+    is_agreement_flow = rfq.request_type == "agreement" and rfq.supplier_agreement_id is not None
     if payload.is_exception:
         if not complete_quotes:
             raise HTTPException(
@@ -1001,10 +1481,15 @@ def request_supplier_rfq_approval(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Captura el motivo de la excepcion",
             )
-    elif len(complete_quotes) < 3:
+    elif not is_agreement_flow and len(complete_quotes) < 3:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Se requieren 3 cotizaciones completas o solicitar una excepcion",
+        )
+    elif is_agreement_flow and not complete_quotes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La solicitud por convenio requiere una cotizacion completa",
         )
 
     reference_quote = complete_quotes[0]
@@ -1012,6 +1497,9 @@ def request_supplier_rfq_approval(
     request_notes = payload.request_notes.strip() if payload.request_notes else None
     if payload.is_exception:
         request_notes = f"EXCEPCION:\n{request_notes}"
+    elif is_agreement_flow:
+        agreement_name = rfq.supplier_agreement.name if rfq.supplier_agreement else "convenio"
+        request_notes = f"CONVENIO:\nCotizacion directa por {agreement_name}."
 
     approval = reference_quote.approval
     if approval is None:
@@ -1040,7 +1528,13 @@ def request_supplier_rfq_approval(
         db,
         current_user,
         module="compras",
-        action="request_approval_exception" if payload.is_exception else "request_approval",
+        action=(
+            "request_approval_exception"
+            if payload.is_exception
+            else "request_approval_agreement"
+            if is_agreement_flow
+            else "request_approval"
+        ),
         entity_type="SupplierRFQ",
         entity_id=rfq.id,
         company_id=rfq.company_id,
@@ -1052,6 +1546,8 @@ def request_supplier_rfq_approval(
         metadata={
             "quotes": len(complete_quotes),
             "is_exception": payload.is_exception,
+            "is_agreement": is_agreement_flow,
+            "supplier_agreement_id": rfq.supplier_agreement_id,
             "reference_quote_id": reference_quote.id,
         },
     )
@@ -1061,12 +1557,16 @@ def request_supplier_rfq_approval(
         module="supplier_quotes",
         action="approve",
         notification_type="supplier_quote_approval_requested",
-        title="Comparativo pendiente de aprobar",
+        title="Cotizacion por convenio pendiente" if is_agreement_flow else "Comparativo pendiente de aprobar",
         body=(
-            f"{current_user.full_name} solicito aprobar '{rfq.title}' "
-            f"con {len(complete_quotes)} cotizacion(es)."
+            f"{current_user.full_name} solicito aprobar '{rfq.title}' por convenio."
+            if is_agreement_flow
+            else (
+                f"{current_user.full_name} solicito aprobar '{rfq.title}' "
+                f"con {len(complete_quotes)} cotizacion(es)."
+            )
         ),
-        category="exception" if payload.is_exception else "task",
+        category="info" if is_agreement_flow else ("exception" if payload.is_exception else "task"),
         priority="high",
         source_module="compras",
         entity_type="SupplierQuoteApproval",
@@ -1078,6 +1578,8 @@ def request_supplier_rfq_approval(
             "rfq_id": rfq.id,
             "quotes": len(complete_quotes),
             "is_exception": payload.is_exception,
+            "is_agreement": is_agreement_flow,
+            "supplier_agreement_id": rfq.supplier_agreement_id,
             "reference_quote_id": reference_quote.id,
         },
     )

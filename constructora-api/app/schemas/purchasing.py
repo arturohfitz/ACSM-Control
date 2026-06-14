@@ -9,6 +9,8 @@ from app.schemas.inventory import ExpectedMaterialListRead
 
 
 SupplierStatus = Literal["active", "suspended", "blocked"]
+SupplierAgreementStatus = Literal["active", "suspended", "expired"]
+SupplierAgreementItemStatus = Literal["active", "inactive"]
 RFQStatus = Literal[
     "draft",
     "sent",
@@ -93,6 +95,90 @@ class SupplierRead(SupplierBase, TimestampRead):
     company_id: int
 
 
+class SupplierAgreementItemBase(BaseModel):
+    material_id: int
+    description: str = Field(min_length=1, max_length=255)
+    unit: str = Field(min_length=1, max_length=40)
+    unit_price: NonNegativeDecimal
+    currency: str = Field(default="MXN", max_length=8)
+    delivery_days: int | None = Field(default=None, ge=0)
+    min_quantity: NonNegativeDecimal | None = None
+    max_quantity: PositiveDecimal | None = None
+    status: SupplierAgreementItemStatus = "active"
+    notes: str | None = None
+
+
+class SupplierAgreementItemCreate(SupplierAgreementItemBase):
+    pass
+
+
+class SupplierAgreementItemUpdate(BaseModel):
+    material_id: int | None = None
+    description: str | None = Field(default=None, min_length=1, max_length=255)
+    unit: str | None = Field(default=None, min_length=1, max_length=40)
+    unit_price: NonNegativeDecimal | None = None
+    currency: str | None = Field(default=None, max_length=8)
+    delivery_days: int | None = Field(default=None, ge=0)
+    min_quantity: NonNegativeDecimal | None = None
+    max_quantity: PositiveDecimal | None = None
+    status: SupplierAgreementItemStatus | None = None
+    notes: str | None = None
+
+
+class SupplierAgreementItemRead(SupplierAgreementItemBase, TimestampRead):
+    id: int
+    agreement_id: int
+
+
+class SupplierAgreementBase(BaseModel):
+    company_id: int | None = None
+    supplier_id: int
+    client_id: int
+    house_model_id: int
+    agreement_number: str | None = Field(default=None, max_length=120)
+    name: str = Field(min_length=1, max_length=200)
+    status: SupplierAgreementStatus = "active"
+    valid_from: date | None = None
+    valid_until: date | None = None
+    payment_terms_days: int = Field(default=30, ge=0)
+    average_delivery_days: int | None = Field(default=None, ge=0)
+    notes: str | None = None
+
+
+class SupplierAgreementCreate(SupplierAgreementBase):
+    items: list[SupplierAgreementItemCreate] = Field(default_factory=list)
+
+
+class SupplierAgreementUpdate(BaseModel):
+    company_id: int | None = None
+    supplier_id: int | None = None
+    client_id: int | None = None
+    house_model_id: int | None = None
+    agreement_number: str | None = Field(default=None, max_length=120)
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    status: SupplierAgreementStatus | None = None
+    valid_from: date | None = None
+    valid_until: date | None = None
+    payment_terms_days: int | None = Field(default=None, ge=0)
+    average_delivery_days: int | None = Field(default=None, ge=0)
+    notes: str | None = None
+
+
+class SupplierAgreementRead(SupplierAgreementBase, TimestampRead):
+    id: int
+    company_id: int
+    created_by: int | None = None
+    supplier: SupplierRead | None = None
+    items: list[SupplierAgreementItemRead] = Field(default_factory=list)
+
+
+class SupplierAgreementEligibility(BaseModel):
+    agreement: SupplierAgreementRead
+    covered_material_ids: list[int]
+    missing_material_ids: list[int]
+    is_full_match: bool
+
+
 class SupplierRFQItemCreate(BaseModel):
     material_id: int | None = None
     source_code: str | None = Field(default=None, max_length=80)
@@ -113,6 +199,8 @@ class SupplierRFQSupplierRead(ORMModel):
     supplier_id: int
     status: RFQSupplierStatus
     sent_at: datetime | None = None
+    portal_token_expires_at: datetime | None = None
+    portal_last_accessed_at: datetime | None = None
     notes: str | None = None
     supplier: SupplierRead | None = None
 
@@ -134,6 +222,7 @@ class SupplierRFQCreate(BaseModel):
     supplier_ids: list[int] = Field(min_length=1)
     items: list[SupplierRFQItemCreate] = Field(min_length=1)
     exception_request_id: int | None = None
+    supplier_agreement_id: int | None = None
 
 
 class SupplierRFQUpdate(BaseModel):
@@ -153,6 +242,8 @@ class SupplierRFQRead(TimestampRead):
     rfq_number: str
     title: str
     status: RFQStatus
+    request_type: str = "standard"
+    supplier_agreement_id: int | None = None
     required_by: date | None = None
     response_deadline: date | None = None
     sent_at: datetime | None = None
@@ -213,6 +304,34 @@ class SupplierQuoteRead(TimestampRead):
     attachment_name: str | None = None
     supplier: SupplierRead | None = None
     items: list[SupplierQuoteItemRead] = Field(default_factory=list)
+
+
+class SupplierQuoteUploadRead(TimestampRead):
+    id: int
+    company_id: int
+    rfq_id: int
+    rfq_supplier_id: int
+    supplier_id: int
+    quote_number: str | None = None
+    original_file_name: str
+    content_type: str | None = None
+    file_extension: str
+    file_size_bytes: int
+    file_sha256: str
+    status: str
+    uploaded_at: datetime
+    notes: str | None = None
+    supplier: SupplierRead | None = None
+
+
+class SupplierPortalRFQRead(BaseModel):
+    rfq_number: str
+    title: str
+    required_by: date | None = None
+    response_deadline: date | None = None
+    supplier_name: str
+    items: list[SupplierRFQItemRead] = Field(default_factory=list)
+    previous_uploads: list[SupplierQuoteUploadRead] = Field(default_factory=list)
 
 
 class SupplierQuoteApprovalRequest(BaseModel):

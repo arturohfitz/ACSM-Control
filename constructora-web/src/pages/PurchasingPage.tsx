@@ -4,6 +4,7 @@ import {
   Check,
   ClipboardCheck,
   Eye,
+  FileText,
   Plus,
   Printer,
   RefreshCw,
@@ -13,7 +14,7 @@ import {
   X,
 } from 'lucide-react'
 
-import { apiRequest } from '../lib/api'
+import { API_BASE_URL, apiRequest, getStoredToken } from '../lib/api'
 import { showActionNotice, type ActionNoticeKind } from '../lib/actionNotice'
 
 type Project = {
@@ -42,6 +43,7 @@ type UserSummary = {
 
 type RFQItem = {
   id: number
+  material_id?: number | null
   description: string
   unit: string
   quantity: string
@@ -59,6 +61,8 @@ type SupplierRFQ = {
   rfq_number: string
   title: string
   status: string
+  request_type?: string
+  supplier_agreement_id?: number | null
   created_at: string
   created_by?: number | null
   creator?: UserSummary | null
@@ -66,6 +70,31 @@ type SupplierRFQ = {
   response_deadline?: string | null
   items: RFQItem[]
   supplier_links: RFQSupplierLink[]
+}
+
+type SupplierAgreement = {
+  id: number
+  supplier_id: number
+  client_id: number
+  house_model_id: number
+  name: string
+  status: string
+  payment_terms_days?: number | null
+  average_delivery_days?: number | null
+  supplier?: Supplier | null
+  items: {
+    id: number
+    material_id: number
+    description: string
+    unit: string
+    unit_price?: string | null
+    delivery_days?: number | null
+  }[]
+}
+
+type SupplierAgreementEligibility = {
+  agreement: SupplierAgreement
+  is_full_match: boolean
 }
 
 type SupplierRFQException = {
@@ -107,6 +136,20 @@ type SupplierQuote = {
   subtotal: string
   delivery_days?: number | null
   payment_terms_days: number
+  supplier?: Supplier | null
+}
+
+type SupplierQuoteUpload = {
+  id: number
+  rfq_id: number
+  supplier_id: number
+  quote_number?: string | null
+  original_file_name: string
+  file_extension: string
+  file_size_bytes: number
+  status: string
+  uploaded_at: string
+  notes?: string | null
   supplier?: Supplier | null
 }
 
@@ -180,6 +223,12 @@ function formatDate(value?: string | null) {
   return new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(
     new Date(year, month - 1, day),
   )
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
 function stableStringify(value: unknown): string {
@@ -318,7 +367,9 @@ export default function PurchasingPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [rfqs, setRfqs] = useState<SupplierRFQ[]>([])
   const [rfqExceptions, setRfqExceptions] = useState<SupplierRFQException[]>([])
+  const [eligibleAgreements, setEligibleAgreements] = useState<SupplierAgreementEligibility[]>([])
   const [quotes, setQuotes] = useState<SupplierQuote[]>([])
+  const [quoteUploads, setQuoteUploads] = useState<SupplierQuoteUpload[]>([])
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [selectedRfqId, setSelectedRfqId] = useState<number | null>(null)
@@ -332,6 +383,7 @@ export default function PurchasingPage() {
   const [requiredBy, setRequiredBy] = useState('')
   const [responseDeadline, setResponseDeadline] = useState('')
   const [supplierIds, setSupplierIds] = useState<string[]>([])
+  const [selectedAgreementId, setSelectedAgreementId] = useState('')
   const [supplierSearch, setSupplierSearch] = useState('')
   const [rfqSearch, setRfqSearch] = useState('')
   const [rfqDateFrom, setRfqDateFrom] = useState('')
@@ -437,12 +489,25 @@ export default function PurchasingPage() {
       ),
     [comparison],
   )
+  const selectedAgreement = useMemo(
+    () =>
+      eligibleAgreements.find(
+        (entry) => entry.agreement.id === Number(selectedAgreementId) && entry.is_full_match,
+      )?.agreement ?? null,
+    [eligibleAgreements, selectedAgreementId],
+  )
+  const fullMatchAgreements = useMemo(
+    () => eligibleAgreements.filter((entry) => entry.is_full_match),
+    [eligibleAgreements],
+  )
+  const isAgreementRfq = selectedRfq?.request_type === 'agreement'
   const canRequestApproval =
     Boolean(selectedRfq) &&
-    completeComparison.length >= 3 &&
+    completeComparison.length >= (isAgreementRfq ? 1 : 3) &&
     !['approval_pending', 'awarded'].includes(selectedRfq?.status ?? '')
   const canRequestException =
     Boolean(selectedRfq) &&
+    !isAgreementRfq &&
     completeComparison.length > 0 &&
     completeComparison.length < 3 &&
     !['approval_pending', 'awarded'].includes(selectedRfq?.status ?? '')
@@ -487,12 +552,12 @@ export default function PurchasingPage() {
       ) ?? null,
     [rfqDraftSnapshot, rfqExceptions],
   )
-  const needsRfqException = supplierIds.length > 0 && supplierIds.length < 3
+  const needsRfqException = supplierIds.length > 0 && supplierIds.length < 3 && !selectedAgreement
   const canCreateRfq =
     Boolean(projectId) &&
     Boolean(title.trim()) &&
     validRfqItems.length > 0 &&
-    (supplierIds.length >= 3 || Boolean(approvedRfqException))
+    (supplierIds.length >= 3 || Boolean(approvedRfqException) || Boolean(selectedAgreement))
 
   async function loadData(nextSelectedRfqId = selectedRfq?.id) {
     setLoading(true)
@@ -525,17 +590,20 @@ export default function PurchasingPage() {
   async function loadRfqDetails(rfqId: number | undefined) {
     if (!rfqId) {
       setQuotes([])
+      setQuoteUploads([])
       setComparison([])
       setQuoteRows([])
       return
     }
     try {
-      const [quoteData, comparisonData] = await Promise.all([
+      const [quoteData, comparisonData, uploadData] = await Promise.all([
         apiRequest<SupplierQuote[]>(`/purchasing/supplier-rfqs/${rfqId}/quotes`),
         apiRequest<ComparisonRow[]>(`/purchasing/supplier-rfqs/${rfqId}/comparison`),
+        apiRequest<SupplierQuoteUpload[]>(`/purchasing/supplier-rfqs/${rfqId}/quote-uploads`),
       ])
       setQuotes(quoteData)
       setComparison(comparisonData)
+      setQuoteUploads(uploadData)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar cotizaciones')
     }
@@ -572,6 +640,34 @@ export default function PurchasingPage() {
       setSelectedRfqId(filteredRfqs[0].id)
     }
   }, [filteredRfqs, selectedRfqId])
+
+  useEffect(() => {
+    if (!projectId) {
+      setEligibleAgreements([])
+      setSelectedAgreementId('')
+      return
+    }
+    const query = new URLSearchParams({
+      project_id: projectId,
+    })
+    let cancelled = false
+    apiRequest<SupplierAgreementEligibility[]>(
+      `/purchasing/supplier-agreements/eligible?${query.toString()}`,
+    )
+      .then((data) => {
+        if (cancelled) return
+        setEligibleAgreements(data)
+        if (selectedAgreementId && !data.some((entry) => entry.agreement.id === Number(selectedAgreementId))) {
+          setSelectedAgreementId('')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setEligibleAgreements([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, selectedAgreementId])
 
   function updateItem(index: number, patch: Partial<RFQDraftItem>) {
     setItems((current) =>
@@ -615,11 +711,26 @@ export default function PurchasingPage() {
     }, 80)
   }
 
+  function toggleSupplierSelection(supplierId: number, checked: boolean) {
+    setSelectedAgreementId('')
+    setSupplierIds((current) =>
+      checked
+        ? Array.from(new Set([...current, String(supplierId)]))
+        : current.filter((value) => value !== String(supplierId)),
+    )
+  }
+
+  function useAgreement(agreement: SupplierAgreement) {
+    setSelectedAgreementId(String(agreement.id))
+    setSupplierIds([String(agreement.supplier_id)])
+    notifySuccess(`Convenio seleccionado: ${agreement.name}.`, 'info')
+  }
+
   async function createRfq() {
     setError('')
     setMessage('')
-    if (supplierIds.length < 3 && !approvedRfqException) {
-      setError('Se requiere una excepcion aprobada para crear solicitud con menos de 3 proveedores.')
+    if (supplierIds.length < 3 && !approvedRfqException && !selectedAgreement) {
+      setError('Se requiere una excepcion aprobada o convenio activo para crear solicitud con menos de 3 proveedores.')
       return
     }
     try {
@@ -631,7 +742,8 @@ export default function PurchasingPage() {
           required_by: requiredBy || null,
           response_deadline: responseDeadline || null,
           supplier_ids: supplierIds.map(Number),
-          exception_request_id: approvedRfqException?.id ?? null,
+          exception_request_id: selectedAgreement ? null : (approvedRfqException?.id ?? null),
+          supplier_agreement_id: selectedAgreement?.id ?? null,
           items: validRfqItems
             .map((item) => ({
               material_id: item.material_id ? Number(item.material_id) : null,
@@ -645,6 +757,7 @@ export default function PurchasingPage() {
       notifySuccess(`Solicitud ${created.rfq_number} creada. Estado: ${statusLabel(created.status)}.`)
       setTitle('')
       setSupplierIds([])
+      setSelectedAgreementId('')
       setItems([{ ...emptyItem }])
       setRfqExceptionNotes('')
       await loadData(created.id)
@@ -719,7 +832,9 @@ export default function PurchasingPage() {
       notifySuccess(
         isException
           ? 'Solicitud de aprobacion por excepcion enviada.'
-          : 'Solicitud de aprobacion enviada.',
+          : selectedRfq.request_type === 'agreement'
+            ? 'Cotizacion por convenio enviada a aprobacion.'
+            : 'Solicitud de aprobacion enviada.',
         'info',
       )
       setExceptionOpen(false)
@@ -799,6 +914,28 @@ export default function PurchasingPage() {
       await loadData(selectedRfq?.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible enviar la orden de compra')
+    }
+  }
+
+  async function openSupplierQuoteUpload(uploadId: number) {
+    setError('')
+    try {
+      const headers = new Headers()
+      const token = getStoredToken()
+      if (token) headers.set('Authorization', `Bearer ${token}`)
+      const response = await fetch(`${API_BASE_URL}/purchasing/supplier-quote-uploads/${uploadId}/download`, {
+        headers,
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(typeof data.detail === 'string' ? data.detail : 'No fue posible abrir el archivo')
+      }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'noopener,noreferrer')
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible abrir el archivo')
     }
   }
 
@@ -1008,13 +1145,7 @@ export default function PurchasingPage() {
                   <input
                     type="checkbox"
                     checked={supplierIds.includes(String(supplier.id))}
-                    onChange={(event) => {
-                      setSupplierIds((current) =>
-                        event.target.checked
-                          ? [...current, String(supplier.id)]
-                          : current.filter((value) => value !== String(supplier.id)),
-                      )
-                    }}
+                    onChange={(event) => toggleSupplierSelection(supplier.id, event.target.checked)}
                   />
                 </label>
               ))}
@@ -1024,6 +1155,39 @@ export default function PurchasingPage() {
                 </div>
               ) : null}
             </div>
+            {fullMatchAgreements.length ? (
+              <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+                <div className="font-bold">Convenio disponible</div>
+                <p className="mt-1">
+                  Puedes solicitar cotizacion directa a un proveedor con convenio para este desarrollo.
+                </p>
+                <div className="mt-3 space-y-2">
+                  {fullMatchAgreements.map(({ agreement }) => (
+                    <button
+                      key={agreement.id}
+                      type="button"
+                      onClick={() => useAgreement(agreement)}
+                      className={[
+                        'block w-full rounded-md border px-3 py-2 text-left transition',
+                        selectedAgreement?.id === agreement.id
+                          ? 'border-acsm-blue bg-white ring-1 ring-acsm-blue'
+                          : 'border-blue-200 bg-white hover:bg-sky-50',
+                      ].join(' ')}
+                    >
+                      <span className="block font-bold text-acsm-ink">{agreement.supplier?.name ?? 'Proveedor'}</span>
+                      <span className="block text-acsm-muted">{agreement.name}</span>
+                      <span className="mt-1 inline-flex rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 font-bold text-blue-700">
+                        Cotizacion directa sin excepcion
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : projectId ? (
+              <div className="mt-3 rounded-md border border-acsm-line bg-white p-3 text-xs text-acsm-muted">
+                No hay convenio activo para la desarrolladora y modelo de este desarrollo.
+              </div>
+            ) : null}
             {needsRfqException ? (
               <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                 <div className="font-bold">
@@ -1174,6 +1338,11 @@ export default function PurchasingPage() {
                       {selectedRfq?.id === rfq.id ? (
                         <span className="ml-2 mt-3 inline-flex max-w-full whitespace-normal rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[10px] font-bold leading-tight text-blue-800 sm:text-[11px]">
                           Activa para captura
+                        </span>
+                      ) : null}
+                      {rfq.request_type === 'agreement' ? (
+                        <span className="ml-2 mt-3 inline-flex max-w-full whitespace-normal rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold leading-tight text-emerald-800 sm:text-[11px]">
+                          Convenio
                         </span>
                       ) : null}
                     </div>
@@ -1374,6 +1543,76 @@ export default function PurchasingPage() {
           </section>
         )}
 
+        {selectedRfq && (
+          <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-gradient-to-r from-white to-sky-50 px-5 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-acsm-line bg-acsm-paper text-acsm-green">
+                  <FileText className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div>
+                  <h2 className="font-bold text-acsm-ink">Documentos recibidos de proveedores</h2>
+                  <p className="text-sm text-acsm-muted">
+                    Archivos cargados desde la liga enviada por correo para {selectedRfq.rfq_number}.
+                  </p>
+                </div>
+              </div>
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                {quoteUploads.length} archivos
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-[860px] w-full text-sm">
+                <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Proveedor</th>
+                    <th className="px-4 py-3 text-left">Folio</th>
+                    <th className="px-4 py-3 text-left">Archivo</th>
+                    <th className="px-4 py-3 text-left">Recibido</th>
+                    <th className="px-4 py-3 text-left">Tamano</th>
+                    <th className="px-4 py-3 text-right">Accion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quoteUploads.map((upload) => (
+                    <tr key={upload.id} className="border-t border-acsm-line">
+                      <td className="px-4 py-3 font-semibold text-acsm-ink">
+                        {upload.supplier?.name ?? `Proveedor ${upload.supplier_id}`}
+                      </td>
+                      <td className="px-4 py-3 text-acsm-muted">{upload.quote_number || '-'}</td>
+                      <td className="max-w-[320px] px-4 py-3">
+                        <span className="block truncate font-semibold text-acsm-ink" title={upload.original_file_name}>
+                          {upload.original_file_name}
+                        </span>
+                        <span className="text-xs uppercase text-acsm-muted">{upload.file_extension}</span>
+                      </td>
+                      <td className="px-4 py-3 text-acsm-muted">{formatDateTime(upload.uploaded_at)}</td>
+                      <td className="px-4 py-3 text-acsm-muted">{formatBytes(upload.file_size_bytes)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => void openSupplierQuoteUpload(upload.id)}
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-800 hover:bg-blue-100"
+                        >
+                          <Eye className="h-4 w-4" aria-hidden="true" />
+                          Abrir archivo
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!quoteUploads.length && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-acsm-muted">
+                        Aun no hay archivos cargados por proveedores para esta solicitud.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
         <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line px-5 py-4">
             <div>
@@ -1382,7 +1621,9 @@ export default function PurchasingPage() {
                 Costo, entrega y credito para mandar el paquete completo a aprobacion.
               </p>
               <p className="mt-1 text-xs font-semibold text-acsm-muted">
-                {completeComparison.length} cotizaciones completas de 3 requeridas
+                {isAgreementRfq
+                  ? `${completeComparison.length} cotizacion completa de 1 requerida por convenio`
+                  : `${completeComparison.length} cotizaciones completas de 3 requeridas`}
               </p>
             </div>
             <div className="flex flex-wrap justify-end gap-2">

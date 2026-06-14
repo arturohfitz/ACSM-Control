@@ -29,9 +29,72 @@ class Supplier(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     rfq_suppliers: Mapped[list["SupplierRFQSupplier"]] = relationship(back_populates="supplier")
+    agreements: Mapped[list["SupplierAgreement"]] = relationship(back_populates="supplier")
     quotes: Mapped[list["SupplierQuote"]] = relationship(back_populates="supplier")
     purchase_orders: Mapped[list["PurchaseOrder"]] = relationship(back_populates="supplier")
     invoices: Mapped[list["SupplierInvoice"]] = relationship(back_populates="supplier")
+
+
+class SupplierAgreement(TimestampMixin, Base):
+    __tablename__ = "supplier_agreements"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "supplier_id",
+            "client_id",
+            "house_model_id",
+            "agreement_number",
+            name="uq_supplier_agreements_scope_number",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
+    house_model_id: Mapped[int] = mapped_column(ForeignKey("house_models.id"), nullable=False, index=True)
+    agreement_number: Mapped[str | None] = mapped_column(String(120))
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="active", nullable=False, index=True)
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    payment_terms_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    average_delivery_days: Mapped[int | None] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+    supplier: Mapped[Supplier] = relationship(back_populates="agreements")
+    client: Mapped["Client"] = relationship()
+    house_model: Mapped["HouseModel"] = relationship()
+    items: Mapped[list["SupplierAgreementItem"]] = relationship(
+        back_populates="agreement", cascade="all, delete-orphan"
+    )
+    creator: Mapped["User | None"] = relationship(foreign_keys=[created_by])
+
+
+class SupplierAgreementItem(TimestampMixin, Base):
+    __tablename__ = "supplier_agreement_items"
+    __table_args__ = (
+        UniqueConstraint("agreement_id", "material_id", name="uq_supplier_agreement_item_material"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    agreement_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_agreements.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    unit: Mapped[str] = mapped_column(String(40), nullable=False)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="MXN", nullable=False)
+    delivery_days: Mapped[int | None] = mapped_column(Integer)
+    min_quantity: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    max_quantity: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    status: Mapped[str] = mapped_column(String(40), default="active", nullable=False, index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    agreement: Mapped[SupplierAgreement] = relationship(back_populates="items")
+    material: Mapped["Material"] = relationship()
 
 
 class SupplierRFQ(TimestampMixin, Base):
@@ -44,6 +107,10 @@ class SupplierRFQ(TimestampMixin, Base):
     rfq_number: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(40), default="draft", nullable=False)
+    request_type: Mapped[str] = mapped_column(String(40), default="standard", nullable=False, index=True)
+    supplier_agreement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("supplier_agreements.id"), index=True
+    )
     required_by: Mapped[date | None] = mapped_column(Date)
     response_deadline: Mapped[date | None] = mapped_column(Date)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -52,6 +119,7 @@ class SupplierRFQ(TimestampMixin, Base):
 
     project: Mapped["Project"] = relationship()
     warehouse: Mapped["ProjectWarehouse | None"] = relationship()
+    supplier_agreement: Mapped["SupplierAgreement | None"] = relationship()
     items: Mapped[list["SupplierRFQItem"]] = relationship(
         back_populates="rfq", cascade="all, delete-orphan"
     )
@@ -123,10 +191,44 @@ class SupplierRFQSupplier(Base):
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(40), default="invited", nullable=False)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    portal_token_hash: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
+    portal_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    portal_last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
 
     rfq: Mapped[SupplierRFQ] = relationship(back_populates="supplier_links")
     supplier: Mapped[Supplier] = relationship(back_populates="rfq_suppliers")
+    quote_uploads: Mapped[list["SupplierQuoteUpload"]] = relationship(
+        back_populates="rfq_supplier", cascade="all, delete-orphan"
+    )
+
+
+class SupplierQuoteUpload(TimestampMixin, Base):
+    __tablename__ = "supplier_quote_uploads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    rfq_id: Mapped[int] = mapped_column(ForeignKey("supplier_rfqs.id", ondelete="CASCADE"), nullable=False, index=True)
+    rfq_supplier_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_rfq_suppliers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), nullable=False, index=True)
+    quote_number: Mapped[str | None] = mapped_column(String(120))
+    original_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(120))
+    file_extension: Mapped[str] = mapped_column(String(16), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="received", nullable=False, index=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    security_notes: Mapped[str | None] = mapped_column(Text)
+
+    rfq: Mapped[SupplierRFQ] = relationship()
+    rfq_supplier: Mapped[SupplierRFQSupplier] = relationship(back_populates="quote_uploads")
+    supplier: Mapped[Supplier] = relationship()
 
 
 class SupplierQuote(TimestampMixin, Base):

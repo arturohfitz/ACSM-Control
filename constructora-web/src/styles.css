@@ -77,6 +77,15 @@ button:not(:disabled):active::after {
   transition-duration: 70ms;
 }
 
+button.acsm-notification-button:not(:disabled) {
+  overflow: visible;
+}
+
+.acsm-notification-badge {
+  transform: translate(35%, -35%);
+  z-index: 20;
+}
+
 button:disabled {
   cursor: not-allowed;
 }
