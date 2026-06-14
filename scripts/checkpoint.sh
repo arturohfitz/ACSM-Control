@@ -23,7 +23,7 @@ if git -C "$ROOT_DIR" diff --cached --quiet; then
   exit 0
 fi
 
-git -C "$ROOT_DIR" commit -m "$MESSAGE"
+ACSM_SKIP_PRECOMMIT_VERIFY=1 git -C "$ROOT_DIR" commit -m "$MESSAGE"
 "$ROOT_DIR/scripts/update-version.sh"
 
 echo

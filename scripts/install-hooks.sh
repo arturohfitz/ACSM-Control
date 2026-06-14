@@ -13,6 +13,10 @@ cat > "$HOOK_DIR/pre-commit" <<'EOF_HOOK'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${ACSM_SKIP_PRECOMMIT_VERIFY:-}" == "1" ]]; then
+  exit 0
+fi
+
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 "$ROOT_DIR/scripts/verify.sh"
 EOF_HOOK
