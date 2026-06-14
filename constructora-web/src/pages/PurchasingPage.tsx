@@ -19,6 +19,7 @@ import { showActionNotice, type ActionNoticeKind } from '../lib/actionNotice'
 
 type Project = {
   id: number
+  client_id: number
   name: string
 }
 
@@ -79,6 +80,8 @@ type SupplierAgreement = {
   house_model_id: number
   name: string
   status: string
+  valid_from?: string | null
+  valid_until?: string | null
   payment_terms_days?: number | null
   average_delivery_days?: number | null
   supplier?: Supplier | null
@@ -95,6 +98,12 @@ type SupplierAgreement = {
 type SupplierAgreementEligibility = {
   agreement: SupplierAgreement
   is_full_match: boolean
+}
+
+type ProjectSummary = {
+  assigned_models: {
+    house_model_id: number
+  }[]
 }
 
 type SupplierRFQException = {
@@ -368,6 +377,8 @@ export default function PurchasingPage() {
   const [rfqs, setRfqs] = useState<SupplierRFQ[]>([])
   const [rfqExceptions, setRfqExceptions] = useState<SupplierRFQException[]>([])
   const [eligibleAgreements, setEligibleAgreements] = useState<SupplierAgreementEligibility[]>([])
+  const [allAgreements, setAllAgreements] = useState<SupplierAgreement[]>([])
+  const [projectSummary, setProjectSummary] = useState<ProjectSummary | null>(null)
   const [quotes, setQuotes] = useState<SupplierQuote[]>([])
   const [quoteUploads, setQuoteUploads] = useState<SupplierQuoteUpload[]>([])
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
@@ -500,6 +511,145 @@ export default function PurchasingPage() {
     () => eligibleAgreements.filter((entry) => entry.is_full_match),
     [eligibleAgreements],
   )
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === Number(projectId)) ?? null,
+    [projectId, projects],
+  )
+  const selectedSupplierIdSet = useMemo(
+    () => new Set(supplierIds.map(Number).filter(Boolean)),
+    [supplierIds],
+  )
+  const projectAssignedModelIds = useMemo(
+    () => new Set((projectSummary?.assigned_models ?? []).map((model) => model.house_model_id)),
+    [projectSummary],
+  )
+  const agreementGuidance = useMemo(() => {
+    if (!projectId || supplierIds.length === 0 || supplierIds.length >= 3 || selectedAgreement) return null
+
+    const selectedSupplierNames = suppliers
+      .filter((supplier) => selectedSupplierIdSet.has(supplier.id))
+      .map((supplier) => supplier.name)
+      .join(', ')
+    const supplierAgreements = allAgreements.filter((agreement) =>
+      selectedSupplierIdSet.has(agreement.supplier_id),
+    )
+
+    if (!supplierAgreements.length) {
+      return {
+        title: 'Proveedor sin convenio registrado',
+        body: `${selectedSupplierNames || 'El proveedor seleccionado'} no tiene convenio registrado.`,
+        steps: [
+          'Selecciona minimo 3 proveedores para crear una solicitud normal.',
+          'Si realmente no existen mas proveedores, solicita excepcion a gerencia.',
+          'Si si tiene convenio, registralo en Compras / Convenios antes de crear la solicitud.',
+        ],
+      }
+    }
+
+    const projectClientAgreements = selectedProject
+      ? supplierAgreements.filter((agreement) => agreement.client_id === selectedProject.client_id)
+      : supplierAgreements
+
+    if (!projectClientAgreements.length) {
+      return {
+        title: 'Convenio con otra desarrolladora',
+        body: 'El proveedor tiene convenio, pero no con la desarrolladora del desarrollo seleccionado.',
+        steps: [
+          'Selecciona el desarrollo correcto.',
+          'O registra un convenio para esta desarrolladora y su modelo.',
+        ],
+      }
+    }
+
+    if (!projectAssignedModelIds.size) {
+      return {
+        title: 'Falta asignar modelo al desarrollo',
+        body: 'El proveedor tiene convenio con esta desarrolladora, pero el desarrollo no tiene modelo de casa asignado.',
+        steps: [
+          'Ve a Desarrollos y asigna el modelo de casa del convenio.',
+          'Regresa a Compras y vuelve a seleccionar el desarrollo.',
+        ],
+      }
+    }
+
+    const modelAgreements = projectClientAgreements.filter((agreement) =>
+      projectAssignedModelIds.has(agreement.house_model_id),
+    )
+
+    if (!modelAgreements.length) {
+      return {
+        title: 'Modelo del convenio no asignado',
+        body: 'El proveedor tiene convenio con la desarrolladora, pero el modelo del convenio no esta asignado a este desarrollo.',
+        steps: [
+          'Asigna al desarrollo el modelo indicado en el convenio.',
+          'O crea un convenio para el modelo correcto.',
+        ],
+      }
+    }
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const unavailableAgreement = modelAgreements.find((agreement) => {
+      const validFrom = agreement.valid_from ? new Date(`${agreement.valid_from}T00:00:00`) : null
+      const validUntil = agreement.valid_until ? new Date(`${agreement.valid_until}T00:00:00`) : null
+      return (
+        agreement.status !== 'active' ||
+        Boolean(validFrom && validFrom > today) ||
+        Boolean(validUntil && validUntil < today)
+      )
+    })
+
+    if (unavailableAgreement) {
+      if (unavailableAgreement.status !== 'active') {
+        return {
+          title: 'Convenio no activo',
+          body: `El convenio ${unavailableAgreement.name} existe, pero esta ${statusLabel(
+            unavailableAgreement.status,
+          ).toLocaleLowerCase()}.`,
+          steps: ['Activa el convenio o selecciona minimo 3 proveedores.'],
+        }
+      }
+      if (
+        unavailableAgreement.valid_from &&
+        new Date(`${unavailableAgreement.valid_from}T00:00:00`) > today
+      ) {
+        return {
+          title: 'Convenio aun no vigente',
+          body: `El convenio ${unavailableAgreement.name} inicia el ${formatDate(
+            unavailableAgreement.valid_from,
+          )}.`,
+          steps: [
+            'Ajusta la fecha inicial del convenio si ya debe aplicar.',
+            'Mientras tanto selecciona minimo 3 proveedores o solicita excepcion.',
+          ],
+        }
+      }
+      return {
+        title: 'Convenio vencido',
+        body: `El convenio ${unavailableAgreement.name} ya no esta vigente.`,
+        steps: ['Actualiza la vigencia del convenio o selecciona minimo 3 proveedores.'],
+      }
+    }
+
+    const availableAgreement = modelAgreements[0]
+    return {
+      title: 'Convenio disponible sin activar',
+      body: `Existe el convenio ${availableAgreement.name}. Para usarlo debes seleccionarlo desde el bloque Convenio disponible.`,
+      steps: [
+        'Haz clic en el convenio disponible para activar la cotizacion directa.',
+        'El sistema dejara de pedir excepcion cuando el convenio quede seleccionado.',
+      ],
+    }
+  }, [
+    allAgreements,
+    projectAssignedModelIds,
+    projectId,
+    selectedAgreement,
+    selectedProject,
+    selectedSupplierIdSet,
+    supplierIds.length,
+    suppliers,
+  ])
   const isAgreementRfq = selectedRfq?.request_type === 'agreement'
   const canRequestApproval =
     Boolean(selectedRfq) &&
@@ -563,10 +713,19 @@ export default function PurchasingPage() {
     setLoading(true)
     setError('')
     try {
-      const [projectData, materialData, supplierData, rfqData, exceptionData, orderData] = await Promise.all([
+      const [
+        projectData,
+        materialData,
+        supplierData,
+        agreementData,
+        rfqData,
+        exceptionData,
+        orderData,
+      ] = await Promise.all([
         apiRequest<Project[]>('/projects'),
         apiRequest<Material[]>('/materials'),
         apiRequest<Supplier[]>('/purchasing/suppliers'),
+        apiRequest<SupplierAgreement[]>('/purchasing/supplier-agreements?limit=250'),
         apiRequest<SupplierRFQ[]>('/purchasing/supplier-rfqs'),
         apiRequest<SupplierRFQException[]>('/purchasing/supplier-rfq-exceptions?approval_status=all'),
         apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders?limit=250'),
@@ -574,6 +733,7 @@ export default function PurchasingPage() {
       setProjects(projectData)
       setMaterials(materialData)
       setSuppliers(supplierData)
+      setAllAgreements(agreementData)
       setRfqs(rfqData)
       setRfqExceptions(exceptionData)
       setOrders(orderData)
@@ -644,6 +804,7 @@ export default function PurchasingPage() {
   useEffect(() => {
     if (!projectId) {
       setEligibleAgreements([])
+      setProjectSummary(null)
       setSelectedAgreementId('')
       return
     }
@@ -651,18 +812,28 @@ export default function PurchasingPage() {
       project_id: projectId,
     })
     let cancelled = false
-    apiRequest<SupplierAgreementEligibility[]>(
-      `/purchasing/supplier-agreements/eligible?${query.toString()}`,
-    )
-      .then((data) => {
+    Promise.all([
+      apiRequest<SupplierAgreementEligibility[]>(
+        `/purchasing/supplier-agreements/eligible?${query.toString()}`,
+      ),
+      apiRequest<ProjectSummary>(`/projects/${projectId}/summary`),
+    ])
+      .then(([agreementData, summaryData]) => {
         if (cancelled) return
-        setEligibleAgreements(data)
-        if (selectedAgreementId && !data.some((entry) => entry.agreement.id === Number(selectedAgreementId))) {
+        setEligibleAgreements(agreementData)
+        setProjectSummary(summaryData)
+        if (
+          selectedAgreementId &&
+          !agreementData.some((entry) => entry.agreement.id === Number(selectedAgreementId))
+        ) {
           setSelectedAgreementId('')
         }
       })
       .catch(() => {
-        if (!cancelled) setEligibleAgreements([])
+        if (!cancelled) {
+          setEligibleAgreements([])
+          setProjectSummary(null)
+        }
       })
     return () => {
       cancelled = true
@@ -1181,6 +1352,21 @@ export default function PurchasingPage() {
                       </span>
                     </button>
                   ))}
+                </div>
+              </div>
+            ) : agreementGuidance ? (
+              <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <div>
+                    <div className="font-bold">{agreementGuidance.title}</div>
+                    <p className="mt-1">{agreementGuidance.body}</p>
+                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                      {agreementGuidance.steps.map((step) => (
+                        <li key={step}>{step}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               </div>
             ) : projectId ? (
