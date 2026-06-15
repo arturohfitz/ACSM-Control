@@ -109,8 +109,8 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
         {"*:*"},
     ),
     (
-        "Proyectos y desarrolladoras",
-        "Gestion de desarrolladoras, desarrollos, modelos, tabuladores y conceptos de obra",
+        "Proyectos e inmobiliarias",
+        "Gestion de inmobiliarias, desarrollos, modelos, tabuladores y conceptos de obra",
         {
             "companies:view",
             "events:view",

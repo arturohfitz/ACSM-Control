@@ -11,10 +11,6 @@ export function CompaniesPage() {
   return <ResourcePage config={resources.companies} />
 }
 
-export function ProjectsPage() {
-  return <ResourcePage config={resources.projects} />
-}
-
 export function HouseModelsPage() {
   return <HouseModelsByDeveloperPage />
 }

@@ -85,7 +85,7 @@ def _apply_client_company(
     if data.get("client_id") is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Selecciona la desarrolladora del modelo de casa",
+            detail="Selecciona la inmobiliaria del modelo de casa",
         )
 
     client = get_or_404(db, Client, data["client_id"])
@@ -95,7 +95,7 @@ def _apply_client_company(
     if company_id != client.company_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La desarrolladora no pertenece a la empresa indicada",
+            detail="La inmobiliaria no pertenece a la empresa indicada",
         )
     data["company_id"] = client.company_id
 
@@ -401,7 +401,7 @@ async def upload_house_model_document(
     if model.client_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El modelo debe pertenecer a una desarrolladora",
+            detail="El modelo debe pertenecer a una inmobiliaria",
         )
 
     file_name = file.filename or "documento.pdf"
@@ -993,8 +993,8 @@ def update_house_model(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "No se puede cambiar la desarrolladora porque el modelo "
-                    "ya esta asignado a un proyecto de otra desarrolladora"
+                    "No se puede cambiar la inmobiliaria porque el modelo "
+                    "ya esta asignado a un proyecto de otra inmobiliaria"
                 ),
             )
     before = snapshot(item, list(data.keys()))

@@ -25,7 +25,7 @@ type AuditEventResponse = {
 const moduleLabels: Record<string, string> = {
   compras: 'Compras',
   cotizaciones: 'Cotizaciones',
-  desarrolladoras: 'Desarrolladoras',
+  desarrolladoras: 'Inmobiliarias',
   facturas_proveedor: 'Facturas proveedor',
   materiales: 'Materiales',
   modelos: 'Modelos',

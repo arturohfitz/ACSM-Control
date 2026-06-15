@@ -137,7 +137,7 @@ export default function SupplierAgreementsPage() {
   async function createAgreement() {
     setError('')
     if (!agreementForm.supplier_id || !agreementForm.client_id || !agreementForm.house_model_id) {
-      setError('Selecciona proveedor, desarrolladora y modelo.')
+      setError('Selecciona proveedor, inmobiliaria y modelo.')
       return
     }
     try {
@@ -153,7 +153,7 @@ export default function SupplierAgreementsPage() {
           agreement_number: agreementForm.agreement_number || null,
           name:
             agreementForm.name ||
-            `Convenio ${supplier?.name ?? 'Proveedor'} - ${client?.name ?? 'Desarrolladora'} - ${model?.name ?? 'Modelo'}`,
+            `Convenio ${supplier?.name ?? 'Proveedor'} - ${client?.name ?? 'Inmobiliaria'} - ${model?.name ?? 'Modelo'}`,
           status: 'active',
           valid_from: agreementForm.valid_from || null,
           valid_until: agreementForm.valid_until || null,
@@ -189,7 +189,7 @@ export default function SupplierAgreementsPage() {
             <p className="text-xs font-bold uppercase tracking-[0.22em] text-acsm-muted">Compras</p>
             <h2 className="text-xl font-bold text-acsm-ink">Convenios de proveedores</h2>
             <p className="text-sm text-acsm-muted">
-              Marca proveedores con convenio por desarrolladora y modelo. No requiere capturar materiales.
+              Marca proveedores con convenio por inmobiliaria y modelo. No requiere capturar materiales.
             </p>
           </div>
           <button
@@ -207,7 +207,7 @@ export default function SupplierAgreementsPage() {
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-acsm-ink">Nuevo convenio</h3>
-                <p className="text-xs text-acsm-muted">Proveedor, desarrolladora y modelo.</p>
+                <p className="text-xs text-acsm-muted">Proveedor, inmobiliaria y modelo.</p>
               </div>
               <Plus className="h-5 w-5 text-acsm-blue" aria-hidden="true" />
             </div>
@@ -229,7 +229,7 @@ export default function SupplierAgreementsPage() {
                 onChange={(event) => updateAgreementField('client_id', event.target.value)}
                 className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
               >
-                <option value="">Desarrolladora</option>
+                <option value="">Inmobiliaria</option>
                 {clients.map((client) => (
                   <option key={client.id} value={client.id}>
                     {client.name}
@@ -330,7 +330,7 @@ export default function SupplierAgreementsPage() {
                   >
                     <div className="font-bold text-acsm-ink">{agreement.name}</div>
                     <div className="mt-1 text-xs text-acsm-muted">
-                      {supplier?.name ?? 'Proveedor'} · {client?.name ?? 'Desarrolladora'} · {model?.name ?? 'Modelo'}
+                      {supplier?.name ?? 'Proveedor'} · {client?.name ?? 'Inmobiliaria'} · {model?.name ?? 'Modelo'}
                     </div>
                     <span className="mt-2 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">
                       {statusLabel(agreement.status)}
@@ -370,8 +370,8 @@ export default function SupplierAgreementsPage() {
                     <div className="mt-1 font-bold text-acsm-ink">{selectedSupplier?.name ?? 'Proveedor'}</div>
                   </div>
                   <div className="rounded-xl border border-acsm-line bg-white p-4">
-                    <span className="text-xs font-bold uppercase text-acsm-muted">Desarrolladora</span>
-                    <div className="mt-1 font-bold text-acsm-ink">{selectedClient?.name ?? 'Desarrolladora'}</div>
+                    <span className="text-xs font-bold uppercase text-acsm-muted">Inmobiliaria</span>
+                    <div className="mt-1 font-bold text-acsm-ink">{selectedClient?.name ?? 'Inmobiliaria'}</div>
                   </div>
                   <div className="rounded-xl border border-acsm-line bg-white p-4">
                     <span className="text-xs font-bold uppercase text-acsm-muted">Modelo</span>

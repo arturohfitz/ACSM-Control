@@ -118,7 +118,7 @@ def ensure_clients_assignable(
     if len({client.id for client in clients}) != len(set(client_ids)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Una o mas desarrolladoras no pertenecen a la constructora del usuario",
+            detail="Una o mas inmobiliarias no pertenecen a la constructora del usuario",
         )
     if current_user.is_master_admin:
         return

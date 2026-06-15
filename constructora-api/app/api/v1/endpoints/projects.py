@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import require_permission
 from app.db.session import get_db
-from app.models import Client, HouseModel, Project, ProjectHouseModel, Quote, User
+from app.models import Client, HouseModel, Project, ProjectHouseModel, Quote, QuoteItem, User
 from app.schemas.business import (
     ProjectCreate,
     ProjectHouseModelCreate,
@@ -96,8 +96,8 @@ def update_project(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "No se puede cambiar la desarrolladora porque el proyecto "
-                    "tiene modelos asignados de otra desarrolladora"
+                    "No se puede cambiar la inmobiliaria porque el proyecto "
+                    "tiene modelos asignados de otra inmobiliaria"
                 ),
             )
         item.company_id = client.company_id
@@ -135,7 +135,18 @@ def assign_house_model(
     if house_model.client_id != project.client_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El modelo de casa no pertenece a la desarrolladora del proyecto",
+            detail="El modelo de casa no pertenece a la inmobiliaria del proyecto",
+        )
+    existing_assignment = db.scalar(
+        select(ProjectHouseModel).where(
+            ProjectHouseModel.project_id == project_id,
+            ProjectHouseModel.house_model_id == payload.house_model_id,
+        )
+    )
+    if existing_assignment is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este modelo ya esta asignado al desarrollo",
         )
     total_estimated_cost = (
         payload.estimated_cost_per_unit * payload.quantity
@@ -157,6 +168,31 @@ def assign_house_model(
     db.commit()
     db.refresh(assignment)
     return assignment
+
+
+@router.delete("/{project_id}/house-models/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_house_model_assignment(
+    project_id: int,
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("projects", "edit")),
+) -> None:
+    project = get_or_404(db, Project, project_id)
+    ensure_same_company(current_user, project, db=db)
+    assignment = get_or_404(db, ProjectHouseModel, assignment_id)
+    if assignment.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    used_in_quote = db.scalar(
+        select(QuoteItem.id)
+        .where(QuoteItem.project_house_model_id == assignment_id)
+        .limit(1)
+    )
+    if used_in_quote is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se puede quitar el modelo porque ya esta usado en una cotizacion",
+        )
+    delete_item(db, assignment)
 
 
 @router.get("/{project_id}/summary", response_model=ProjectSummary)

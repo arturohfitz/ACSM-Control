@@ -20,7 +20,7 @@ const quoteStatus = [
 
 const supplySourceOptions = [
   { label: 'Constructora', value: 'constructor' },
-  { label: 'Desarrolladora', value: 'developer' },
+  { label: 'Inmobiliaria', value: 'developer' },
   { label: 'Tercero', value: 'third_party' },
 ]
 
@@ -106,7 +106,7 @@ export const resources: Record<string, ResourceConfig> = {
     ],
   },
   clients: {
-    title: 'Desarrolladoras',
+    title: 'Inmobiliarias',
     endpoint: '/clients',
     permissionName: 'clients',
     columns: ['id', 'name', 'legal_name', 'contact_name', 'contact_email'],
@@ -135,7 +135,7 @@ export const resources: Record<string, ResourceConfig> = {
     columns: ['id', 'client_id', 'name', 'location', 'status'],
     columnLabels: {
       id: 'ID',
-      client_id: 'Desarrolladora',
+      client_id: 'Inmobiliaria',
       name: 'Nombre',
       location: 'Ubicacion',
       status: 'Estado',
@@ -143,7 +143,7 @@ export const resources: Record<string, ResourceConfig> = {
     fields: [
       {
         name: 'client_id',
-        label: 'Desarrolladora',
+        label: 'Inmobiliaria',
         type: 'number',
         required: true,
         relation: { endpoint: '/clients', labelField: 'name' },
@@ -157,13 +157,13 @@ export const resources: Record<string, ResourceConfig> = {
     ],
   },
   houseModels: {
-    title: 'Modelos por desarrolladora',
+    title: 'Modelos por inmobiliaria',
     endpoint: '/house-models',
     permissionName: 'house_models',
     columns: ['id', 'client_id', 'name', 'construction_m2', 'levels', 'bedrooms', 'bathrooms'],
     columnLabels: {
       id: 'ID',
-      client_id: 'Desarrolladora',
+      client_id: 'Inmobiliaria',
       name: 'Nombre',
       construction_m2: 'm2 construccion',
       levels: 'Niveles',
@@ -173,7 +173,7 @@ export const resources: Record<string, ResourceConfig> = {
     fields: [
       {
         name: 'client_id',
-        label: 'Desarrolladora',
+        label: 'Inmobiliaria',
         type: 'number',
         required: true,
         relation: { endpoint: '/clients', labelField: 'name' },
@@ -385,7 +385,7 @@ export const resources: Record<string, ResourceConfig> = {
       id: 'ID',
       full_name: 'Nombre completo',
       email: 'Correo',
-      client_access_mode: 'Alcance desarrolladoras',
+      client_access_mode: 'Alcance inmobiliarias',
       is_active: 'Activo',
       is_master_admin: 'Admin maestro',
     },
@@ -414,17 +414,17 @@ export const resources: Record<string, ResourceConfig> = {
       },
       {
         name: 'client_access_mode',
-        label: 'Acceso a desarrolladoras',
+        label: 'Acceso a inmobiliarias',
         type: 'select',
         defaultValue: 'all',
         options: [
-          { label: 'Todas las desarrolladoras', value: 'all' },
-          { label: 'Solo desarrolladoras seleccionadas', value: 'restricted' },
+          { label: 'Todas las inmobiliarias', value: 'all' },
+          { label: 'Solo inmobiliarias seleccionadas', value: 'restricted' },
         ],
       },
       {
         name: 'client_ids',
-        label: 'Desarrolladoras permitidas',
+        label: 'Inmobiliarias permitidas',
         type: 'multiselect',
         valueType: 'number',
         relation: { endpoint: '/clients', labelField: 'name' },

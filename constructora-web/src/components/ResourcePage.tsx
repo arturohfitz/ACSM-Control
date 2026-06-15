@@ -96,7 +96,7 @@ const permissionModuleLabels: Record<string, string> = {
   settings: 'Ajustes',
   users: 'Usuarios',
   roles: 'Roles',
-  clients: 'Desarrolladoras',
+  clients: 'Inmobiliarias',
   projects: 'Desarrollos',
   house_models: 'Modelos',
   materials: 'Materiales',

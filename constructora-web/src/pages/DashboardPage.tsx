@@ -28,7 +28,7 @@ export default function DashboardPage() {
           <div>
             <h2 className="text-base font-semibold">Operacion inicial</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-acsm-muted">
-              Captura desarrolladoras, desarrollos, modelos, conceptos, materiales y mano de obra
+              Captura inmobiliarias, desarrollos, modelos, conceptos, materiales y mano de obra
               para calcular cotizaciones por desarrollo.
             </p>
           </div>

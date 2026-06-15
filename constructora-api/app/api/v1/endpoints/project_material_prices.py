@@ -53,7 +53,7 @@ def _house_model_for_project(
     if house_model.client_id != project.client_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El modelo no pertenece a la desarrolladora del desarrollo",
+            detail="El modelo no pertenece a la inmobiliaria del desarrollo",
         )
     assignment_id = db.scalar(
         select(ProjectHouseModel.id).where(

@@ -1057,9 +1057,9 @@ export default function HouseModelsByDeveloperPage() {
             <Home className="h-4 w-4" aria-hidden="true" />
           </div>
           <div>
-            <h2 className="text-base font-semibold text-acsm-ink">Modelos por desarrolladora</h2>
+            <h2 className="text-base font-semibold text-acsm-ink">Modelos por inmobiliaria</h2>
             <p className="text-sm text-acsm-muted">
-              Selecciona una desarrolladora y administra sus modelos de casa.
+              Selecciona una inmobiliaria y administra sus modelos de casa.
             </p>
           </div>
         </div>
@@ -1077,7 +1077,7 @@ export default function HouseModelsByDeveloperPage() {
       <div className="grid min-h-[calc(100vh-150px)] bg-slate-100/70 lg:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="border-b border-[#8fb4d4] bg-[#dfeaf3] lg:border-b-0 lg:border-r">
           <div className="border-b border-[#8fb4d4] bg-[#cfdeeb] px-3 py-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Desarrolladoras</div>
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Inmobiliarias</div>
             <div className="mt-0.5 text-sm font-semibold text-acsm-ink">
               {clients.length} registradas
             </div>
@@ -1126,7 +1126,7 @@ export default function HouseModelsByDeveloperPage() {
 
             {clients.length === 0 ? (
               <div className="rounded-md border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-sm text-acsm-muted">
-                No hay desarrolladoras registradas.
+                No hay inmobiliarias registradas.
               </div>
             ) : null}
           </div>
@@ -1137,7 +1137,7 @@ export default function HouseModelsByDeveloperPage() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-acsm-muted">
-                  Desarrolladora seleccionada
+                  Inmobiliaria seleccionada
                 </div>
                 <h3 className="mt-0.5 truncate text-lg font-semibold text-acsm-ink">
                   {selectedClient?.name ?? 'Sin seleccion'}
@@ -1182,7 +1182,7 @@ export default function HouseModelsByDeveloperPage() {
                 <div>
                   <h3 className="text-sm font-semibold text-acsm-ink">Modelos registrados</h3>
                   <p className="text-xs text-acsm-muted">
-                    Catalogo de modelos para la desarrolladora seleccionada.
+                    Catalogo de modelos para la inmobiliaria seleccionada.
                   </p>
                 </div>
                 {canCreate ? (
@@ -1346,7 +1346,7 @@ export default function HouseModelsByDeveloperPage() {
                   })
                 ) : (
                   <div className="px-3 py-12 text-center text-sm text-acsm-muted">
-                    Esta desarrolladora aun no tiene modelos. Crea el primer modelo desde el panel derecho.
+                    Esta inmobiliaria aun no tiene modelos. Crea el primer modelo desde el panel derecho.
                   </div>
                 )}
               </div>
@@ -1587,7 +1587,7 @@ export default function HouseModelsByDeveloperPage() {
                     {editing ? 'Editar modelo' : 'Nuevo modelo'}
                   </h3>
                   <p className="text-xs text-acsm-muted">
-                    {selectedClient?.name ?? 'Selecciona una desarrolladora'}
+                    {selectedClient?.name ?? 'Selecciona una inmobiliaria'}
                   </p>
                 </div>
                 <button

@@ -552,11 +552,11 @@ export default function PurchasingPage() {
 
     if (!projectClientAgreements.length) {
       return {
-        title: 'Convenio con otra desarrolladora',
-        body: 'El proveedor tiene convenio, pero no con la desarrolladora del desarrollo seleccionado.',
+        title: 'Convenio con otra inmobiliaria',
+        body: 'El proveedor tiene convenio, pero no con la inmobiliaria del desarrollo seleccionado.',
         steps: [
           'Selecciona el desarrollo correcto.',
-          'O registra un convenio para esta desarrolladora y su modelo.',
+          'O registra un convenio para esta inmobiliaria y su modelo.',
         ],
       }
     }
@@ -564,7 +564,7 @@ export default function PurchasingPage() {
     if (!projectAssignedModelIds.size) {
       return {
         title: 'Falta asignar modelo al desarrollo',
-        body: 'El proveedor tiene convenio con esta desarrolladora, pero el desarrollo no tiene modelo de casa asignado.',
+        body: 'El proveedor tiene convenio con esta inmobiliaria, pero el desarrollo no tiene modelo de casa asignado.',
         steps: [
           'Ve a Desarrollos y asigna el modelo de casa del convenio.',
           'Regresa a Compras y vuelve a seleccionar el desarrollo.',
@@ -579,7 +579,7 @@ export default function PurchasingPage() {
     if (!modelAgreements.length) {
       return {
         title: 'Modelo del convenio no asignado',
-        body: 'El proveedor tiene convenio con la desarrolladora, pero el modelo del convenio no esta asignado a este desarrollo.',
+        body: 'El proveedor tiene convenio con la inmobiliaria, pero el modelo del convenio no esta asignado a este desarrollo.',
         steps: [
           'Asigna al desarrollo el modelo indicado en el convenio.',
           'O crea un convenio para el modelo correcto.',
@@ -1371,7 +1371,7 @@ export default function PurchasingPage() {
               </div>
             ) : projectId ? (
               <div className="mt-3 rounded-md border border-acsm-line bg-white p-3 text-xs text-acsm-muted">
-                No hay convenio activo para la desarrolladora y modelo de este desarrollo.
+                No hay convenio activo para la inmobiliaria y modelo de este desarrollo.
               </div>
             ) : null}
             {needsRfqException ? (

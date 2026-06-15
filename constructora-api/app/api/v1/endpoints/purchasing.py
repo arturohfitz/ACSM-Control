@@ -144,7 +144,7 @@ def _validate_agreement_scope(
     if agreement.client_id != project.client_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El convenio no pertenece a la desarrolladora del desarrollo seleccionado",
+            detail="El convenio no pertenece a la inmobiliaria del desarrollo seleccionado",
         )
     is_project_model = db.scalar(
         select(ProjectHouseModel.id).where(
@@ -466,7 +466,7 @@ def _validate_agreement_payload(
     if supplier_id is None or client_id is None or house_model_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Proveedor, desarrolladora y modelo son obligatorios",
+            detail="Proveedor, inmobiliaria y modelo son obligatorios",
         )
     supplier = _supplier_for_user(db, supplier_id, current_user)
     client = get_or_404(db, Client, client_id)
@@ -481,7 +481,7 @@ def _validate_agreement_payload(
     if house_model.client_id != client.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El modelo seleccionado no pertenece a la desarrolladora",
+            detail="El modelo seleccionado no pertenece a la inmobiliaria",
         )
     data["company_id"] = company_id
     data["supplier_id"] = supplier.id

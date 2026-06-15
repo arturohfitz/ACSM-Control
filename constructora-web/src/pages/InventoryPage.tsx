@@ -965,7 +965,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               <p className="text-xs text-acsm-muted">
                 {mode === 'document_validation'
                   ? 'Interpreta, revisa y corrige partidas antes de guardar el documento en inventario.'
-                  : 'Carga documentos que no nacieron desde Compras: desarrolladora, PDF, foto o Excel.'}
+                  : 'Carga documentos que no nacieron desde Compras: inmobiliaria, PDF, foto o Excel.'}
               </p>
             </div>
           </div>

@@ -38,7 +38,7 @@ import { ACTION_NOTICE_EVENT, type ActionNoticePayload } from '../lib/actionNoti
 const navItems = [
   { to: '/', label: 'Inicio', icon: Home, permission: null },
   { to: '/companies', label: 'Constructoras', icon: Building2, permission: 'companies:view' },
-  { to: '/clients', label: 'Desarrolladoras', icon: Building2, permission: 'clients:view' },
+  { to: '/clients', label: 'Inmobiliarias', icon: Building2, permission: 'clients:view' },
   { to: '/projects', label: 'Desarrollos', icon: FolderKanban, permission: 'projects:view' },
   { to: '/house-models', label: 'Modelos', icon: Layers3, permission: 'house_models:view' },
   { to: '/project-material-prices', label: 'Tabulador', icon: ClipboardList, permission: 'materials:view' },
@@ -136,9 +136,9 @@ const inventorySubItems = [
 const titles: Record<string, string> = {
   '/': 'Inicio',
   '/companies': 'Constructoras',
-  '/clients': 'Desarrolladoras',
+  '/clients': 'Inmobiliarias',
   '/projects': 'Desarrollos',
-  '/house-models': 'Modelos por desarrolladora',
+  '/house-models': 'Modelos por inmobiliaria',
   '/project-material-prices': 'Tabulador del desarrollo',
   '/materials': 'Catalogo de materiales',
   '/suppliers': 'Proveedores',

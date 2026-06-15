@@ -12,7 +12,6 @@ import {
   LaborRatesPage,
   MaterialsPage,
   ProjectMaterialPricesPage,
-  ProjectsPage,
   QuotesPage,
   RolesPage,
   SuppliersPage,
@@ -20,6 +19,7 @@ import {
 } from './pages/GenericResourcePage'
 import InventoryPage from './pages/InventoryPage'
 import LoginPage from './pages/LoginPage'
+import ProjectsPage from './pages/ProjectsPage'
 import PurchasingApprovalsPage from './pages/PurchasingApprovalsPage'
 import PurchasingOrdersPage from './pages/PurchasingOrdersPage'
 import PurchasingPage from './pages/PurchasingPage'
