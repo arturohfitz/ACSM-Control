@@ -723,7 +723,7 @@ test('menu oculta modulos sin permiso para usuarios operativos', async ({ page }
   await page.goto('/')
 
   await expect(page.getByRole('heading', { name: 'Inicio' })).toBeVisible()
-  await expect(page.getByRole('link', { name: /Desarrolladoras/i })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Inmobiliarias/i })).toBeVisible()
   await expect(page.getByRole('link', { name: /^Compras$/i })).toHaveCount(0)
   await expect(page.getByRole('link', { name: /^Inventario$/i })).toHaveCount(0)
   await expect(page.getByRole('link', { name: /^Roles$/i })).toHaveCount(0)
