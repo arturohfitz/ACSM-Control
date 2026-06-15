@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Building2, CheckCircle2, FileUp, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, Building2, CheckCircle2, FileUp, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 
 import { apiRequest } from '../lib/api'
@@ -63,13 +63,16 @@ export default function SupplierQuotePortalPage() {
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [requestingUpdate, setRequestingUpdate] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [fileInputKey, setFileInputKey] = useState(0)
 
   const sortedUploads = useMemo(
     () => [...(data?.previous_uploads ?? [])].sort((left, right) => right.id - left.id),
     [data?.previous_uploads],
   )
+  const hasExistingUpload = sortedUploads.length > 0
 
   async function loadPortal() {
     setLoading(true)
@@ -89,6 +92,10 @@ export default function SupplierQuotePortalPage() {
   }, [token])
 
   async function submitUpload() {
+    if (hasExistingUpload) {
+      setError('Esta cotizacion ya fue cargada. Solicita actualizacion si necesitas reemplazarla.')
+      return
+    }
     if (!file) {
       setError('Selecciona un archivo PDF, XLS o XLSX.')
       return
@@ -109,6 +116,7 @@ export default function SupplierQuotePortalPage() {
       setQuoteNumber('')
       setNotes('')
       setFile(null)
+      setFileInputKey((current) => current + 1)
       await loadPortal()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar el archivo')
@@ -117,22 +125,38 @@ export default function SupplierQuotePortalPage() {
     }
   }
 
+  async function requestUpdate() {
+    setRequestingUpdate(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await apiRequest<{ message: string }>(`/supplier-portal/quotes/${token}/request-update`, {
+        method: 'POST',
+      })
+      setMessage(response.message || 'Solicitud de actualizacion enviada a ACSM.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible solicitar la actualizacion')
+    } finally {
+      setRequestingUpdate(false)
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_85%_10%,rgba(56,126,195,0.25),transparent_26rem),linear-gradient(135deg,#081321_0%,#0d2139_55%,#17212e_100%)] px-4 py-8 text-acsm-ink">
       <div className="mx-auto max-w-5xl space-y-5">
-        <header className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-white/15 bg-white/10 px-5 py-4 text-white shadow-panel backdrop-blur">
+        <header className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-sky-200/80 bg-gradient-to-r from-white via-sky-50 to-slate-100 px-5 py-4 text-slate-950 shadow-panel">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/20 bg-white/10">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-sky-200 bg-white text-sky-700 shadow-sm">
               <Building2 className="h-6 w-6" aria-hidden="true" />
             </div>
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-sky-200">
+              <p className="text-xs font-bold uppercase tracking-[0.24em] text-sky-600">
                 Portal de proveedores
               </p>
               <h1 className="text-xl font-bold">{brand.appName}</h1>
             </div>
           </div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/40 bg-emerald-400/10 px-3 py-2 text-sm font-semibold text-emerald-100">
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
             <ShieldCheck className="h-4 w-4" aria-hidden="true" />
             Carga segura
           </div>
@@ -221,48 +245,78 @@ export default function SupplierQuotePortalPage() {
               <div className="overflow-hidden rounded-[24px] border border-acsm-line bg-white shadow-panel">
                 <div className="border-b border-acsm-line bg-acsm-paper px-5 py-4">
                   <h2 className="font-bold">Cargar cotizacion</h2>
-                  <p className="text-sm text-acsm-muted">
-                    Se aceptan PDF, XLS y XLSX. Maximo 15 MB. Archivos con macros, scripts o vinculos externos se rechazan.
-                  </p>
+                  {hasExistingUpload ? (
+                    <p className="text-sm text-acsm-muted">
+                      Ya recibimos una cotizacion para esta solicitud. Para reemplazarla, solicita autorizacion a ACSM.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-acsm-muted">
+                      Se aceptan PDF, XLS y XLSX. Maximo 15 MB. Archivos con macros, scripts o vinculos externos se rechazan.
+                    </p>
+                  )}
                 </div>
-                <div className="space-y-4 p-5">
-                  <label className="block text-sm font-semibold">
-                    Folio de cotizacion
-                    <input
-                      value={quoteNumber}
-                      onChange={(event) => setQuoteNumber(event.target.value)}
-                      placeholder="Ej. COT-2026-001"
-                      className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
-                    />
-                  </label>
-                  <label className="block text-sm font-semibold">
-                    Archivo
-                    <input
-                      type="file"
-                      accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                      onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                      className="mt-1 w-full rounded-md border border-acsm-line px-3 py-2"
-                    />
-                  </label>
-                  <label className="block text-sm font-semibold">
-                    Notas
-                    <textarea
-                      value={notes}
-                      onChange={(event) => setNotes(event.target.value)}
-                      placeholder="Comentarios opcionales para ACSM"
-                      className="mt-1 min-h-24 w-full rounded-md border border-acsm-line px-3 py-2"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => void submitUpload()}
-                    disabled={submitting || !file}
-                    className="inline-flex h-11 items-center gap-2 rounded-md bg-acsm-green px-5 text-sm font-bold text-white hover:bg-acsm-green-hover disabled:opacity-60"
-                  >
-                    <FileUp className="h-4 w-4" aria-hidden="true" />
-                    {submitting ? 'Cargando...' : 'Cargar cotizacion'}
-                  </button>
-                </div>
+                {hasExistingUpload ? (
+                  <div className="space-y-4 p-5">
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                      <div className="flex items-start gap-2">
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+                        <div>
+                          <p className="font-bold">Cotizacion recibida</p>
+                          <p>ACSM ya puede revisar el documento cargado. No se permiten cargas duplicadas desde esta liga.</p>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void requestUpdate()}
+                      disabled={requestingUpdate}
+                      className="inline-flex h-11 items-center gap-2 rounded-md border border-sky-300 bg-white px-5 text-sm font-bold text-sky-800 hover:bg-sky-50 disabled:opacity-60"
+                    >
+                      <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                      {requestingUpdate ? 'Enviando solicitud...' : 'Solicitar actualizar cotizacion'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4 p-5">
+                    <label className="block text-sm font-semibold">
+                      Folio de cotizacion
+                      <input
+                        value={quoteNumber}
+                        onChange={(event) => setQuoteNumber(event.target.value)}
+                        placeholder="Ej. COT-2026-001"
+                        className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
+                      />
+                    </label>
+                    <label className="block text-sm font-semibold">
+                      Archivo
+                      <input
+                        key={fileInputKey}
+                        type="file"
+                        accept=".pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                        className="mt-1 w-full rounded-md border border-acsm-line px-3 py-2"
+                      />
+                    </label>
+                    <label className="block text-sm font-semibold">
+                      Notas
+                      <textarea
+                        value={notes}
+                        onChange={(event) => setNotes(event.target.value)}
+                        placeholder="Comentarios opcionales para ACSM"
+                        className="mt-1 min-h-24 w-full rounded-md border border-acsm-line px-3 py-2"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void submitUpload()}
+                      disabled={submitting || !file}
+                      className="inline-flex h-11 items-center gap-2 rounded-md bg-acsm-green px-5 text-sm font-bold text-white hover:bg-acsm-green-hover disabled:opacity-60"
+                    >
+                      <FileUp className="h-4 w-4" aria-hidden="true" />
+                      {submitting ? 'Cargando...' : 'Cargar cotizacion'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <aside className="overflow-hidden rounded-[24px] border border-acsm-line bg-white shadow-panel">

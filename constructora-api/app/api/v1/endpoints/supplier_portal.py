@@ -187,6 +187,18 @@ async def upload_supplier_quote_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> SupplierQuoteUpload:
+    link = _link_from_token(db, token)
+    if link.quote_uploads:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Esta cotizacion ya fue cargada. Solicita a ACSM habilitar una actualizacion "
+                "si necesitas reemplazar el archivo."
+            ),
+        )
+    if link.rfq.status in {"awarded", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La solicitud ya no recibe cotizaciones")
+
     max_bytes = settings.supplier_quote_upload_max_mb * 1024 * 1024
     content = await file.read(max_bytes + 1)
     if len(content) > max_bytes:
@@ -198,9 +210,6 @@ async def upload_supplier_quote_document(
     safe_name = _safe_filename(file.filename)
     extension, security_note = _validate_file(safe_name, content)
     file_hash = hashlib.sha256(content).hexdigest()
-    link = _link_from_token(db, token)
-    if link.rfq.status in {"awarded", "cancelled"}:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La solicitud ya no recibe cotizaciones")
 
     upload_dir = _upload_base_dir() / str(link.rfq.company_id) / link.rfq.rfq_number
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -256,3 +265,46 @@ async def upload_supplier_quote_document(
     except Exception:
         stored_path.unlink(missing_ok=True)
         raise
+
+
+@router.post("/quotes/{token}/request-update", status_code=status.HTTP_202_ACCEPTED)
+def request_supplier_quote_update(
+    token: str,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    link = _link_from_token(db, token)
+    if not link.quote_uploads:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aun no existe una cotizacion cargada para solicitar actualizacion",
+        )
+    if link.rfq.status in {"awarded", "cancelled"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La solicitud ya no recibe actualizaciones")
+
+    notify_permission(
+        db,
+        company_id=link.rfq.company_id,
+        module="supplier_quotes",
+        action="approve",
+        notification_type="supplier_quote_update_requested",
+        title="Proveedor solicita actualizar cotizacion",
+        body=(
+            f"{link.supplier.name if link.supplier else 'Proveedor'} solicita reemplazar la cotizacion "
+            f"cargada para {link.rfq.rfq_number}."
+        ),
+        category="warning",
+        priority="high",
+        source_module="compras",
+        entity_type="SupplierRFQSupplier",
+        entity_id=link.id,
+        entity_label=link.rfq.rfq_number,
+        action_url="/purchasing/approvals",
+        project_id=link.rfq.project_id,
+        metadata={
+            "rfq_id": link.rfq_id,
+            "supplier_id": link.supplier_id,
+            "uploads": len(link.quote_uploads),
+        },
+    )
+    db.commit()
+    return {"message": "Solicitud de actualizacion enviada a ACSM."}
