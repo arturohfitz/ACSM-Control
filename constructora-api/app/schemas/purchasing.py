@@ -223,6 +223,7 @@ class SupplierRFQCreate(BaseModel):
     items: list[SupplierRFQItemCreate] = Field(min_length=1)
     exception_request_id: int | None = None
     supplier_agreement_id: int | None = None
+    material_requisition_id: int | None = None
 
 
 class SupplierRFQUpdate(BaseModel):

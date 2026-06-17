@@ -100,6 +100,7 @@ const permissionModuleLabels: Record<string, string> = {
   projects: 'Desarrollos',
   house_models: 'Modelos',
   materials: 'Materiales',
+  material_requisitions: 'Requerimientos de obra',
   labor: 'Mano de obra',
   construction_concepts: 'Conceptos',
   quotes: 'Cotizaciones',
@@ -132,6 +133,8 @@ const permissionActionLabels: Record<string, string> = {
   view_profit: 'Ver utilidad',
   test_email: 'Probar correo',
   request_approval: 'Solicitar aprobacion',
+  review: 'Revisar',
+  convert_to_rfq: 'Convertir a cotizacion',
   use: 'Usar',
 }
 

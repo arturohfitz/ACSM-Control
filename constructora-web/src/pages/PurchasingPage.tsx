@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Check,
+  CircleDashed,
   ClipboardCheck,
+  Clock,
   Eye,
   FileText,
   Plus,
@@ -13,6 +15,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 
 import { API_BASE_URL, apiRequest, getStoredToken } from '../lib/api'
 import { showActionNotice, type ActionNoticeKind } from '../lib/actionNotice'
@@ -40,6 +43,35 @@ type UserSummary = {
   id: number
   full_name: string
   email: string
+}
+
+type MaterialRequisitionItem = {
+  id: number
+  material_id?: number | null
+  source_code?: string | null
+  description: string
+  unit: string
+  requested_quantity: string
+  approved_quantity?: string | null
+  status: string
+  notes?: string | null
+}
+
+type MaterialRequisition = {
+  id: number
+  project_id: number
+  client_id: number
+  house_model_id: number
+  converted_rfq_id?: number | null
+  requisition_number: string
+  title: string
+  status: string
+  priority: string
+  required_date?: string | null
+  created_at: string
+  notes?: string | null
+  requested_by?: UserSummary | null
+  items: MaterialRequisitionItem[]
 }
 
 type RFQItem = {
@@ -353,12 +385,213 @@ function statusLabel(status: string) {
     rejected: 'Rechazada',
     discarded: 'Descartada',
     approved: 'Aprobada',
+    converted_to_rfq: 'Convertida a cotizacion',
+    normal: 'Normal',
+    urgent: 'Urgente',
+    high: 'Alta',
+    low: 'Baja',
     issued: 'Emitida',
     partially_received: 'Parcial recibida',
     factured: 'Facturada',
     closed: 'Cerrada',
   }
   return labels[status] ?? status
+}
+
+type JourneyStepState = 'done' | 'current' | 'pending' | 'attention' | 'skipped'
+
+type PurchaseJourneyStep = {
+  key: string
+  label: string
+  detail: string
+  state: JourneyStepState
+}
+
+type PurchaseJourney = {
+  headline: string
+  nextAction: string
+  steps: PurchaseJourneyStep[]
+}
+
+const rfqSentStatuses = new Set(['sent', 'partially_quoted', 'quoted', 'approval_pending', 'awarded'])
+
+function completeQuoteRows(rows: ComparisonRow[]) {
+  return rows.filter((row) => row.complete_items === row.total_items && row.total_items > 0)
+}
+
+function normalizeJourneySteps(steps: PurchaseJourneyStep[]) {
+  const hasActiveStep = steps.some((step) => step.state === 'current' || step.state === 'attention')
+  if (hasActiveStep) return steps
+
+  const nextIndex = steps.findIndex((step) => step.state === 'pending')
+  if (nextIndex < 0) return steps
+
+  return steps.map((step, index) =>
+    index === nextIndex ? { ...step, state: 'current' as JourneyStepState } : step,
+  )
+}
+
+function buildPurchaseJourney({
+  rfq,
+  materialRequisitions,
+  comparison,
+  quoteUploads,
+  readyOrders,
+}: {
+  rfq: SupplierRFQ
+  materialRequisitions: MaterialRequisition[]
+  comparison: ComparisonRow[]
+  quoteUploads: SupplierQuoteUpload[]
+  readyOrders: PurchaseOrder[]
+}): PurchaseJourney {
+  const sourceRequisition = materialRequisitions.find((entry) => entry.converted_rfq_id === rfq.id)
+  const supplierCount = rfq.supplier_links.length
+  const quoteTarget = rfq.request_type === 'agreement' ? 1 : 3
+  const completedQuotes = completeQuoteRows(comparison)
+  const hasAnyQuote = comparison.length > 0 || quoteUploads.length > 0
+  const quotesCaptured = completedQuotes.length >= quoteTarget || ['quoted', 'approval_pending', 'awarded'].includes(rfq.status)
+  const approvalRequested =
+    rfq.status === 'approval_pending' || comparison.some((row) => row.status === 'approval_requested')
+  const approved = rfq.status === 'awarded' || comparison.some((row) => row.status === 'approved')
+  const hasOrderReady = approved && readyOrders.length > 0
+
+  const requestTypeText =
+    rfq.request_type === 'agreement'
+      ? 'Cotizacion directa por convenio'
+      : rfq.request_type === 'exception'
+        ? 'Excepcion autorizada'
+        : 'Terna de proveedores'
+
+  const steps: PurchaseJourneyStep[] = [
+    {
+      key: 'obra',
+      label: 'Origen',
+      detail: sourceRequisition
+        ? `Obra ${sourceRequisition.requisition_number}`
+        : 'Solicitud creada en Compras',
+      state: sourceRequisition ? 'done' : 'skipped',
+    },
+    {
+      key: 'solicitud',
+      label: 'Solicitud',
+      detail: `${rfq.rfq_number} registrada`,
+      state: 'done',
+    },
+    {
+      key: 'proveedores',
+      label: 'Proveedores',
+      detail: `${supplierCount} invitado(s) · ${requestTypeText}`,
+      state: supplierCount > 0 ? 'done' : 'attention',
+    },
+    {
+      key: 'envio',
+      label: 'Envio',
+      detail: rfqSentStatuses.has(rfq.status)
+        ? 'Correo o liga enviada'
+        : 'Pendiente de enviar al proveedor',
+      state: rfqSentStatuses.has(rfq.status) ? 'done' : 'current',
+    },
+    {
+      key: 'cotizaciones',
+      label: 'Cotizaciones',
+      detail: quotesCaptured
+        ? `${completedQuotes.length}/${quoteTarget} capturada(s)`
+        : hasAnyQuote
+          ? 'Documento recibido; falta capturar precios'
+          : 'Esperando respuesta del proveedor',
+      state: quotesCaptured ? 'done' : hasAnyQuote ? 'current' : 'pending',
+    },
+    {
+      key: 'comparativo',
+      label: 'Comparativo',
+      detail: comparison.length
+        ? `${completedQuotes.length}/${quoteTarget} lista(s) para revisar`
+        : 'Sin cotizaciones capturadas',
+      state: quotesCaptured ? 'done' : comparison.length ? 'attention' : 'pending',
+    },
+    {
+      key: 'aprobacion',
+      label: 'Aprobacion',
+      detail: approved
+        ? 'Gerencia aprobo proveedor'
+        : approvalRequested
+          ? 'En revision por gerencia'
+          : quotesCaptured
+            ? 'Lista para solicitar aprobacion'
+            : 'Pendiente de comparativo',
+      state: approved ? 'done' : approvalRequested ? 'current' : quotesCaptured ? 'current' : 'pending',
+    },
+    {
+      key: 'orden',
+      label: 'Orden de compra',
+      detail: hasOrderReady ? 'OC lista para enviar' : approved ? 'Genera o envia la OC' : 'Esperando aprobacion',
+      state: hasOrderReady ? 'current' : approved ? 'current' : 'pending',
+    },
+  ]
+
+  const nextAction =
+    supplierCount === 0
+      ? 'Selecciona proveedores para poder continuar.'
+      : !rfqSentStatuses.has(rfq.status)
+        ? 'Envia la solicitud para que el proveedor cargue su cotizacion.'
+        : !hasAnyQuote
+          ? 'Da seguimiento a la respuesta del proveedor.'
+          : !quotesCaptured
+            ? 'Captura precios y tiempos de entrega para completar el comparativo.'
+            : !approvalRequested && !approved
+              ? 'Solicita aprobacion a gerencia.'
+              : approvalRequested && !approved
+                ? 'Esperando decision de gerencia.'
+                : hasOrderReady
+                  ? 'Orden aprobada lista para enviar al proveedor.'
+                  : 'Proveedor aprobado; continua con la orden de compra.'
+
+  return {
+    headline: `${rfq.title} · ${statusLabel(rfq.status)}`,
+    nextAction,
+    steps: normalizeJourneySteps(steps),
+  }
+}
+
+function JourneyMarker({ state }: { state: JourneyStepState }) {
+  if (state === 'done') return <Check className="h-4 w-4" aria-hidden="true" />
+  if (state === 'current') return <Clock className="h-4 w-4" aria-hidden="true" />
+  if (state === 'attention') return <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+  return <CircleDashed className="h-4 w-4" aria-hidden="true" />
+}
+
+function PurchaseJourneyBar({ journey }: { journey: PurchaseJourney }) {
+  return (
+    <aside className="purchase-journey-panel">
+      <div className="purchase-journey-header">
+        <div>
+          <p className="purchase-journey-eyebrow">Ruta</p>
+          <h2>{journey.headline}</h2>
+          <p>{journey.nextAction}</p>
+        </div>
+        <span className="purchase-journey-pill">Proceso activo</span>
+      </div>
+      <ol className="purchase-journey-steps" aria-label="Estado del proceso de compra">
+        {journey.steps.map((step, index) => (
+          <li
+            key={step.key}
+            className={`purchase-journey-step is-${step.state}`}
+            title={`${String(index + 1).padStart(2, '0')} · ${step.label}: ${step.detail}`}
+            aria-current={step.state === 'current' || step.state === 'attention' ? 'step' : undefined}
+          >
+            <span className={`purchase-journey-marker is-${step.state}`}>
+              <JourneyMarker state={step.state} />
+            </span>
+            <div className="min-w-0">
+              <span className="purchase-journey-number">{String(index + 1).padStart(2, '0')}</span>
+              <h3>{step.label}</h3>
+              <p>{step.detail}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </aside>
+  )
 }
 
 const emptyItem: RFQDraftItem = {
@@ -371,6 +604,7 @@ const emptyItem: RFQDraftItem = {
 }
 
 export default function PurchasingPage() {
+  const [searchParams] = useSearchParams()
   const [projects, setProjects] = useState<Project[]>([])
   const [materials, setMaterials] = useState<Material[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -383,6 +617,7 @@ export default function PurchasingPage() {
   const [quoteUploads, setQuoteUploads] = useState<SupplierQuoteUpload[]>([])
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
+  const [materialRequisitions, setMaterialRequisitions] = useState<MaterialRequisition[]>([])
   const [selectedRfqId, setSelectedRfqId] = useState<number | null>(null)
   const [detailRfqId, setDetailRfqId] = useState<number | null>(null)
   const [message, setMessage] = useState('')
@@ -401,6 +636,8 @@ export default function PurchasingPage() {
   const [rfqDateTo, setRfqDateTo] = useState('')
   const [rfqSupplierFilter, setRfqSupplierFilter] = useState('')
   const [rfqBuyerFilter, setRfqBuyerFilter] = useState('')
+  const [materialRequisitionSearch, setMaterialRequisitionSearch] = useState('')
+  const [selectedMaterialRequisitionId, setSelectedMaterialRequisitionId] = useState<number | null>(null)
   const [items, setItems] = useState<RFQDraftItem[]>([{ ...emptyItem }])
 
   const [quoteSupplierId, setQuoteSupplierId] = useState('')
@@ -413,11 +650,19 @@ export default function PurchasingPage() {
   const [rfqExceptionOpen, setRfqExceptionOpen] = useState(false)
   const [rfqExceptionNotes, setRfqExceptionNotes] = useState('')
   const quoteCaptureRef = useRef<HTMLElement | null>(null)
+  const quoteUploadsRef = useRef<HTMLElement | null>(null)
+  const handledNotificationTargetRef = useRef('')
 
   const selectedRfq = useMemo(
     () => rfqs.find((rfq) => rfq.id === selectedRfqId) ?? rfqs[0],
     [rfqs, selectedRfqId],
   )
+  const notificationRfqId = useMemo(() => {
+    const rawId = searchParams.get('rfq_id')
+    const parsedId = rawId ? Number(rawId) : NaN
+    return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null
+  }, [searchParams])
+  const notificationFocus = searchParams.get('focus')
 
   function notifySuccess(text: string, kind: ActionNoticeKind = 'success') {
     setMessage(text)
@@ -500,6 +745,19 @@ export default function PurchasingPage() {
       ),
     [comparison],
   )
+  const purchaseJourney = useMemo(
+    () =>
+      selectedRfq
+        ? buildPurchaseJourney({
+            rfq: selectedRfq,
+            materialRequisitions,
+            comparison,
+            quoteUploads,
+            readyOrders,
+          })
+        : null,
+    [comparison, materialRequisitions, quoteUploads, readyOrders, selectedRfq],
+  )
   const selectedAgreement = useMemo(
     () =>
       eligibleAgreements.find(
@@ -514,6 +772,42 @@ export default function PurchasingPage() {
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === Number(projectId)) ?? null,
     [projectId, projects],
+  )
+  const projectNameById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.name])),
+    [projects],
+  )
+  const pendingMaterialRequisitions = useMemo(
+    () =>
+      materialRequisitions.filter(
+        (entry) => entry.status === 'approved' && !entry.converted_rfq_id,
+      ),
+    [materialRequisitions],
+  )
+  const filteredMaterialRequisitions = useMemo(() => {
+    const normalizedSearch = materialRequisitionSearch.trim().toLocaleLowerCase()
+    return pendingMaterialRequisitions.filter((entry) => {
+      if (!normalizedSearch) return true
+      return [
+        entry.requisition_number,
+        entry.title,
+        entry.notes ?? '',
+        projectNameById.get(entry.project_id) ?? '',
+        entry.requested_by?.full_name ?? '',
+        entry.requested_by?.email ?? '',
+      ]
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(normalizedSearch)
+    })
+  }, [materialRequisitionSearch, pendingMaterialRequisitions, projectNameById])
+  const activeMaterialRequisition = useMemo(
+    () => materialRequisitions.find((entry) => entry.id === selectedMaterialRequisitionId) ?? null,
+    [materialRequisitions, selectedMaterialRequisitionId],
+  )
+  const materialRequisitionsToShow = useMemo(
+    () => filteredMaterialRequisitions.filter((entry) => entry.id !== selectedMaterialRequisitionId),
+    [filteredMaterialRequisitions, selectedMaterialRequisitionId],
   )
   const selectedSupplierIdSet = useMemo(
     () => new Set(supplierIds.map(Number).filter(Boolean)),
@@ -721,6 +1015,7 @@ export default function PurchasingPage() {
         rfqData,
         exceptionData,
         orderData,
+        materialRequisitionData,
       ] = await Promise.all([
         apiRequest<Project[]>('/projects'),
         apiRequest<Material[]>('/materials'),
@@ -729,6 +1024,7 @@ export default function PurchasingPage() {
         apiRequest<SupplierRFQ[]>('/purchasing/supplier-rfqs'),
         apiRequest<SupplierRFQException[]>('/purchasing/supplier-rfq-exceptions?approval_status=all'),
         apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders?limit=250'),
+        apiRequest<MaterialRequisition[]>('/material-requisitions?status_filter=approved&limit=250'),
       ])
       setProjects(projectData)
       setMaterials(materialData)
@@ -737,6 +1033,7 @@ export default function PurchasingPage() {
       setRfqs(rfqData)
       setRfqExceptions(exceptionData)
       setOrders(orderData)
+      setMaterialRequisitions(materialRequisitionData)
       if (!projectId && projectData[0]) setProjectId(String(projectData[0].id))
       const nextId = nextSelectedRfqId ?? rfqData[0]?.id ?? null
       setSelectedRfqId(nextId)
@@ -770,7 +1067,7 @@ export default function PurchasingPage() {
   }
 
   useEffect(() => {
-    void loadData()
+    void loadData(notificationRfqId ?? undefined)
   }, [])
 
   function emptyQuoteRowsFor(rfq: SupplierRFQ | undefined) {
@@ -795,11 +1092,26 @@ export default function PurchasingPage() {
   }, [selectedRfq?.id])
 
   useEffect(() => {
+    if (notificationRfqId && rfqs.some((rfq) => rfq.id === notificationRfqId)) {
+      const targetKey = `${notificationRfqId}:${notificationFocus ?? ''}`
+      if (handledNotificationTargetRef.current !== targetKey) {
+        handledNotificationTargetRef.current = targetKey
+        setSelectedRfqId(notificationRfqId)
+        window.setTimeout(() => {
+          const targetRef = notificationFocus === 'uploads' ? quoteUploadsRef : quoteCaptureRef
+          targetRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }, 120)
+      }
+    }
+  }, [notificationFocus, notificationRfqId, rfqs])
+
+  useEffect(() => {
     if (!filteredRfqs.length) return
+    if (selectedRfqId && rfqs.some((rfq) => rfq.id === selectedRfqId)) return
     if (!selectedRfqId || !filteredRfqs.some((rfq) => rfq.id === selectedRfqId)) {
       setSelectedRfqId(filteredRfqs[0].id)
     }
-  }, [filteredRfqs, selectedRfqId])
+  }, [filteredRfqs, rfqs, selectedRfqId])
 
   useEffect(() => {
     if (!projectId) {
@@ -897,6 +1209,36 @@ export default function PurchasingPage() {
     notifySuccess(`Convenio seleccionado: ${agreement.name}.`, 'info')
   }
 
+  function loadRequisitionIntoRfq(requisition: MaterialRequisition) {
+    setSelectedMaterialRequisitionId(requisition.id)
+    setProjectId(String(requisition.project_id))
+    setTitle(requisition.title)
+    setRequiredBy(requisition.required_date?.slice(0, 10) ?? '')
+    setResponseDeadline('')
+    setSupplierIds([])
+    setSelectedAgreementId('')
+    setItems(
+      requisition.items.map((item) => {
+        const quantity = item.approved_quantity ?? item.requested_quantity ?? '0'
+        return {
+          material_id: item.material_id ? String(item.material_id) : '',
+          material_search: item.description,
+          description: item.description,
+          unit: item.unit,
+          quantity: String(Number(quantity) || quantity || '0'),
+          notes: item.notes ?? `Origen ${requisition.requisition_number}`,
+        }
+      }),
+    )
+    notifySuccess(`Requerimiento ${requisition.requisition_number} cargado para cotizar.`, 'info')
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 80)
+  }
+
+  function clearRequisitionOrigin() {
+    setSelectedMaterialRequisitionId(null)
+    notifySuccess('Origen de obra removido de la solicitud.', 'info')
+  }
+
   async function createRfq() {
     setError('')
     setMessage('')
@@ -915,6 +1257,7 @@ export default function PurchasingPage() {
           supplier_ids: supplierIds.map(Number),
           exception_request_id: selectedAgreement ? null : (approvedRfqException?.id ?? null),
           supplier_agreement_id: selectedAgreement?.id ?? null,
+          material_requisition_id: selectedMaterialRequisitionId,
           items: validRfqItems
             .map((item) => ({
               material_id: item.material_id ? Number(item.material_id) : null,
@@ -929,6 +1272,7 @@ export default function PurchasingPage() {
       setTitle('')
       setSupplierIds([])
       setSelectedAgreementId('')
+      setSelectedMaterialRequisitionId(null)
       setItems([{ ...emptyItem }])
       setRfqExceptionNotes('')
       await loadData(created.id)
@@ -1121,6 +1465,106 @@ export default function PurchasingPage() {
       )}
 
       <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-blue">
+              <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-acsm-muted">
+                Entrada de obra
+              </p>
+              <h2 className="font-semibold text-acsm-ink">Requerimientos de obra pendientes</h2>
+              <p className="text-xs text-acsm-muted">
+                Selecciona un requerimiento para cargarlo en la solicitud. Se cerrara al crear la cotizacion.
+              </p>
+            </div>
+          </div>
+          <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+            {activeMaterialRequisition ? '1 en captura' : `${materialRequisitionsToShow.length} pendientes`}
+          </span>
+        </div>
+        <div className="border-b border-acsm-line bg-acsm-paper/60 px-4 py-3">
+          <input
+            value={materialRequisitionSearch}
+            onChange={(event) => setMaterialRequisitionSearch(event.target.value)}
+            placeholder="Buscar folio, material, desarrollo o solicitante"
+            className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+          />
+        </div>
+        {activeMaterialRequisition ? (
+          <div className="border-b border-acsm-line bg-blue-50 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-blue-200 bg-white px-3 py-2">
+              <div>
+                <p className="text-xs font-bold uppercase text-blue-700">Cargado en la solicitud</p>
+                <p className="text-sm font-bold text-acsm-ink">
+                  {activeMaterialRequisition.title} · {activeMaterialRequisition.requisition_number}
+                </p>
+                <p className="text-xs text-acsm-muted">
+                  Ya se copio al formulario de cotizacion. Al crear la solicitud dejara de aparecer como pendiente.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={clearRequisitionOrigin}
+                className="inline-flex h-9 items-center rounded-md border border-blue-200 bg-blue-50 px-3 text-sm font-bold text-blue-700 hover:bg-blue-100"
+              >
+                Quitar de captura
+              </button>
+            </div>
+          </div>
+        ) : null}
+        <div className="max-h-[320px] divide-y divide-acsm-line overflow-y-auto">
+          {materialRequisitionsToShow.map((requisition) => (
+            <div
+              key={requisition.id}
+              className="grid gap-3 bg-white px-4 py-3 text-sm transition hover:bg-acsm-paper lg:grid-cols-[minmax(220px,0.9fr)_minmax(300px,1.3fr)_170px_190px]"
+            >
+              <div>
+                <p className="font-bold text-acsm-ink">{requisition.title}</p>
+                <p className="font-bold text-acsm-blue">{requisition.requisition_number}</p>
+                <span className="mt-2 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
+                  {statusLabel(requisition.status)}
+                </span>
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase text-acsm-muted">Desarrollo</p>
+                <p className="font-semibold text-acsm-ink">
+                  {projectNameById.get(requisition.project_id) ?? `Proyecto ${requisition.project_id}`}
+                </p>
+                <p className="text-xs text-acsm-muted">
+                  {requisition.items.length} partidas ·{' '}
+                  {requisition.requested_by?.full_name ?? 'Sin solicitante'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase text-acsm-muted">Requerida</p>
+                <p className="font-semibold text-acsm-ink">{formatDate(requisition.required_date)}</p>
+                <p className="text-xs text-acsm-muted">{statusLabel(requisition.priority)}</p>
+              </div>
+              <div className="flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => loadRequisitionIntoRfq(requisition)}
+                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-blue-200 bg-white px-3 text-sm font-bold text-acsm-blue hover:bg-blue-50"
+                >
+                  <Send className="h-4 w-4" aria-hidden="true" />
+                  Cargar a solicitud
+                </button>
+              </div>
+            </div>
+          ))}
+          {!materialRequisitionsToShow.length ? (
+            <div className="px-4 py-10 text-center text-sm text-acsm-muted">
+              {activeMaterialRequisition
+                ? 'No hay mas requerimientos pendientes. Termina la solicitud cargada o quitala de captura.'
+                : 'No hay requerimientos de obra pendientes para convertir en cotizacion.'}
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
         <div className="flex items-center justify-between border-b border-acsm-line px-4 py-3">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
@@ -1145,6 +1589,22 @@ export default function PurchasingPage() {
 
         <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-4">
+            {activeMaterialRequisition ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                <span>
+                  Origen de obra:{' '}
+                  <strong>{activeMaterialRequisition.requisition_number}</strong> ·{' '}
+                  {activeMaterialRequisition.title}
+                </span>
+                <button
+                  type="button"
+                  onClick={clearRequisitionOrigin}
+                  className="inline-flex h-8 items-center rounded-md border border-blue-200 bg-white px-3 text-xs font-bold text-blue-700 hover:bg-blue-50"
+                >
+                  Quitar origen
+                </button>
+              </div>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-2">
               <label className="text-sm font-semibold text-acsm-ink">
                 Desarrollo
@@ -1592,10 +2052,13 @@ export default function PurchasingPage() {
           </div>
         </div>
 
+        <div className={purchaseJourney ? 'purchase-workflow-shell' : 'purchase-workflow-shell without-journey'}>
+          {purchaseJourney && <PurchaseJourneyBar journey={purchaseJourney} />}
+          <div className="purchase-workflow-content">
         {selectedRfq && (
           <section
             ref={quoteCaptureRef}
-            className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel"
+            className="purchase-capture-section overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel"
           >
             <div className="border-b border-acsm-line px-5 py-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1730,7 +2193,10 @@ export default function PurchasingPage() {
         )}
 
         {selectedRfq && (
-          <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
+          <section
+            ref={quoteUploadsRef}
+            className="purchase-documents-section overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel"
+          >
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-gradient-to-r from-white to-sky-50 px-5 py-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-acsm-line bg-acsm-paper text-acsm-green">
@@ -1898,7 +2364,6 @@ export default function PurchasingPage() {
             </table>
           </div>
         </section>
-      </section>
 
       <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-gradient-to-r from-white to-sky-50 px-5 py-4">
@@ -1967,6 +2432,9 @@ export default function PurchasingPage() {
               )}
             </tbody>
           </table>
+        </div>
+      </section>
+          </div>
         </div>
       </section>
 

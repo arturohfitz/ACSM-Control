@@ -19,6 +19,7 @@ from app.models import (
     ExpectedMaterialList,
     HouseModel,
     Material,
+    MaterialRequisition,
     Project,
     ProjectHouseModel,
     ProjectWarehouse,
@@ -197,6 +198,7 @@ def _rfq_exception_snapshot(payload: SupplierRFQCreate | SupplierRFQExceptionCre
         exclude={
             "exception_request_id",
             "supplier_agreement_id",
+            "material_requisition_id",
             "request_notes",
             "rfq_number",
             "notes",
@@ -976,6 +978,31 @@ def create_supplier_rfq(
     supplier_count = len({supplier.id for supplier in suppliers})
     approved_exception: SupplierRFQExceptionRequest | None = None
     supplier_agreement: SupplierAgreement | None = None
+    material_requisition: MaterialRequisition | None = None
+    if payload.material_requisition_id is not None:
+        material_requisition = db.scalar(
+            select(MaterialRequisition)
+            .where(MaterialRequisition.id == payload.material_requisition_id)
+            .options(selectinload(MaterialRequisition.items))
+        )
+        if material_requisition is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requerimiento no encontrado")
+        ensure_same_company(current_user, material_requisition, db=db)
+        if material_requisition.status != "approved":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El requerimiento de obra debe estar aprobado para enviarlo a cotizacion",
+            )
+        if material_requisition.converted_rfq_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El requerimiento de obra ya fue convertido a solicitud de cotizacion",
+            )
+        if material_requisition.project_id != project.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El requerimiento de obra no pertenece al desarrollo seleccionado",
+            )
     if payload.supplier_agreement_id is not None:
         if not user_has_permission(current_user, "supplier_agreements", "use"):
             raise HTTPException(
@@ -1007,7 +1034,11 @@ def create_supplier_rfq(
         rfq_number=payload.rfq_number
         or _next_number(db, SupplierRFQ, "rfq_number", "SC", project.company_id),
         title=payload.title,
-        request_type="agreement" if supplier_agreement else ("exception" if approved_exception else "standard"),
+        request_type=(
+            "agreement"
+            if supplier_agreement
+            else ("exception" if approved_exception else ("work_requisition" if material_requisition else "standard"))
+        ),
         supplier_agreement_id=supplier_agreement.id if supplier_agreement else None,
         required_by=payload.required_by,
         response_deadline=payload.response_deadline,
@@ -1016,17 +1047,27 @@ def create_supplier_rfq(
     )
     db.add(rfq)
     db.flush()
+    created_items: list[SupplierRFQItem] = []
     for item in payload.items:
         if item.material_id is not None:
             material = get_or_404(db, Material, item.material_id)
             ensure_same_company(current_user, material, db=db)
-        db.add(SupplierRFQItem(rfq_id=rfq.id, **item.model_dump()))
+        rfq_item = SupplierRFQItem(rfq_id=rfq.id, **item.model_dump())
+        db.add(rfq_item)
+        db.flush()
+        created_items.append(rfq_item)
     for supplier in suppliers:
         db.add(SupplierRFQSupplier(rfq_id=rfq.id, supplier_id=supplier.id))
     if approved_exception is not None:
         approved_exception.status = "used"
         approved_exception.rfq_id = rfq.id
         approved_exception.used_at = _now()
+    if material_requisition is not None:
+        material_requisition.status = "converted_to_rfq"
+        material_requisition.converted_rfq_id = rfq.id
+        for requisition_item, rfq_item in zip(material_requisition.items, created_items):
+            requisition_item.status = "converted"
+            requisition_item.supplier_rfq_item_id = rfq_item.id
     db.commit()
     rfq = db.scalar(
         select(SupplierRFQ)
@@ -1061,8 +1102,30 @@ def create_supplier_rfq(
             "errores": error_count,
             "request_type": rfq.request_type,
             "supplier_agreement_id": rfq.supplier_agreement_id,
+            "material_requisition_id": material_requisition.id if material_requisition else None,
         },
     )
+    if material_requisition is not None and material_requisition.requested_by_user_id is not None:
+        notify_user_id(
+            db,
+            user_id=material_requisition.requested_by_user_id,
+            company_id=rfq.company_id,
+            notification_type="material_requisition_converted",
+            title="Requerimiento enviado a cotizar",
+            body=(
+                f"Compras convirtio {material_requisition.requisition_number} "
+                f"en la solicitud {rfq.rfq_number}."
+            ),
+            category="info",
+            priority="normal",
+            source_module="compras",
+            entity_type="SupplierRFQ",
+            entity_id=rfq.id,
+            entity_label=rfq.rfq_number,
+            action_url="/purchasing",
+            project_id=rfq.project_id,
+            metadata={"material_requisition_id": material_requisition.id},
+        )
     if supplier_agreement is not None:
         notify_permission(
             db,

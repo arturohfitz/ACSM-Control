@@ -302,3 +302,227 @@ thead.bg-acsm-paper {
   border-color: var(--acsm-panel-border-soft) !important;
   background-image: linear-gradient(180deg, #ffffff 0%, #f5f9fd 100%) !important;
 }
+
+.purchase-workflow-shell {
+  display: grid;
+  grid-template-columns: minmax(178px, 208px) minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.purchase-workflow-shell.without-journey {
+  display: block;
+}
+
+.purchase-workflow-content {
+  min-width: 0;
+  display: grid;
+  gap: 20px;
+}
+
+.purchase-documents-section {
+  order: -20;
+}
+
+.purchase-capture-section {
+  order: -10;
+}
+
+.purchase-journey-panel {
+  position: sticky;
+  top: 92px;
+  z-index: 10;
+  overflow: hidden;
+  max-height: calc(100vh - 116px);
+  border: 1px solid #84b9e6;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(30, 144, 215, 0.13), transparent 11rem),
+    linear-gradient(180deg, rgba(247, 252, 255, 0.98) 0%, rgba(226, 240, 250, 0.98) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    0 20px 44px rgba(3, 18, 34, 0.26),
+    0 8px 20px rgba(24, 86, 138, 0.15);
+}
+
+.purchase-journey-header {
+  border-bottom: 1px solid #a3c7e4;
+  padding: 14px 14px 12px;
+}
+
+.purchase-journey-eyebrow {
+  margin: 0 0 5px;
+  color: #426077;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.purchase-journey-header h2 {
+  margin: 0;
+  color: #102033;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.18;
+}
+
+.purchase-journey-header p:not(.purchase-journey-eyebrow) {
+  margin: 7px 0 0;
+  color: #4d647c;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.purchase-journey-pill {
+  display: inline-flex;
+  margin-top: 10px;
+  border: 1px solid #a6cff0;
+  border-radius: 999px;
+  background: #eef7ff;
+  padding: 4px 9px;
+  color: #075da2;
+  font-size: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.purchase-journey-steps {
+  position: relative;
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 10px 10px 12px;
+  list-style: none;
+}
+
+.purchase-journey-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 54px;
+  padding: 8px 8px 8px 6px;
+  border-radius: 14px;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.purchase-journey-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 36px;
+  bottom: -10px;
+  width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #82bee9 0%, #c2d7e9 100%);
+}
+
+.purchase-journey-step.is-current {
+  background: linear-gradient(180deg, #ffffff 0%, #eef8ff 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(19, 136, 208, 0.55),
+    0 10px 20px rgba(19, 136, 208, 0.14);
+}
+
+.purchase-journey-step.is-attention {
+  background: linear-gradient(180deg, #fffaf0 0%, #fff3d8 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(230, 167, 45, 0.58),
+    0 10px 20px rgba(172, 105, 0, 0.1);
+}
+
+.purchase-journey-step.is-pending,
+.purchase-journey-step.is-skipped {
+  opacity: 0.72;
+}
+
+.purchase-journey-marker {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid #b4cbe0;
+  background: #eef6fc;
+  color: #526b82;
+  box-shadow:
+    0 0 0 4px rgba(234, 245, 253, 0.98),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.purchase-journey-marker.is-done {
+  border-color: #0b81c5;
+  background: linear-gradient(180deg, #1aa3e4 0%, #056aa8 100%);
+  color: #ffffff;
+}
+
+.purchase-journey-marker.is-current {
+  border-color: #0b81c5;
+  background: #e7f6ff;
+  color: #056aa8;
+  box-shadow:
+    0 0 0 4px rgba(209, 235, 253, 0.98),
+    0 0 0 7px rgba(19, 136, 208, 0.16);
+}
+
+.purchase-journey-marker.is-attention {
+  border-color: #e6a72d;
+  background: #fff7df;
+  color: #9a5d00;
+}
+
+.purchase-journey-number {
+  display: block;
+  margin-bottom: 2px;
+  color: #647d94;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+}
+
+.purchase-journey-step h3 {
+  margin: 0;
+  color: #142134;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.purchase-journey-step p {
+  margin: 3px 0 0;
+  display: -webkit-box;
+  overflow: hidden;
+  color: #536b83;
+  font-size: 10px;
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@media (max-width: 1180px) {
+  .purchase-workflow-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-journey-panel {
+    position: relative;
+    top: auto;
+    max-height: none;
+  }
+
+  .purchase-journey-steps {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+  }
+
+  .purchase-journey-step:not(:last-child)::after {
+    display: none;
+  }
+}

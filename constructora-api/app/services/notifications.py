@@ -22,6 +22,16 @@ from app.services.tenancy import user_can_access_client_id
 
 
 OPEN_STATUSES = {"unread", "read"}
+ALLOWED_CATEGORIES = {"task", "deadline", "warning", "info", "exception"}
+ALLOWED_PRIORITIES = {"low", "normal", "high", "critical"}
+
+
+def _safe_category(value: str) -> str:
+    return value if value in ALLOWED_CATEGORIES else "info"
+
+
+def _safe_priority(value: str) -> str:
+    return value if value in ALLOWED_PRIORITIES else "normal"
 
 
 def now_utc() -> datetime:
@@ -91,6 +101,8 @@ def create_notification(
     metadata: dict | None = None,
     due_at: datetime | None = None,
 ) -> Notification | None:
+    category = _safe_category(category)
+    priority = _safe_priority(priority)
     if project_id is not None and client_id is None:
         client_id = db.scalar(select(Project.client_id).where(Project.id == project_id))
     entity_id_text = str(entity_id) if entity_id is not None else None

@@ -19,6 +19,7 @@ import {
 } from './pages/GenericResourcePage'
 import InventoryPage from './pages/InventoryPage'
 import LoginPage from './pages/LoginPage'
+import MaterialRequisitionsPage from './pages/MaterialRequisitionsPage'
 import ProjectsPage from './pages/ProjectsPage'
 import PurchasingApprovalsPage from './pages/PurchasingApprovalsPage'
 import PurchasingOrdersPage from './pages/PurchasingOrdersPage'
@@ -44,10 +45,15 @@ export default function App() {
           <Route path="/materials" element={<MaterialsPage />} />
           <Route path="/suppliers" element={<SuppliersPage />} />
           <Route path="/supplier-agreements" element={<SupplierAgreementsPage />} />
+          <Route path="/field-requisitions" element={<MaterialRequisitionsPage mode="field" />} />
           <Route path="/labor-rates" element={<LaborRatesPage />} />
           <Route path="/construction-concepts" element={<ConstructionConceptsPage />} />
           <Route path="/quotes" element={<QuotesPage />} />
           <Route path="/purchasing" element={<PurchasingPage />} />
+          <Route
+            path="/purchasing/material-requisitions"
+            element={<MaterialRequisitionsPage mode="purchasing" />}
+          />
           <Route path="/purchasing/approvals" element={<PurchasingApprovalsPage />} />
           <Route path="/purchasing/orders" element={<PurchasingOrdersPage />} />
           <Route path="/inventory" element={<Navigate to="/inventory/purchase-order-receiving" replace />} />

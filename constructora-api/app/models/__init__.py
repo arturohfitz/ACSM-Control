@@ -9,6 +9,7 @@ from app.models.inventory import (
     ProjectWarehouse,
     WarehouseStock,
 )
+from app.models.material_requisition import MaterialRequisition, MaterialRequisitionItem
 from app.models.business import (
     Client,
     ConceptLabor,
@@ -65,6 +66,8 @@ __all__ = [
     "MaterialReception",
     "MaterialReceptionItem",
     "Material",
+    "MaterialRequisition",
+    "MaterialRequisitionItem",
     "Notification",
     "Permission",
     "PurchaseOrder",

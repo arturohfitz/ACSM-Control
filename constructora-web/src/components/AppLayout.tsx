@@ -15,6 +15,7 @@ import {
   FolderKanban,
   Hammer,
   Handshake,
+  HardHat,
   Home,
   Layers3,
   LogOut,
@@ -45,6 +46,7 @@ const navItems = [
   { to: '/materials', label: 'Catalogo materiales', icon: Package, permission: 'materials:view' },
   { to: '/suppliers', label: 'Proveedores', icon: Store, permission: 'suppliers:view' },
   { to: '/supplier-agreements', label: 'Convenios', icon: Handshake, permission: 'supplier_agreements:view' },
+  { to: '/field-requisitions', label: 'Obra', icon: HardHat, permission: 'material_requisitions:create' },
   { to: '/labor-rates', label: 'Mano de obra', icon: Hammer, permission: 'labor:view' },
   {
     to: '/construction-concepts',
@@ -143,10 +145,12 @@ const titles: Record<string, string> = {
   '/materials': 'Catalogo de materiales',
   '/suppliers': 'Proveedores',
   '/supplier-agreements': 'Convenios de proveedores',
+  '/field-requisitions': 'Requerimientos de obra',
   '/labor-rates': 'Mano de obra',
   '/construction-concepts': 'Conceptos de obra',
   '/quotes': 'Cotizaciones',
   '/purchasing': 'Compras',
+  '/purchasing/material-requisitions': 'Requerimientos de obra',
   '/purchasing/approvals': 'Aprobaciones de compras',
   '/purchasing/orders': 'Ordenes de compra',
   '/inventory': 'Inventario',
@@ -222,6 +226,7 @@ export default function AppLayout() {
     open: 0,
   })
   const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [notificationsError, setNotificationsError] = useState('')
   const [actionNotice, setActionNotice] = useState<
     (Required<ActionNoticePayload> & { id: number }) | null
   >(null)
@@ -257,6 +262,7 @@ export default function AppLayout() {
 
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true)
+    setNotificationsError('')
     try {
       const [counts, items] = await Promise.all([
         apiRequest<NotificationCounts>('/notifications/counts'),
@@ -264,8 +270,11 @@ export default function AppLayout() {
       ])
       setNotificationCounts(counts)
       setNotifications(items)
-    } catch {
+    } catch (err) {
       setNotifications([])
+      setNotificationsError(
+        err instanceof Error ? err.message : 'No fue posible cargar las notificaciones',
+      )
     } finally {
       setNotificationsLoading(false)
     }
@@ -659,6 +668,20 @@ export default function AppLayout() {
               {notificationsLoading ? (
                 <div className="rounded-2xl border border-sky-100 bg-white px-4 py-5 text-sm text-acsm-muted">
                   Cargando notificaciones...
+                </div>
+              ) : notificationsError ? (
+                <div className="rounded-2xl border border-rose-100 bg-white px-4 py-5">
+                  <div className="font-bold text-rose-800">No se pudieron cargar las notificaciones</div>
+                  <p className="mt-1 text-sm leading-5 text-acsm-muted">
+                    {notificationsError}. Intenta recargar la bandeja para ver los pendientes reales.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void loadNotifications()}
+                    className="mt-4 inline-flex h-9 items-center rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-bold text-rose-800"
+                  >
+                    Reintentar
+                  </button>
                 </div>
               ) : notifications.length === 0 ? (
                 <div className="rounded-2xl border border-sky-100 bg-white px-4 py-6 text-center">

@@ -32,6 +32,8 @@ TABLES_TO_CLEAR = (
     "supplier_rfq_items",
     "supplier_rfq_exception_requests",
     "supplier_rfqs",
+    "material_requisition_items",
+    "material_requisitions",
     "quote_items",
     "quotes",
     "project_material_prices",
