@@ -1,7 +1,6 @@
 import ResourcePage from '../components/ResourcePage'
 import { resources } from '../config/resources'
 import HouseModelsByDeveloperPage from './HouseModelsByDeveloperPage'
-import QuoteTools from './QuoteTools'
 
 export function ClientsPage() {
   return <ResourcePage config={resources.clients} />
@@ -33,15 +32,6 @@ export function LaborRatesPage() {
 
 export function ConstructionConceptsPage() {
   return <ResourcePage config={resources.constructionConcepts} />
-}
-
-export function QuotesPage() {
-  return (
-    <>
-      <QuoteTools />
-      <ResourcePage config={resources.quotes} />
-    </>
-  )
 }
 
 export function UsersPage() {

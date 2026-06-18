@@ -112,7 +112,7 @@ export default function LoginPage() {
               Residencial
             </p>
             <h2 className="mt-4 text-4xl font-semibold leading-tight text-white">
-              Control operativo para proyectos, modelos y cotizaciones de obra.
+              Control operativo para proyectos, modelos, compras e inventario de obra.
             </h2>
           </div>
         </div>

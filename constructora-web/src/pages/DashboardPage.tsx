@@ -1,9 +1,9 @@
-import { Calculator, FolderKanban, Hammer, Package, Users } from 'lucide-react'
+import { FolderKanban, Hammer, Package, Store, Users } from 'lucide-react'
 
 const metrics = [
   { label: 'Desarrollos', value: '0', icon: FolderKanban },
-  { label: 'Cotizaciones', value: '0', icon: Calculator },
   { label: 'Materiales', value: '0', icon: Package },
+  { label: 'Proveedores', value: '0', icon: Store },
   { label: 'Mano de obra', value: '0', icon: Hammer },
   { label: 'Usuarios', value: '0', icon: Users },
 ]
@@ -29,7 +29,7 @@ export default function DashboardPage() {
             <h2 className="text-base font-semibold">Operacion inicial</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-acsm-muted">
               Captura inmobiliarias, desarrollos, modelos, conceptos, materiales y mano de obra
-              para calcular cotizaciones por desarrollo.
+              para alimentar compras, inventario y control operativo por desarrollo.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm">

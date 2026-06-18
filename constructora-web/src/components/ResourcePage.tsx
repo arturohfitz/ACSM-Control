@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { Check, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { Check, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
 import { apiRequest } from '../lib/api'
+import { showActionNotice } from '../lib/actionNotice'
+import FormDrawer from './FormDrawer'
 
 export type FieldType =
   | 'text'
@@ -45,6 +47,10 @@ export type ResourceConfig = {
   moduleLabel?: string
   createModuleLabel?: string
   editModuleLabel?: string
+  createLabel?: string
+  editLabel?: string
+  createdMessage?: string
+  updatedMessage?: string
   fields: FieldConfig[]
   createFields?: FieldConfig[]
   columns: string[]
@@ -103,7 +109,6 @@ const permissionModuleLabels: Record<string, string> = {
   material_requisitions: 'Requerimientos de obra',
   labor: 'Mano de obra',
   construction_concepts: 'Conceptos',
-  quotes: 'Cotizaciones',
   inventory: 'Inventario',
   suppliers: 'Proveedores',
   supplier_agreements: 'Convenios de proveedores',
@@ -154,6 +159,7 @@ function PermissionChecklist({
     return options.reduce<Record<string, { label: string; value: string }[]>>((current, option) => {
       const code = option.label.match(/\(([^)]+)\)$/)?.[1] ?? ''
       const moduleName = code.split(':')[0] || 'otros'
+      if (moduleName === 'quotes') return current
       current[moduleName] = [...(current[moduleName] ?? []), option]
       return current
     }, {})
@@ -279,7 +285,7 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [relationOptions, setRelationOptions] = useState<
     Record<string, { label: string; value: string }[]>
   >({})
@@ -335,7 +341,15 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
   function startCreate() {
     setEditing(null)
     setValues(emptyValues(config.createFields ?? config.fields))
-    setNotice('')
+    setError('')
+    setDrawerOpen(true)
+  }
+
+  function closeDrawer() {
+    if (saving) return
+    setDrawerOpen(false)
+    setEditing(null)
+    setValues(emptyValues(config.createFields ?? config.fields))
     setError('')
   }
 
@@ -354,7 +368,6 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
 
   async function startEdit(item: ResourceItem) {
     const needsFullRecord = editableFields.some((field) => field.valueFromItem)
-    setNotice('')
     setError('')
 
     let itemToEdit = item
@@ -371,13 +384,13 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
     setValues(
       valuesFromItem(itemToEdit),
     )
+    setDrawerOpen(true)
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSaving(true)
     setError('')
-    setNotice('')
     try {
       const currentFields = editing ? config.fields : config.createFields ?? config.fields
       const payload = payloadFromValues(currentFields, values)
@@ -386,15 +399,17 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
           method: 'PATCH',
           body: JSON.stringify(payload),
         })
-        setNotice('Registro actualizado')
+        showActionNotice(config.updatedMessage ?? 'Datos guardados')
       } else {
         await apiRequest(config.createEndpoint ?? config.endpoint, {
           method: 'POST',
           body: JSON.stringify(payload),
         })
-        setNotice('Registro creado')
+        showActionNotice(config.createdMessage ?? 'Datos guardados')
       }
-      startCreate()
+      setDrawerOpen(false)
+      setEditing(null)
+      setValues(emptyValues(config.createFields ?? config.fields))
       await loadItems()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible guardar')
@@ -408,10 +423,9 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
     if (!confirmed) return
 
     setError('')
-    setNotice('')
     try {
       await apiRequest(`${config.endpoint}/${item.id}`, { method: 'DELETE' })
-      setNotice('Registro eliminado')
+      showActionNotice('Registro eliminado', 'warning')
       await loadItems()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible eliminar')
@@ -435,33 +449,130 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
     return formatValue(value)
   }
 
+  const drawerTitle = editing
+    ? config.editLabel ?? `Editar ${config.title}`
+    : config.createLabel ?? `Nuevo ${config.title}`
+  const drawerDescription = editing
+    ? config.editModuleLabel ?? config.moduleLabel ?? config.title
+    : config.createModuleLabel ?? config.moduleLabel ?? config.title
+
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(320px,380px)_1fr]">
-      <section className="rounded-md border border-acsm-line bg-white p-4 shadow-panel">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold">{editing ? 'Editar' : 'Nuevo'}</h2>
-            <p className="text-sm text-acsm-muted">
-              {editing
-                ? config.editModuleLabel ?? config.moduleLabel ?? config.title
-                : config.createModuleLabel ?? config.moduleLabel ?? config.title}
-            </p>
-          </div>
-          {editing ? (
-            <button
-              type="button"
-              onClick={startCreate}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line text-acsm-muted hover:bg-acsm-paper"
-              title="Cancelar edicion"
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
-          ) : (
-            <Plus className="h-5 w-5 text-acsm-green" aria-hidden="true" />
-          )}
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={startCreate}
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover"
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          {config.createLabel ?? `Nuevo ${config.title}`}
+        </button>
+      </div>
+
+      <section className="min-w-0 overflow-hidden rounded-[24px] border border-acsm-line bg-white shadow-panel">
+        <div className="flex h-14 items-center justify-between gap-3 border-b border-acsm-line px-4">
+          <h2 className="text-base font-semibold">{config.title}</h2>
+          <button
+            type="button"
+            onClick={loadItems}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line text-acsm-muted hover:bg-acsm-paper"
+            title="Actualizar"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] border-collapse text-sm">
+            <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
+              <tr>
+                {config.columns.map((column) => (
+                  <th key={column} className="border-b border-acsm-line px-4 py-3 font-semibold">
+                    {columnLabel(column)}
+                  </th>
+                ))}
+                <th className="border-b border-acsm-line px-4 py-3 text-right font-semibold">
+                  Acciones
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={config.columns.length + 1} className="px-4 py-8 text-center text-acsm-muted">
+                    Cargando...
+                  </td>
+                </tr>
+              ) : items.length === 0 ? (
+                <tr>
+                  <td colSpan={config.columns.length + 1} className="px-4 py-8 text-center text-acsm-muted">
+                    Sin registros
+                  </td>
+                </tr>
+              ) : (
+                items.map((item) => (
+                  <tr key={item.id} className="border-b border-acsm-line last:border-0">
+                    {config.columns.map((column) => (
+                      <td key={column} className="max-w-[220px] truncate px-4 py-3">
+                        {columnValue(column, item[column])}
+                      </td>
+                    ))}
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(item)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-acsm-line text-acsm-muted hover:bg-acsm-paper"
+                          title="Editar"
+                        >
+                          <Pencil className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(item)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <FormDrawer
+        open={drawerOpen}
+        title={drawerTitle}
+        description={drawerDescription}
+        onClose={closeDrawer}
+        footer={
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={closeDrawer}
+              disabled={saving}
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-muted hover:bg-acsm-paper disabled:opacity-60"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="resource-drawer-form"
+              disabled={saving}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-acsm-green px-5 text-sm font-bold text-white hover:bg-acsm-green-hover disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              <Check className="h-4 w-4" aria-hidden="true" />
+              {saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Guardar'}
+            </button>
+          </div>
+        }
+      >
+        <form id="resource-drawer-form" onSubmit={handleSubmit} className="space-y-4">
           {formFields.map((field) => (
             <label key={field.name} className="block text-sm">
               <span className="mb-1.5 block font-medium text-acsm-ink">{field.label}</span>
@@ -550,98 +661,8 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
               {error}
             </div>
           ) : null}
-          {notice ? (
-            <div className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
-              {notice}
-            </div>
-          ) : null}
-
-          <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            <Check className="h-4 w-4" aria-hidden="true" />
-            {saving ? 'Guardando...' : editing ? 'Actualizar' : 'Crear'}
-          </button>
         </form>
-      </section>
-
-      <section className="min-w-0 rounded-md border border-acsm-line bg-white shadow-panel">
-        <div className="flex h-14 items-center justify-between gap-3 border-b border-acsm-line px-4">
-          <h2 className="text-base font-semibold">{config.title}</h2>
-          <button
-            type="button"
-            onClick={loadItems}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line text-acsm-muted hover:bg-acsm-paper"
-            title="Actualizar"
-          >
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-collapse text-sm">
-            <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
-              <tr>
-                {config.columns.map((column) => (
-                  <th key={column} className="border-b border-acsm-line px-4 py-3 font-semibold">
-                    {columnLabel(column)}
-                  </th>
-                ))}
-                <th className="border-b border-acsm-line px-4 py-3 text-right font-semibold">
-                  Acciones
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={config.columns.length + 1} className="px-4 py-8 text-center text-acsm-muted">
-                    Cargando...
-                  </td>
-                </tr>
-              ) : items.length === 0 ? (
-                <tr>
-                  <td colSpan={config.columns.length + 1} className="px-4 py-8 text-center text-acsm-muted">
-                    Sin registros
-                  </td>
-                </tr>
-              ) : (
-                items.map((item) => (
-                  <tr key={item.id} className="border-b border-acsm-line last:border-0">
-                    {config.columns.map((column) => (
-                      <td key={column} className="max-w-[220px] truncate px-4 py-3">
-                        {columnValue(column, item[column])}
-                      </td>
-                    ))}
-                    <td className="px-4 py-3">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => startEdit(item)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-acsm-line text-acsm-muted hover:bg-acsm-paper"
-                          title="Editar"
-                        >
-                          <Pencil className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDelete(item)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      </FormDrawer>
     </div>
   )
 }

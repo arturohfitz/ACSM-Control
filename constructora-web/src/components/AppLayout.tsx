@@ -6,7 +6,6 @@ import {
   Boxes,
   Building2,
   CheckCircle2,
-  Calculator,
   ChevronDown,
   Clock,
   ClipboardList,
@@ -54,7 +53,6 @@ const navItems = [
     icon: ClipboardList,
     permission: 'construction_concepts:view',
   },
-  { to: '/quotes', label: 'Cotizaciones', icon: Calculator, permission: 'quotes:view' },
   { to: '/purchasing', label: 'Compras', icon: ShoppingCart, permission: 'supplier_rfq:view' },
   { to: '/inventory', label: 'Inventario', icon: Warehouse, permission: 'inventory:view' },
   {
@@ -148,7 +146,6 @@ const titles: Record<string, string> = {
   '/field-requisitions': 'Requerimientos de obra',
   '/labor-rates': 'Mano de obra',
   '/construction-concepts': 'Conceptos de obra',
-  '/quotes': 'Cotizaciones',
   '/purchasing': 'Compras',
   '/purchasing/material-requisitions': 'Requerimientos de obra',
   '/purchasing/approvals': 'Aprobaciones de compras',

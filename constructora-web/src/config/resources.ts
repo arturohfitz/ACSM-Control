@@ -10,14 +10,6 @@ const projectStatus = [
   { label: 'Cancelado', value: 'cancelled' },
 ]
 
-const quoteStatus = [
-  { label: 'Borrador', value: 'draft' },
-  { label: 'Enviada', value: 'sent' },
-  { label: 'Aprobada', value: 'approved' },
-  { label: 'Rechazada', value: 'rejected' },
-  { label: 'Cancelada', value: 'cancelled' },
-]
-
 const supplySourceOptions = [
   { label: 'Constructora', value: 'constructor' },
   { label: 'Inmobiliaria', value: 'developer' },
@@ -43,6 +35,10 @@ export const resources: Record<string, ResourceConfig> = {
     endpoint: '/companies',
     createEndpoint: '/companies/onboard',
     permissionName: 'companies',
+    createLabel: 'Nueva constructora',
+    editLabel: 'Editar constructora',
+    createdMessage: 'Constructora creada correctamente',
+    updatedMessage: 'Constructora actualizada correctamente',
     createModuleLabel: 'Alta de licencia con administrador inicial',
     editModuleLabel: 'Datos de licencia',
     columns: ['id', 'name', 'plan_name', 'max_users', 'license_status', 'license_expires_at'],
@@ -109,6 +105,10 @@ export const resources: Record<string, ResourceConfig> = {
     title: 'Inmobiliarias',
     endpoint: '/clients',
     permissionName: 'clients',
+    createLabel: 'Nueva inmobiliaria',
+    editLabel: 'Editar inmobiliaria',
+    createdMessage: 'Inmobiliaria creada correctamente',
+    updatedMessage: 'Inmobiliaria actualizada correctamente',
     columns: ['id', 'name', 'legal_name', 'contact_name', 'contact_email'],
     columnLabels: {
       id: 'ID',
@@ -191,6 +191,10 @@ export const resources: Record<string, ResourceConfig> = {
     title: 'Tabulador del desarrollo',
     endpoint: '/project-material-prices',
     permissionName: 'materials',
+    createLabel: 'Nuevo precio de tabulador',
+    editLabel: 'Editar precio de tabulador',
+    createdMessage: 'Precio de tabulador guardado correctamente',
+    updatedMessage: 'Precio de tabulador actualizado correctamente',
     columns: [
       'id',
       'project_id',
@@ -247,6 +251,10 @@ export const resources: Record<string, ResourceConfig> = {
     title: 'Catalogo de materiales',
     endpoint: '/materials',
     permissionName: 'materials',
+    createLabel: 'Nuevo material',
+    editLabel: 'Editar material',
+    createdMessage: 'Material guardado correctamente',
+    updatedMessage: 'Material actualizado correctamente',
     columns: ['id', 'name', 'unit', 'current_unit_price', 'supplier_name', 'is_active'],
     columnLabels: {
       id: 'ID',
@@ -269,6 +277,10 @@ export const resources: Record<string, ResourceConfig> = {
     title: 'Proveedores',
     endpoint: '/purchasing/suppliers',
     permissionName: 'suppliers',
+    createLabel: 'Nuevo proveedor',
+    editLabel: 'Editar proveedor',
+    createdMessage: 'Proveedor guardado correctamente',
+    updatedMessage: 'Proveedor actualizado correctamente',
     columns: ['id', 'name', 'contact_name', 'contact_email', 'payment_terms_days', 'status'],
     columnLabels: {
       id: 'ID',
@@ -308,6 +320,10 @@ export const resources: Record<string, ResourceConfig> = {
     title: 'Mano de obra',
     endpoint: '/labor-rates',
     permissionName: 'labor',
+    createLabel: 'Nueva mano de obra',
+    editLabel: 'Editar mano de obra',
+    createdMessage: 'Mano de obra guardada correctamente',
+    updatedMessage: 'Mano de obra actualizada correctamente',
     columns: ['id', 'name', 'unit', 'unit_cost', 'performance_per_day', 'is_active'],
     columnLabels: {
       id: 'ID',
@@ -330,6 +346,10 @@ export const resources: Record<string, ResourceConfig> = {
     title: 'Conceptos de obra',
     endpoint: '/construction-concepts',
     permissionName: 'construction_concepts',
+    createLabel: 'Nuevo concepto',
+    editLabel: 'Editar concepto',
+    createdMessage: 'Concepto guardado correctamente',
+    updatedMessage: 'Concepto actualizado correctamente',
     columns: ['id', 'code', 'name', 'unit', 'default_waste_percent', 'default_indirect_percent'],
     columnLabels: {
       id: 'ID',
@@ -348,38 +368,14 @@ export const resources: Record<string, ResourceConfig> = {
       { name: 'default_indirect_percent', label: 'Indirecto', type: 'number', step: '0.0001' },
     ],
   },
-  quotes: {
-    title: 'Cotizaciones',
-    endpoint: '/quotes',
-    permissionName: 'quotes',
-    columns: ['id', 'project_id', 'quote_number', 'version', 'status', 'total_price'],
-    columnLabels: {
-      id: 'ID',
-      project_id: 'Desarrollo',
-      quote_number: 'Numero',
-      version: 'Version',
-      status: 'Estado',
-      total_price: 'Total',
-    },
-    fields: [
-      {
-        name: 'project_id',
-        label: 'Desarrollo',
-        type: 'number',
-        required: true,
-        relation: { endpoint: '/projects', labelField: 'name' },
-      },
-      { name: 'quote_number', label: 'Numero' },
-      { name: 'version', label: 'Version', type: 'number', required: true, defaultValue: '1' },
-      { name: 'status', label: 'Estado', type: 'select', options: quoteStatus, required: true, defaultValue: 'draft' },
-      { name: 'notes', label: 'Notas', type: 'textarea' },
-      { name: 'valid_until', label: 'Valida hasta', type: 'date' },
-    ],
-  },
   users: {
     title: 'Usuarios',
     endpoint: '/users',
     permissionName: 'users',
+    createLabel: 'Nuevo usuario',
+    editLabel: 'Editar usuario',
+    createdMessage: 'Usuario guardado correctamente',
+    updatedMessage: 'Usuario actualizado correctamente',
     columns: ['id', 'full_name', 'email', 'client_access_mode', 'is_active', 'is_master_admin'],
     columnLabels: {
       id: 'ID',
@@ -438,6 +434,10 @@ export const resources: Record<string, ResourceConfig> = {
     title: 'Roles',
     endpoint: '/roles',
     permissionName: 'roles',
+    createLabel: 'Nuevo rol',
+    editLabel: 'Editar rol',
+    createdMessage: 'Rol guardado correctamente',
+    updatedMessage: 'Rol actualizado correctamente',
     columns: ['id', 'company_id', 'name', 'description', 'is_system_role'],
     columnLabels: {
       id: 'ID',

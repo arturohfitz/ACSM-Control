@@ -9,11 +9,12 @@ import {
   RefreshCw,
   Trash2,
   UploadCloud,
-  X,
 } from 'lucide-react'
 
 import { useAuth } from '../auth/AuthContext'
 import { apiRequest } from '../lib/api'
+import { showActionNotice } from '../lib/actionNotice'
+import FormDrawer from '../components/FormDrawer'
 
 type Client = {
   id: number
@@ -348,7 +349,7 @@ function DocumentSummary({
   const bulkBusy = document ? actionBusyKey === `${document.document_type}:bulk` : false
 
   return (
-    <div className="overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_10px_24px_rgba(31,66,110,0.12)]">
+    <div className="overflow-hidden rounded-2xl border-2 border-[#8fb4d4] bg-white shadow-[0_10px_24px_rgba(31,66,110,0.12)]">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#8fb4d4] bg-[linear-gradient(180deg,#f8fbff_0%,#dfeaf5_100%)] px-4 py-3">
         <div>
           <h4 className="text-sm font-semibold text-acsm-ink">{title}</h4>
@@ -888,13 +889,13 @@ export default function HouseModelsByDeveloperPage() {
           method: 'PATCH',
           body: JSON.stringify(payload),
         })
-        setNotice('Modelo actualizado')
+        showActionNotice('Modelo actualizado correctamente')
       } else {
         await apiRequest('/house-models', {
           method: 'POST',
           body: JSON.stringify(payload),
         })
-        setNotice('Modelo creado')
+        showActionNotice('Modelo guardado correctamente')
       }
       setEditing(null)
       setForm(emptyForm)
@@ -1050,7 +1051,7 @@ export default function HouseModelsByDeveloperPage() {
   }
 
   return (
-    <section className="w-full overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_20px_50px_rgba(31,66,110,0.18)]">
+    <section className="w-full overflow-hidden rounded-[24px] border-2 border-[#8fb4d4] bg-white shadow-[0_20px_50px_rgba(31,66,110,0.18)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#8fb4d4] bg-[linear-gradient(180deg,#ffffff_0%,#e5f0f9_100%)] px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-acsm-green">
@@ -1125,7 +1126,7 @@ export default function HouseModelsByDeveloperPage() {
             })}
 
             {clients.length === 0 ? (
-              <div className="rounded-md border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-sm text-acsm-muted">
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-sm text-acsm-muted">
                 No hay inmobiliarias registradas.
               </div>
             ) : null}
@@ -1147,7 +1148,7 @@ export default function HouseModelsByDeveloperPage() {
                 </p>
               </div>
               <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-3">
-                <div className="rounded-md border border-[#aac5dc] bg-[#f8fbff] px-3 py-1.5 shadow-sm">
+                <div className="rounded-2xl border border-[#aac5dc] bg-[#f8fbff] px-3 py-1.5 shadow-sm">
                   <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                     Modelos
                   </div>
@@ -1155,7 +1156,7 @@ export default function HouseModelsByDeveloperPage() {
                     {selectedModels.length}
                   </div>
                 </div>
-                <div className="rounded-md border border-[#aac5dc] bg-[#f8fbff] px-3 py-1.5 shadow-sm">
+                <div className="rounded-2xl border border-[#aac5dc] bg-[#f8fbff] px-3 py-1.5 shadow-sm">
                   <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                     m2 promedio
                   </div>
@@ -1163,7 +1164,7 @@ export default function HouseModelsByDeveloperPage() {
                     {selectedModels.length ? formatNumber(totalM2 / selectedModels.length) : '-'}
                   </div>
                 </div>
-                <div className="rounded-md border border-[#aac5dc] bg-[#f8fbff] px-3 py-1.5 shadow-sm">
+                <div className="rounded-2xl border border-[#aac5dc] bg-[#f8fbff] px-3 py-1.5 shadow-sm">
                   <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                     m2 total
                   </div>
@@ -1177,7 +1178,7 @@ export default function HouseModelsByDeveloperPage() {
 
           <div className="p-5">
             <div className="space-y-4">
-            <div className="overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_10px_24px_rgba(31,66,110,0.12)]">
+            <div className="overflow-hidden rounded-2xl border-2 border-[#8fb4d4] bg-white shadow-[0_10px_24px_rgba(31,66,110,0.12)]">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#8fb4d4] bg-[#dfeaf5] px-3 py-2">
                 <div>
                   <h3 className="text-sm font-semibold text-acsm-ink">Modelos registrados</h3>
@@ -1192,7 +1193,7 @@ export default function HouseModelsByDeveloperPage() {
                     className="inline-flex h-8 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-acsm-ink hover:bg-slate-50"
                   >
                     <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                    Nuevo
+                    Nuevo modelo
                   </button>
                 ) : null}
               </div>
@@ -1275,25 +1276,25 @@ export default function HouseModelsByDeveloperPage() {
                         </div>
                       ) : null}
                       <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                        <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-1.5">
+                        <div className="rounded-2xl border border-[#aac5dc] bg-white px-3 py-1.5">
                           <div className="text-[10px] font-semibold uppercase text-acsm-muted">m2</div>
                           <div className="mt-0.5 font-semibold text-acsm-ink">
                             {formatNumber(model.construction_m2)}
                           </div>
                         </div>
-                        <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-1.5">
+                        <div className="rounded-2xl border border-[#aac5dc] bg-white px-3 py-1.5">
                           <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                             Niveles
                           </div>
                           <div className="mt-0.5 font-semibold text-acsm-ink">{model.levels ?? '-'}</div>
                         </div>
-                        <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-1.5">
+                        <div className="rounded-2xl border border-[#aac5dc] bg-white px-3 py-1.5">
                           <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                             Recamaras
                           </div>
                           <div className="mt-0.5 font-semibold text-acsm-ink">{model.bedrooms ?? '-'}</div>
                         </div>
-                        <div className="rounded-md border border-[#aac5dc] bg-white px-3 py-1.5">
+                        <div className="rounded-2xl border border-[#aac5dc] bg-white px-3 py-1.5">
                           <div className="text-[10px] font-semibold uppercase text-acsm-muted">Banos</div>
                           <div className="mt-0.5 font-semibold text-acsm-ink">
                             {formatNumber(model.bathrooms)}
@@ -1302,7 +1303,7 @@ export default function HouseModelsByDeveloperPage() {
                       </div>
                       {isSelectedModel ? (
                         <div className="mt-2 grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
-                          <div className="rounded-md border border-[#8fb4d4] bg-white px-3 py-1.5 shadow-sm">
+                          <div className="rounded-2xl border border-[#8fb4d4] bg-white px-3 py-1.5 shadow-sm">
                             <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                               Total explosion
                             </div>
@@ -1315,7 +1316,7 @@ export default function HouseModelsByDeveloperPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="rounded-md border border-[#8fb4d4] bg-white px-3 py-1.5 shadow-sm">
+                          <div className="rounded-2xl border border-[#8fb4d4] bg-white px-3 py-1.5 shadow-sm">
                             <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                               Total presupuesto
                             </div>
@@ -1328,7 +1329,7 @@ export default function HouseModelsByDeveloperPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="rounded-md border border-[#7ba8cc] bg-[#dfeaf5] px-3 py-1.5 shadow-sm">
+                          <div className="rounded-2xl border border-[#7ba8cc] bg-[#dfeaf5] px-3 py-1.5 shadow-sm">
                             <div className="text-[10px] font-semibold uppercase text-acsm-muted">
                               Total modelo
                             </div>
@@ -1352,7 +1353,7 @@ export default function HouseModelsByDeveloperPage() {
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-md border-2 border-[#8fb4d4] bg-white shadow-[0_10px_24px_rgba(31,66,110,0.12)]">
+            <div className="overflow-hidden rounded-2xl border-2 border-[#8fb4d4] bg-white shadow-[0_10px_24px_rgba(31,66,110,0.12)]">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#8fb4d4] bg-[#dfeaf5] px-3 py-3">
                 <div className="flex items-center gap-2">
                   <div className="flex h-8 w-8 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-[#0b7fbd]">
@@ -1375,7 +1376,7 @@ export default function HouseModelsByDeveloperPage() {
               </div>
 
               <div className="grid gap-3 border-b border-slate-200 bg-white p-3 lg:grid-cols-2">
-                <div className="rounded-md border border-dashed border-[#7ba8cc] bg-[#f6fbff] p-3">
+                <div className="rounded-2xl border border-dashed border-[#7ba8cc] bg-[#f6fbff] p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-semibold text-acsm-ink">
@@ -1410,7 +1411,7 @@ export default function HouseModelsByDeveloperPage() {
                   </div>
                 </div>
 
-                <div className="rounded-md border border-dashed border-[#7ba8cc] bg-[#f6fbff] p-3">
+                <div className="rounded-2xl border border-dashed border-[#7ba8cc] bg-[#f6fbff] p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-semibold text-acsm-ink">
@@ -1578,142 +1579,141 @@ export default function HouseModelsByDeveloperPage() {
         </div>
       </div>
 
-      {isModelFormOpen ? (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-slate-950/55 px-4 py-8 backdrop-blur-sm">
-          <aside className="w-full max-w-2xl rounded-md border border-blue-200 bg-white p-4 shadow-[0_24px_70px_rgba(2,22,45,0.35)]">
-              <div className="mb-3 -mx-3 -mt-3 flex items-center justify-between gap-3 border-b border-blue-100 bg-[#eef6ff] px-3 py-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-acsm-ink">
-                    {editing ? 'Editar modelo' : 'Nuevo modelo'}
-                  </h3>
-                  <p className="text-xs text-acsm-muted">
-                    {selectedClient?.name ?? 'Selecciona una inmobiliaria'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsModelFormOpen(false)
-                    setEditing(null)
-                    setForm(emptyForm)
-                    setError('')
-                  }}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-acsm-muted hover:bg-slate-50"
-                  title="Cerrar"
-                >
-                  <X className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
+      <FormDrawer
+        open={isModelFormOpen}
+        title={editing ? 'Editar modelo' : 'Nuevo modelo'}
+        description={selectedClient?.name ?? 'Selecciona una inmobiliaria'}
+        onClose={() => {
+          setIsModelFormOpen(false)
+          setEditing(null)
+          setForm(emptyForm)
+          setError('')
+        }}
+        footer={
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setIsModelFormOpen(false)
+                setEditing(null)
+                setForm(emptyForm)
+                setError('')
+              }}
+              disabled={saving}
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-muted hover:bg-acsm-paper disabled:opacity-60"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="house-model-drawer-form"
+              disabled={saving || !selectedClientId || (!canCreate && !editing) || (!canEdit && Boolean(editing))}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-acsm-green px-5 text-sm font-bold text-white hover:bg-acsm-green-hover disabled:opacity-60"
+            >
+              <Check className="h-4 w-4" aria-hidden="true" />
+              {saving ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+        }
+      >
+        <form id="house-model-drawer-form" onSubmit={handleSubmit} className="space-y-3">
+          <label className="block text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Nombre</span>
+            <input
+              value={form.name}
+              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              required
+              className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Descripcion</span>
+            <textarea
+              value={form.description}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, description: event.target.value }))
+              }
+              rows={3}
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-sm">
+              <span className="mb-1.5 block font-medium text-acsm-ink">m2</span>
+              <input
+                value={form.construction_m2}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, construction_m2: event.target.value }))
+                }
+                type="number"
+                min="0"
+                step="0.01"
+                required
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block font-medium text-acsm-ink">Niveles</span>
+              <input
+                value={form.levels}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, levels: event.target.value }))
+                }
+                type="number"
+                min="0"
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block font-medium text-acsm-ink">Recamaras</span>
+              <input
+                value={form.bedrooms}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, bedrooms: event.target.value }))
+                }
+                type="number"
+                min="0"
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block font-medium text-acsm-ink">Banos</span>
+              <input
+                value={form.bathrooms}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, bathrooms: event.target.value }))
+                }
+                type="number"
+                min="0"
+                step="0.5"
+                className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+              />
+            </label>
+          </div>
+          <label className="block text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Notas base</span>
+            <textarea
+              value={form.base_notes}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, base_notes: event.target.value }))
+              }
+              rows={3}
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+            />
+          </label>
 
-              <form onSubmit={handleSubmit} className="space-y-3">
-                <label className="block text-sm">
-                  <span className="mb-1.5 block font-medium text-acsm-ink">Nombre</span>
-                  <input
-                    value={form.name}
-                    onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                    required
-                    className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                  />
-                </label>
-                <label className="block text-sm">
-                  <span className="mb-1.5 block font-medium text-acsm-ink">Descripcion</span>
-                  <textarea
-                    value={form.description}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, description: event.target.value }))
-                    }
-                    rows={3}
-                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
-                  />
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="block text-sm">
-                    <span className="mb-1.5 block font-medium text-acsm-ink">m2</span>
-                    <input
-                      value={form.construction_m2}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, construction_m2: event.target.value }))
-                      }
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      required
-                      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-1.5 block font-medium text-acsm-ink">Niveles</span>
-                    <input
-                      value={form.levels}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, levels: event.target.value }))
-                      }
-                      type="number"
-                      min="0"
-                      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-1.5 block font-medium text-acsm-ink">Recamaras</span>
-                    <input
-                      value={form.bedrooms}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, bedrooms: event.target.value }))
-                      }
-                      type="number"
-                      min="0"
-                      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-1.5 block font-medium text-acsm-ink">Banos</span>
-                    <input
-                      value={form.bathrooms}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, bathrooms: event.target.value }))
-                      }
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                    />
-                  </label>
-                </div>
-                <label className="block text-sm">
-                  <span className="mb-1.5 block font-medium text-acsm-ink">Notas base</span>
-                  <textarea
-                    value={form.base_notes}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, base_notes: event.target.value }))
-                    }
-                    rows={3}
-                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
-                  />
-                </label>
-
-                {error ? (
-                  <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {error}
-                  </div>
-                ) : null}
-                {notice ? (
-                  <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-                    {notice}
-                  </div>
-                ) : null}
-
-                <button
-                  type="submit"
-                  disabled={saving || !selectedClientId || (!canCreate && !editing) || (!canEdit && Boolean(editing))}
-                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
-                >
-                  <Check className="h-4 w-4" aria-hidden="true" />
-                  {editing ? 'Actualizar modelo' : 'Crear modelo'}
-                </button>
-              </form>
-            </aside>
-        </div>
-      ) : null}
+          {error ? (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
+          {notice ? (
+            <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+              {notice}
+            </div>
+          ) : null}
+        </form>
+      </FormDrawer>
     </section>
   )
 }

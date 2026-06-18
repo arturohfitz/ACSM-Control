@@ -14,6 +14,7 @@ MaterialRequisitionStatus = Literal[
     "approved",
     "rejected",
     "converted_to_rfq",
+    "ordered_to_suppliers",
     "cancelled",
 ]
 MaterialRequisitionPriority = Literal["low", "normal", "high", "urgent"]

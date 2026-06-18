@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { Check, Link2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { Check, Link2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
+import FormDrawer from '../components/FormDrawer'
 
 type Client = {
   id: number
@@ -124,6 +125,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -210,12 +212,25 @@ export default function ProjectsPage() {
       client_id: clients[0] ? String(clients[0].id) : '',
     })
     setError('')
+    setDrawerOpen(true)
   }
 
   function startEdit(project: Project) {
     setEditingProject(project)
     setForm(formFromProject(project))
     setSelectedProjectId(project.id)
+    setError('')
+    setDrawerOpen(true)
+  }
+
+  function closeDrawer() {
+    if (saving) return
+    setDrawerOpen(false)
+    setEditingProject(null)
+    setForm({
+      ...emptyProjectForm,
+      client_id: clients[0] ? String(clients[0].id) : '',
+    })
     setError('')
   }
 
@@ -249,6 +264,7 @@ export default function ProjectsPage() {
         showActionNotice('Desarrollo creado')
       }
       setEditingProject(null)
+      setDrawerOpen(false)
       setForm({ ...emptyProjectForm, client_id: form.client_id })
       await loadData(nextId)
     } catch (err) {
@@ -314,136 +330,23 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="grid gap-5 2xl:grid-cols-[380px_minmax(0,1fr)]">
-      <section className="rounded-lg border border-acsm-line bg-white shadow-panel">
-        <div className="flex items-center justify-between border-b border-acsm-line px-4 py-4">
-          <div>
-            <h2 className="text-base font-semibold text-acsm-ink">
-              {editingProject ? 'Editar desarrollo' : 'Nuevo desarrollo'}
-            </h2>
-            <p className="text-sm text-acsm-muted">Contrato o etapa ligada a una inmobiliaria.</p>
-          </div>
-          {editingProject ? (
-            <button
-              type="button"
-              onClick={startCreate}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line text-acsm-muted hover:bg-acsm-paper"
-              title="Cancelar edicion"
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
-          ) : (
-            <Plus className="h-5 w-5 text-acsm-blue" aria-hidden="true" />
-          )}
+    <div className="space-y-5">
+      <button
+        type="button"
+        onClick={startCreate}
+        className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover"
+      >
+        <Plus className="h-4 w-4" aria-hidden="true" />
+        Nuevo desarrollo
+      </button>
+      {error && !drawerOpen ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          {error}
         </div>
-
-        <form onSubmit={saveProject} className="space-y-4 p-4">
-          <label className="block text-sm">
-            <span className="mb-1.5 block font-medium text-acsm-ink">Inmobiliaria</span>
-            <select
-              value={form.client_id}
-              onChange={(event) => setForm((current) => ({ ...current, client_id: event.target.value }))}
-              required
-              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
-            >
-              <option value="">Seleccionar</option>
-              {clients.map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1.5 block font-medium text-acsm-ink">Nombre del desarrollo</span>
-            <input
-              value={form.name}
-              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-              required
-              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1.5 block font-medium text-acsm-ink">Descripcion</span>
-            <textarea
-              value={form.description}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, description: event.target.value }))
-              }
-              rows={3}
-              className="w-full rounded-md border border-acsm-line bg-white px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1.5 block font-medium text-acsm-ink">Ubicacion</span>
-            <input
-              value={form.location}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, location: event.target.value }))
-              }
-              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
-            />
-          </label>
-          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-1">
-            <label className="block text-sm">
-              <span className="mb-1.5 block font-medium text-acsm-ink">Estado</span>
-              <select
-                value={form.status}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, status: event.target.value }))
-                }
-                className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
-              >
-                {statusOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1.5 block font-medium text-acsm-ink">Inicio</span>
-              <input
-                type="date"
-                value={form.start_date}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, start_date: event.target.value }))
-                }
-                className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
-              />
-            </label>
-            <label className="block text-sm sm:col-span-2 2xl:col-span-1">
-              <span className="mb-1.5 block font-medium text-acsm-ink">Fin estimado</span>
-              <input
-                type="date"
-                value={form.estimated_end_date}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, estimated_end_date: event.target.value }))
-                }
-                className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
-              />
-            </label>
-          </div>
-
-          {error ? (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
-            </div>
-          ) : null}
-
-          <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
-          >
-            <Check className="h-4 w-4" aria-hidden="true" />
-            {saving ? 'Guardando...' : editingProject ? 'Actualizar' : 'Crear'}
-          </button>
-        </form>
-      </section>
+      ) : null}
 
       <div className="space-y-5">
-        <section className="rounded-lg border border-acsm-line bg-white shadow-panel">
+        <section className="overflow-hidden rounded-[24px] border border-acsm-line bg-white shadow-panel">
           <div className="flex h-14 items-center justify-between gap-3 border-b border-acsm-line px-4">
             <div>
               <h2 className="text-base font-semibold text-acsm-ink">Desarrollos</h2>
@@ -540,7 +443,7 @@ export default function ProjectsPage() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-acsm-line bg-white shadow-panel">
+        <section className="overflow-hidden rounded-[24px] border border-acsm-line bg-white shadow-panel">
           <div className="border-b border-acsm-line px-4 py-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -555,19 +458,19 @@ export default function ProjectsPage() {
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-2 text-sm">
-                <div className="rounded-md border border-acsm-line bg-acsm-paper px-3 py-2">
+                <div className="rounded-2xl border border-acsm-line bg-acsm-paper px-3 py-2">
                   <span className="block text-[11px] font-bold uppercase text-acsm-muted">
                     Modelos
                   </span>
                   <span className="font-bold">{summary?.assigned_models.length ?? 0}</span>
                 </div>
-                <div className="rounded-md border border-acsm-line bg-acsm-paper px-3 py-2">
+                <div className="rounded-2xl border border-acsm-line bg-acsm-paper px-3 py-2">
                   <span className="block text-[11px] font-bold uppercase text-acsm-muted">
                     Viviendas
                   </span>
                   <span className="font-bold">{formatNumber(totalHouses)}</span>
                 </div>
-                <div className="rounded-md border border-acsm-line bg-acsm-paper px-3 py-2">
+                <div className="rounded-2xl border border-acsm-line bg-acsm-paper px-3 py-2">
                   <span className="block text-[11px] font-bold uppercase text-acsm-muted">
                     m2 total
                   </span>
@@ -578,7 +481,7 @@ export default function ProjectsPage() {
           </div>
 
           <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="rounded-md border border-acsm-line">
+            <div className="overflow-hidden rounded-2xl border border-acsm-line">
               <div className="border-b border-acsm-line bg-acsm-paper px-4 py-3">
                 <h3 className="font-semibold text-acsm-ink">Modelos asignados al desarrollo</h3>
                 <p className="text-xs text-acsm-muted">
@@ -641,9 +544,9 @@ export default function ProjectsPage() {
               </div>
             </div>
 
-            <form onSubmit={assignModel} className="rounded-md border border-acsm-line bg-acsm-paper p-4">
+            <form onSubmit={assignModel} className="rounded-2xl border border-acsm-line bg-acsm-paper p-4">
               <div className="mb-4 flex items-start gap-2">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-white text-acsm-blue">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-acsm-line bg-white text-acsm-blue">
                   <Link2 className="h-4 w-4" aria-hidden="true" />
                 </span>
                 <div>
@@ -684,11 +587,11 @@ export default function ProjectsPage() {
                 />
               </label>
               {!selectedProject ? (
-                <div className="mt-3 rounded-md border border-acsm-line bg-white px-3 py-2 text-xs text-acsm-muted">
+                <div className="mt-3 rounded-xl border border-acsm-line bg-white px-3 py-2 text-xs text-acsm-muted">
                   Selecciona un desarrollo para asignar modelos.
                 </div>
               ) : availableModels.length === 0 ? (
-                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                   No hay modelos disponibles para esta inmobiliaria o ya estan asignados.
                 </div>
               ) : null}
@@ -704,6 +607,129 @@ export default function ProjectsPage() {
           </div>
         </section>
       </div>
+
+      <FormDrawer
+        open={drawerOpen}
+        title={editingProject ? 'Editar desarrollo' : 'Nuevo desarrollo'}
+        description="Contrato o etapa ligada a una inmobiliaria."
+        onClose={closeDrawer}
+        footer={
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={closeDrawer}
+              disabled={saving}
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-muted hover:bg-acsm-paper disabled:opacity-60"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="project-drawer-form"
+              disabled={saving}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-acsm-green px-5 text-sm font-bold text-white hover:bg-acsm-green-hover disabled:opacity-60"
+            >
+              <Check className="h-4 w-4" aria-hidden="true" />
+              {saving ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+        }
+      >
+        <form id="project-drawer-form" onSubmit={saveProject} className="space-y-4">
+          <label className="block text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Inmobiliaria</span>
+            <select
+              value={form.client_id}
+              onChange={(event) => setForm((current) => ({ ...current, client_id: event.target.value }))}
+              required
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="">Seleccionar</option>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Nombre del desarrollo</span>
+            <input
+              value={form.name}
+              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              required
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Descripcion</span>
+            <textarea
+              value={form.description}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, description: event.target.value }))
+              }
+              rows={3}
+              className="w-full rounded-md border border-acsm-line bg-white px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Ubicacion</span>
+            <input
+              value={form.location}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, location: event.target.value }))
+              }
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm">
+              <span className="mb-1.5 block font-medium text-acsm-ink">Estado</span>
+              <select
+                value={form.status}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, status: event.target.value }))
+                }
+                className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+              >
+                {statusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block font-medium text-acsm-ink">Inicio</span>
+              <input
+                type="date"
+                value={form.start_date}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, start_date: event.target.value }))
+                }
+                className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+              />
+            </label>
+            <label className="block text-sm sm:col-span-2">
+              <span className="mb-1.5 block font-medium text-acsm-ink">Fin estimado</span>
+              <input
+                type="date"
+                value={form.estimated_end_date}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, estimated_end_date: event.target.value }))
+                }
+                className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+              />
+            </label>
+          </div>
+
+          {error ? (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
+        </form>
+      </FormDrawer>
     </div>
   )
 }

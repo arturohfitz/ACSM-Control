@@ -391,10 +391,10 @@ def convert_material_requisition_to_rfq(
     current_user: User = Depends(require_permission("material_requisitions", "convert_to_rfq")),
 ) -> MaterialRequisitionConvertResult:
     requisition = _get_requisition_for_user(db, requisition_id, current_user)
-    if requisition.status != "approved":
+    if requisition.status not in {"submitted", "in_review", "approved"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Solo puedes convertir requerimientos aprobados por Compras",
+            detail="Solo puedes convertir requerimientos pendientes o aprobados por Compras",
         )
     _ensure_unique_supplier_ids(payload.supplier_ids)
     project = _project_for_user(db, requisition.project_id, current_user)
@@ -433,6 +433,8 @@ def convert_material_requisition_to_rfq(
         )
         db.add(rfq_item)
         db.flush()
+        if item.approved_quantity is None:
+            item.approved_quantity = item.requested_quantity
         item.supplier_rfq_item_id = rfq_item.id
         item.status = "converted"
 
@@ -440,6 +442,9 @@ def convert_material_requisition_to_rfq(
         db.add(SupplierRFQSupplier(rfq_id=rfq.id, supplier_id=supplier.id))
 
     requisition.status = "converted_to_rfq"
+    if requisition.reviewed_by_user_id is None:
+        requisition.reviewed_by_user_id = current_user.id
+        requisition.reviewed_at = _now()
     requisition.converted_rfq_id = rfq.id
     db.flush()
     rfq = db.scalar(

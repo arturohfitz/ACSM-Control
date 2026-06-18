@@ -383,9 +383,12 @@ function statusLabel(status: string) {
     received: 'Recibida',
     approval_requested: 'Pendiente aprobacion',
     rejected: 'Rechazada',
+    submitted: 'Pendiente',
+    in_review: 'En revision',
     discarded: 'Descartada',
     approved: 'Aprobada',
     converted_to_rfq: 'Convertida a cotizacion',
+    ordered_to_suppliers: 'Compras realizo el pedido a proveedores',
     normal: 'Normal',
     urgent: 'Urgente',
     high: 'Alta',
@@ -780,7 +783,9 @@ export default function PurchasingPage() {
   const pendingMaterialRequisitions = useMemo(
     () =>
       materialRequisitions.filter(
-        (entry) => entry.status === 'approved' && !entry.converted_rfq_id,
+        (entry) =>
+          ['submitted', 'in_review', 'approved'].includes(entry.status) &&
+          !entry.converted_rfq_id,
       ),
     [materialRequisitions],
   )
@@ -1024,7 +1029,7 @@ export default function PurchasingPage() {
         apiRequest<SupplierRFQ[]>('/purchasing/supplier-rfqs'),
         apiRequest<SupplierRFQException[]>('/purchasing/supplier-rfq-exceptions?approval_status=all'),
         apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders?limit=250'),
-        apiRequest<MaterialRequisition[]>('/material-requisitions?status_filter=approved&limit=250'),
+        apiRequest<MaterialRequisition[]>('/material-requisitions?limit=250'),
       ])
       setProjects(projectData)
       setMaterials(materialData)

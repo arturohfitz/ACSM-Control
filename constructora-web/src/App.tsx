@@ -12,7 +12,6 @@ import {
   LaborRatesPage,
   MaterialsPage,
   ProjectMaterialPricesPage,
-  QuotesPage,
   RolesPage,
   SuppliersPage,
   UsersPage,
@@ -48,7 +47,6 @@ export default function App() {
           <Route path="/field-requisitions" element={<MaterialRequisitionsPage mode="field" />} />
           <Route path="/labor-rates" element={<LaborRatesPage />} />
           <Route path="/construction-concepts" element={<ConstructionConceptsPage />} />
-          <Route path="/quotes" element={<QuotesPage />} />
           <Route path="/purchasing" element={<PurchasingPage />} />
           <Route
             path="/purchasing/material-requisitions"

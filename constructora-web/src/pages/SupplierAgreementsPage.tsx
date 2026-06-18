@@ -3,6 +3,7 @@ import { Check, Handshake, Plus, RefreshCw } from 'lucide-react'
 
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
+import FormDrawer from '../components/FormDrawer'
 
 type Supplier = {
   id: number
@@ -79,6 +80,7 @@ export default function SupplierAgreementsPage() {
   const [agreementForm, setAgreementForm] = useState({ ...emptyAgreement })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   const selectedAgreement = useMemo(
     () => agreements.find((agreement) => agreement.id === selectedId) ?? agreements[0] ?? null,
@@ -134,6 +136,17 @@ export default function SupplierAgreementsPage() {
     })
   }
 
+  function startCreateAgreement() {
+    setAgreementForm({ ...emptyAgreement })
+    setError('')
+    setDrawerOpen(true)
+  }
+
+  function closeDrawer() {
+    setDrawerOpen(false)
+    setError('')
+  }
+
   async function createAgreement() {
     setError('')
     if (!agreementForm.supplier_id || !agreementForm.client_id || !agreementForm.house_model_id) {
@@ -165,6 +178,7 @@ export default function SupplierAgreementsPage() {
         }),
       })
       setAgreementForm({ ...emptyAgreement })
+      setDrawerOpen(false)
       showActionNotice('Convenio creado. Ya puede usarse para cotizacion directa.', 'success')
       await loadData(created.id)
     } catch (err) {
@@ -192,122 +206,27 @@ export default function SupplierAgreementsPage() {
               Marca proveedores con convenio por inmobiliaria y modelo. No requiere capturar materiales.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void loadData()}
-            className="inline-flex h-10 items-center gap-2 rounded-xl border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-ink hover:bg-acsm-paper"
-          >
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            Actualizar
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={startCreateAgreement}
+              className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Nuevo convenio
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadData()}
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-ink hover:bg-acsm-paper"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Actualizar
+            </button>
+          </div>
         </div>
 
-        <div className="grid gap-0 xl:grid-cols-[380px_minmax(360px,0.8fr)_minmax(0,1fr)]">
-          <aside className="border-r border-acsm-line bg-acsm-paper/70 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-acsm-ink">Nuevo convenio</h3>
-                <p className="text-xs text-acsm-muted">Proveedor, inmobiliaria y modelo.</p>
-              </div>
-              <Plus className="h-5 w-5 text-acsm-blue" aria-hidden="true" />
-            </div>
-            <div className="space-y-3">
-              <select
-                value={agreementForm.supplier_id}
-                onChange={(event) => updateAgreementField('supplier_id', event.target.value)}
-                className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
-              >
-                <option value="">Proveedor</option>
-                {suppliers.map((supplier) => (
-                  <option key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={agreementForm.client_id}
-                onChange={(event) => updateAgreementField('client_id', event.target.value)}
-                className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
-              >
-                <option value="">Inmobiliaria</option>
-                {clients.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={agreementForm.house_model_id}
-                onChange={(event) => updateAgreementField('house_model_id', event.target.value)}
-                className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
-              >
-                <option value="">Modelo de casa</option>
-                {filteredModels.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={agreementForm.name}
-                onChange={(event) => updateAgreementField('name', event.target.value)}
-                placeholder="Nombre del convenio opcional"
-                className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
-              />
-              <input
-                value={agreementForm.agreement_number}
-                onChange={(event) => updateAgreementField('agreement_number', event.target.value)}
-                placeholder="Referencia o folio opcional"
-                className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="date"
-                  value={agreementForm.valid_from}
-                  onChange={(event) => updateAgreementField('valid_from', event.target.value)}
-                  className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
-                />
-                <input
-                  type="date"
-                  value={agreementForm.valid_until}
-                  onChange={(event) => updateAgreementField('valid_until', event.target.value)}
-                  className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  value={agreementForm.payment_terms_days}
-                  onChange={(event) => updateAgreementField('payment_terms_days', event.target.value)}
-                  placeholder="Credito dias"
-                  className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
-                />
-                <input
-                  type="number"
-                  value={agreementForm.average_delivery_days}
-                  onChange={(event) => updateAgreementField('average_delivery_days', event.target.value)}
-                  placeholder="Entrega dias"
-                  className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
-                />
-              </div>
-              <textarea
-                value={agreementForm.notes}
-                onChange={(event) => updateAgreementField('notes', event.target.value)}
-                placeholder="Notas del convenio"
-                className="min-h-20 w-full rounded-xl border border-acsm-line bg-white px-3 py-2"
-              />
-              <button
-                type="button"
-                onClick={() => void createAgreement()}
-                disabled={loading}
-                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover disabled:opacity-60"
-              >
-                <Check className="h-4 w-4" aria-hidden="true" />
-                Crear convenio
-              </button>
-            </div>
-          </aside>
-
+        <div className="grid gap-0 xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1fr)]">
           <div className="border-r border-acsm-line bg-white">
             <div className="border-b border-acsm-line px-4 py-3">
               <h3 className="font-bold text-acsm-ink">Convenios registrados</h3>
@@ -412,6 +331,135 @@ export default function SupplierAgreementsPage() {
           </div>
         </div>
       </section>
+
+      <FormDrawer
+        open={drawerOpen}
+        title="Nuevo convenio"
+        description="Proveedor, inmobiliaria y modelo para cotizacion directa."
+        onClose={closeDrawer}
+        footer={
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={closeDrawer}
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-muted hover:bg-acsm-paper"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="agreement-drawer-form"
+              disabled={loading}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-acsm-green px-5 text-sm font-bold text-white hover:bg-acsm-green-hover disabled:opacity-60"
+            >
+              <Check className="h-4 w-4" aria-hidden="true" />
+              Guardar
+            </button>
+          </div>
+        }
+      >
+        <form
+          id="agreement-drawer-form"
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void createAgreement()
+          }}
+        >
+          <select
+            value={agreementForm.supplier_id}
+            onChange={(event) => updateAgreementField('supplier_id', event.target.value)}
+            className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+            required
+          >
+            <option value="">Proveedor</option>
+            {suppliers.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={agreementForm.client_id}
+            onChange={(event) => updateAgreementField('client_id', event.target.value)}
+            className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+            required
+          >
+            <option value="">Inmobiliaria</option>
+            {clients.map((client) => (
+              <option key={client.id} value={client.id}>
+                {client.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={agreementForm.house_model_id}
+            onChange={(event) => updateAgreementField('house_model_id', event.target.value)}
+            className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+            required
+          >
+            <option value="">Modelo de casa</option>
+            {filteredModels.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name}
+              </option>
+            ))}
+          </select>
+          <input
+            value={agreementForm.name}
+            onChange={(event) => updateAgreementField('name', event.target.value)}
+            placeholder="Nombre del convenio opcional"
+            className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+          />
+          <input
+            value={agreementForm.agreement_number}
+            onChange={(event) => updateAgreementField('agreement_number', event.target.value)}
+            placeholder="Referencia o folio opcional"
+            className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="date"
+              value={agreementForm.valid_from}
+              onChange={(event) => updateAgreementField('valid_from', event.target.value)}
+              className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+            />
+            <input
+              type="date"
+              value={agreementForm.valid_until}
+              onChange={(event) => updateAgreementField('valid_until', event.target.value)}
+              className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="number"
+              value={agreementForm.payment_terms_days}
+              onChange={(event) => updateAgreementField('payment_terms_days', event.target.value)}
+              placeholder="Credito dias"
+              className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+            />
+            <input
+              type="number"
+              value={agreementForm.average_delivery_days}
+              onChange={(event) => updateAgreementField('average_delivery_days', event.target.value)}
+              placeholder="Entrega dias"
+              className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+            />
+          </div>
+          <textarea
+            value={agreementForm.notes}
+            onChange={(event) => updateAgreementField('notes', event.target.value)}
+            placeholder="Notas del convenio"
+            className="min-h-24 w-full rounded-xl border border-acsm-line bg-white px-3 py-2"
+          />
+          {error ? (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
+        </form>
+      </FormDrawer>
     </div>
   )
 }

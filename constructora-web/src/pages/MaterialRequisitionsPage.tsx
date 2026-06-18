@@ -101,6 +101,7 @@ const statusLabels: Record<string, string> = {
   approved: 'Aprobado',
   rejected: 'Rechazado',
   converted_to_rfq: 'Convertido a cotizacion',
+  ordered_to_suppliers: 'Compras realizo el pedido a proveedores',
   cancelled: 'Cancelado',
 }
 
@@ -130,7 +131,7 @@ function formatNumber(value?: string | number | null) {
 }
 
 function statusClass(status: string) {
-  if (status === 'approved' || status === 'converted_to_rfq') {
+  if (status === 'approved' || status === 'converted_to_rfq' || status === 'ordered_to_suppliers') {
     return 'border-emerald-200 bg-emerald-50 text-emerald-800'
   }
   if (status === 'rejected' || status === 'cancelled') {
@@ -671,6 +672,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
 	                  <option value="submitted">Pendientes de revisar</option>
 	                  <option value="approved">Listos para cotizar</option>
 	                  <option value="converted_to_rfq">Convertidos a cotizacion</option>
+	                  <option value="ordered_to_suppliers">Pedido a proveedores</option>
 	                  <option value="rejected">Rechazados</option>
 	                </select>
                 <button

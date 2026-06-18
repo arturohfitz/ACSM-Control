@@ -988,10 +988,10 @@ def create_supplier_rfq(
         if material_requisition is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requerimiento no encontrado")
         ensure_same_company(current_user, material_requisition, db=db)
-        if material_requisition.status != "approved":
+        if material_requisition.status not in {"submitted", "in_review", "approved"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El requerimiento de obra debe estar aprobado para enviarlo a cotizacion",
+                detail="El requerimiento de obra debe estar pendiente o aprobado para enviarlo a cotizacion",
             )
         if material_requisition.converted_rfq_id is not None:
             raise HTTPException(
@@ -1064,8 +1064,13 @@ def create_supplier_rfq(
         approved_exception.used_at = _now()
     if material_requisition is not None:
         material_requisition.status = "converted_to_rfq"
+        if material_requisition.reviewed_by_user_id is None:
+            material_requisition.reviewed_by_user_id = current_user.id
+            material_requisition.reviewed_at = _now()
         material_requisition.converted_rfq_id = rfq.id
         for requisition_item, rfq_item in zip(material_requisition.items, created_items):
+            if requisition_item.approved_quantity is None:
+                requisition_item.approved_quantity = requisition_item.requested_quantity
             requisition_item.status = "converted"
             requisition_item.supplier_rfq_item_id = rfq_item.id
     db.commit()
@@ -1968,6 +1973,21 @@ def approve_supplier_quote(
     pending_approval.decided_by = current_user.id
     pending_approval.decided_at = _now()
     rfq.status = "awarded"
+    material_requisition = db.scalar(
+        select(MaterialRequisition)
+        .where(
+            MaterialRequisition.converted_rfq_id == rfq.id,
+            MaterialRequisition.company_id == rfq.company_id,
+        )
+        .options(selectinload(MaterialRequisition.items))
+    )
+    if material_requisition is not None:
+        material_requisition.status = "ordered_to_suppliers"
+        material_requisition.review_notes = (
+            f"Compras realizo el pedido a proveedores mediante {purchase_order.po_number}."
+        )
+        for requisition_item in material_requisition.items:
+            requisition_item.status = "ordered"
     for rfq_quote in rfq.quotes:
         if rfq_quote.id != quote.id and rfq_quote.status != "approved":
             rfq_quote.status = "discarded"
