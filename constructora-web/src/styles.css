@@ -329,6 +329,79 @@ thead.bg-acsm-paper {
     0 10px 22px rgba(18, 35, 49, 0.1);
 }
 
+.acsm-notification-focus-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  pointer-events: none;
+  background: rgba(3, 13, 25, 0.28);
+  backdrop-filter: blur(2.5px);
+  animation: acsm-focus-backdrop 2200ms ease forwards;
+}
+
+.acsm-notification-focus-target {
+  position: relative;
+  z-index: 46;
+  isolation: isolate;
+  animation: acsm-focus-target 2200ms ease forwards;
+}
+
+.acsm-notification-focus-target::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  border: 2px solid rgba(85, 177, 255, 0.82);
+  box-shadow:
+    0 0 0 6px rgba(124, 198, 255, 0.22),
+    0 0 42px rgba(60, 156, 235, 0.62),
+    0 24px 80px rgba(2, 17, 34, 0.36);
+  animation: acsm-focus-ring 2200ms ease forwards;
+}
+
+@keyframes acsm-focus-backdrop {
+  0%,
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes acsm-focus-target {
+  0% {
+    filter: brightness(1.18);
+    transform: translateY(-2px) scale(1.006);
+  }
+  58% {
+    filter: brightness(1.12);
+    transform: translateY(-2px) scale(1.004);
+  }
+  100% {
+    filter: brightness(1);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes acsm-focus-ring {
+  0% {
+    opacity: 0;
+    transform: scale(0.992);
+  }
+  12%,
+  72% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.006);
+  }
+}
+
 .purchase-workflow-shell {
   display: grid;
   grid-template-columns: minmax(178px, 208px) minmax(0, 1fr);

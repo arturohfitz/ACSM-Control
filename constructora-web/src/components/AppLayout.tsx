@@ -184,6 +184,38 @@ type NotificationCounts = {
   open: number
 }
 
+function focusForNotification(notification: NotificationItem) {
+  const hasExplicitFocus = notification.action_url?.includes('focus=') ?? false
+  if (hasExplicitFocus) return null
+
+  const focusByType: Record<string, string> = {
+    material_requisition_submitted: 'work-requisitions',
+    material_requisition_converted: 'rfq-list',
+    material_requisition_converted_to_rfq: 'rfq-list',
+    supplier_quote_document_uploaded: 'uploads',
+    supplier_quote_update_requested: 'uploads',
+    supplier_quote_approved: 'rfq-list',
+    supplier_quote_rejected: 'rfq-list',
+    purchase_order_ready_to_receive: 'receiving',
+    purchase_order_incomplete: 'receiving',
+    supplier_invoice_ready_to_pay: 'payments',
+    supplier_invoice_blocked: 'receiving',
+  }
+
+  return focusByType[notification.notification_type] ?? null
+}
+
+function notificationActionUrl(notification: NotificationItem) {
+  if (!notification.action_url) return null
+  const [path, query = ''] = notification.action_url.split('?')
+  const params = new URLSearchParams(query)
+  const focus = focusForNotification(notification)
+  if (focus && !params.has('focus')) params.set('focus', focus)
+  params.set('notification_id', String(notification.id))
+  const nextQuery = params.toString()
+  return nextQuery ? `${path}?${nextQuery}` : path
+}
+
 const priorityStyles: Record<NotificationItem['priority'], string> = {
   low: 'border-slate-200 bg-slate-50 text-slate-700',
   normal: 'border-sky-200 bg-sky-50 text-sky-800',
@@ -327,8 +359,9 @@ export default function AppLayout() {
     }
     setNotificationsOpen(false)
     await loadNotificationCounts()
-    if (notification.action_url) {
-      navigate(notification.action_url)
+    const targetUrl = notificationActionUrl(notification)
+    if (targetUrl) {
+      navigate(targetUrl)
     }
   }
 

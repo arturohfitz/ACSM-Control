@@ -240,6 +240,13 @@ type QuoteDraftItem = {
   delivery_days: string
 }
 
+type NotificationFocusTarget =
+  | 'work-requisitions'
+  | 'rfq-form'
+  | 'rfq-list'
+  | 'quote-capture'
+  | 'uploads'
+
 const money = new Intl.NumberFormat('es-MX', {
   style: 'currency',
   currency: 'MXN',
@@ -652,6 +659,10 @@ export default function PurchasingPage() {
   const [exceptionNotes, setExceptionNotes] = useState('')
   const [rfqExceptionOpen, setRfqExceptionOpen] = useState(false)
   const [rfqExceptionNotes, setRfqExceptionNotes] = useState('')
+  const [focusedPanel, setFocusedPanel] = useState<NotificationFocusTarget | null>(null)
+  const materialRequisitionRef = useRef<HTMLElement | null>(null)
+  const rfqFormRef = useRef<HTMLElement | null>(null)
+  const rfqListRef = useRef<HTMLDivElement | null>(null)
   const quoteCaptureRef = useRef<HTMLElement | null>(null)
   const quoteUploadsRef = useRef<HTMLElement | null>(null)
   const handledNotificationTargetRef = useRef('')
@@ -666,10 +677,21 @@ export default function PurchasingPage() {
     return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null
   }, [searchParams])
   const notificationFocus = searchParams.get('focus')
+  const notificationId = searchParams.get('notification_id')
 
   function notifySuccess(text: string, kind: ActionNoticeKind = 'success') {
     setMessage(text)
     showActionNotice(text, kind)
+  }
+  function focusClass(target: NotificationFocusTarget) {
+    return focusedPanel === target ? 'acsm-notification-focus-target' : ''
+  }
+
+  function spotlightPanel(target: NotificationFocusTarget, element: HTMLElement | null | undefined) {
+    if (!element) return
+    setFocusedPanel(target)
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    window.setTimeout(() => setFocusedPanel((current) => (current === target ? null : current)), 2200)
   }
   const detailRfq = useMemo(
     () => rfqs.find((rfq) => rfq.id === detailRfqId) ?? null,
@@ -1097,18 +1119,28 @@ export default function PurchasingPage() {
   }, [selectedRfq?.id])
 
   useEffect(() => {
-    if (notificationRfqId && rfqs.some((rfq) => rfq.id === notificationRfqId)) {
-      const targetKey = `${notificationRfqId}:${notificationFocus ?? ''}`
-      if (handledNotificationTargetRef.current !== targetKey) {
-        handledNotificationTargetRef.current = targetKey
-        setSelectedRfqId(notificationRfqId)
-        window.setTimeout(() => {
-          const targetRef = notificationFocus === 'uploads' ? quoteUploadsRef : quoteCaptureRef
-          targetRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }, 120)
-      }
+    if (!notificationFocus) return
+    const targetKey = `${notificationId ?? 'manual'}:${notificationRfqId ?? 'none'}:${notificationFocus}`
+    if (handledNotificationTargetRef.current === targetKey) return
+
+    const focusTargets: Record<string, { target: NotificationFocusTarget; ref: { current: HTMLElement | null } }> = {
+      'work-requisitions': { target: 'work-requisitions', ref: materialRequisitionRef },
+      'rfq-form': { target: 'rfq-form', ref: rfqFormRef },
+      'rfq-list': { target: 'rfq-list', ref: rfqListRef },
+      'quote-capture': { target: 'quote-capture', ref: quoteCaptureRef },
+      uploads: { target: 'uploads', ref: quoteUploadsRef },
     }
-  }, [notificationFocus, notificationRfqId, rfqs])
+    const focusTarget = focusTargets[notificationFocus] ?? focusTargets['rfq-form']
+
+    if (notificationRfqId && rfqs.some((rfq) => rfq.id === notificationRfqId)) {
+      setSelectedRfqId(notificationRfqId)
+    } else if (notificationRfqId) {
+      return
+    }
+
+    handledNotificationTargetRef.current = targetKey
+    window.setTimeout(() => spotlightPanel(focusTarget.target, focusTarget.ref.current), 160)
+  }, [notificationFocus, notificationId, notificationRfqId, rfqs])
 
   useEffect(() => {
     if (!filteredRfqs.length) return
@@ -1461,6 +1493,7 @@ export default function PurchasingPage() {
 
   return (
     <div className="space-y-5">
+      {focusedPanel ? <div className="acsm-notification-focus-backdrop" aria-hidden="true" /> : null}
       {error && (
         <div
           className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
@@ -1469,7 +1502,13 @@ export default function PurchasingPage() {
         </div>
       )}
 
-      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+      <section
+        ref={materialRequisitionRef}
+        className={[
+          'overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel',
+          focusClass('work-requisitions'),
+        ].join(' ')}
+      >
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-blue">
@@ -1569,7 +1608,13 @@ export default function PurchasingPage() {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+      <section
+        ref={rfqFormRef}
+        className={[
+          'overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel',
+          focusClass('rfq-form'),
+        ].join(' ')}
+      >
         <div className="flex items-center justify-between border-b border-acsm-line px-4 py-3">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
@@ -1882,7 +1927,13 @@ export default function PurchasingPage() {
       </section>
 
       <section className="space-y-5">
-        <div className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
+        <div
+          ref={rfqListRef}
+          className={[
+            'overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel',
+            focusClass('rfq-list'),
+          ].join(' ')}
+        >
           <div className="border-b border-acsm-line bg-gradient-to-r from-white to-sky-50 px-5 py-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -2063,7 +2114,10 @@ export default function PurchasingPage() {
         {selectedRfq && (
           <section
             ref={quoteCaptureRef}
-            className="purchase-capture-section overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel"
+            className={[
+              'purchase-capture-section overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel',
+              focusClass('quote-capture'),
+            ].join(' ')}
           >
             <div className="border-b border-acsm-line px-5 py-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2200,7 +2254,10 @@ export default function PurchasingPage() {
         {selectedRfq && (
           <section
             ref={quoteUploadsRef}
-            className="purchase-documents-section overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel"
+            className={[
+              'purchase-documents-section overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel',
+              focusClass('uploads'),
+            ].join(' ')}
           >
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-gradient-to-r from-white to-sky-50 px-5 py-4">
               <div className="flex items-center gap-3">
