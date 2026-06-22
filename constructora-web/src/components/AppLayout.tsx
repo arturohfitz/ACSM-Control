@@ -87,6 +87,15 @@ const purchasingSubItems = [
   },
 ]
 
+const workSubItems = [
+  {
+    to: '/field-requisitions',
+    label: 'Req. material de obra',
+    icon: ClipboardList,
+    permission: 'material_requisitions:create',
+  },
+]
+
 const inventorySubItems = [
   {
     to: '/inventory/purchase-order-receiving',
@@ -242,8 +251,10 @@ export default function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const title = titles[location.pathname] ?? 'ACSM Control'
+  const isWorkRoute = location.pathname.startsWith('/field-requisitions')
   const isPurchasingRoute = location.pathname.startsWith('/purchasing')
   const isInventoryRoute = location.pathname.startsWith('/inventory')
+  const [workOpen, setWorkOpen] = useState(isWorkRoute)
   const [purchasingOpen, setPurchasingOpen] = useState(isPurchasingRoute)
   const [inventoryOpen, setInventoryOpen] = useState(isInventoryRoute)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
@@ -257,6 +268,10 @@ export default function AppLayout() {
   const [actionNotice, setActionNotice] = useState<
     (Required<ActionNoticePayload> & { id: number }) | null
   >(null)
+  const visibleWorkSubItems = useMemo(
+    () => workSubItems.filter((item) => hasPermission(item.permission)),
+    [hasPermission],
+  )
   const visiblePurchasingSubItems = useMemo(
     () => purchasingSubItems.filter((item) => hasPermission(item.permission)),
     [hasPermission],
@@ -269,6 +284,10 @@ export default function AppLayout() {
     () => navItems.filter((item) => !item.permission || hasPermission(item.permission)),
     [hasPermission],
   )
+
+  useEffect(() => {
+    setWorkOpen(isWorkRoute)
+  }, [isWorkRoute])
 
   useEffect(() => {
     setPurchasingOpen(isPurchasingRoute)
@@ -397,10 +416,13 @@ export default function AppLayout() {
         <nav className="scrollbar-thin flex-1 space-y-2 overflow-y-auto px-3 py-5">
           {visibleNavItems.map((item) => {
             const Icon = item.icon
+            const hasWorkChildren = item.to === '/field-requisitions' && visibleWorkSubItems.length > 0
             const hasPurchasingChildren = item.to === '/purchasing' && visiblePurchasingSubItems.length > 0
             const hasInventoryChildren = item.to === '/inventory' && visibleInventorySubItems.length > 0
             const isModuleOpen =
-              (hasPurchasingChildren && purchasingOpen) || (hasInventoryChildren && inventoryOpen)
+              (hasWorkChildren && workOpen) ||
+              (hasPurchasingChildren && purchasingOpen) ||
+              (hasInventoryChildren && inventoryOpen)
 
             return (
               <div
@@ -418,6 +440,7 @@ export default function AppLayout() {
                   className={({ isActive }) => {
                     const isSectionActive =
                       isActive ||
+                      (item.to === '/field-requisitions' && isWorkRoute) ||
                       (item.to === '/purchasing' && isPurchasingRoute) ||
                       (item.to === '/inventory' && isInventoryRoute)
                     return [
@@ -432,11 +455,13 @@ export default function AppLayout() {
                     <Icon className="h-4 w-4" aria-hidden="true" />
                   </span>
                   <span className="truncate">{item.label}</span>
-                  {hasPurchasingChildren || hasInventoryChildren ? (
+                  {hasWorkChildren || hasPurchasingChildren || hasInventoryChildren ? (
                     <ChevronDown
                       className={[
                         'ml-auto h-4 w-4 shrink-0 opacity-80 transition-transform',
-                        (hasPurchasingChildren && purchasingOpen) || (hasInventoryChildren && inventoryOpen)
+                        (hasWorkChildren && workOpen) ||
+                        (hasPurchasingChildren && purchasingOpen) ||
+                        (hasInventoryChildren && inventoryOpen)
                           ? 'rotate-180'
                           : '',
                       ].join(' ')}
@@ -444,6 +469,34 @@ export default function AppLayout() {
                     />
                   ) : null}
                 </NavLink>
+                {hasWorkChildren ? (
+                  <div className="mt-1 space-y-1">
+                    {workOpen ? (
+                      <div className="space-y-1 border-l border-sky-200/20 pl-3">
+                        {visibleWorkSubItems.map((subItem) => (
+                          <NavLink
+                            key={subItem.to}
+                            to={subItem.to}
+                            end
+                            className={({ isActive }) =>
+                              [
+                                'group/sub relative flex min-h-10 items-center gap-3 overflow-hidden rounded-xl border px-3 py-2 text-[13px] font-semibold transition',
+                                isActive
+                                  ? 'border-cyan-200/70 bg-[linear-gradient(135deg,#1bb7e6_0%,#0a73b8_48%,#064a7d_100%)] text-white shadow-[0_14px_28px_rgba(7,126,190,0.38),inset_0_1px_0_rgba(255,255,255,0.30),inset_4px_0_0_rgba(209,246,255,0.88)]'
+                                  : 'border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.075),rgba(255,255,255,0.035))] text-slate-300 hover:border-cyan-200/35 hover:bg-white/12 hover:text-white',
+                              ].join(' ')
+                            }
+                          >
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/14 ring-1 ring-white/15 transition group-hover/sub:bg-white/20">
+                              <subItem.icon className="h-3.5 w-3.5" aria-hidden="true" />
+                            </span>
+                            <span className="truncate">{subItem.label}</span>
+                          </NavLink>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {hasPurchasingChildren ? (
                   <div className="mt-1 space-y-1">
                     {purchasingOpen ? (
