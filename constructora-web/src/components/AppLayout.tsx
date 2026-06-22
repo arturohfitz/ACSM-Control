@@ -457,14 +457,14 @@ export default function AppLayout() {
                             end={subItem.to === '/purchasing'}
                             className={({ isActive }) =>
                               [
-                                'flex min-h-10 items-center gap-3 rounded-xl border px-3 py-2 text-[13px] font-semibold transition',
+                                'group/sub relative flex min-h-10 items-center gap-3 overflow-hidden rounded-xl border px-3 py-2 text-[13px] font-semibold transition',
                                 isActive
-                                  ? 'border-sky-300/35 bg-[linear-gradient(180deg,rgba(14,128,203,0.95),rgba(9,96,157,0.92))] text-white shadow-[0_10px_20px_rgba(0,91,160,0.26)]'
-                                  : 'border-white/10 bg-white/5 text-slate-300 hover:border-white/20 hover:bg-white/10 hover:text-white',
+                                  ? 'border-cyan-200/70 bg-[linear-gradient(135deg,#1bb7e6_0%,#0a73b8_48%,#064a7d_100%)] text-white shadow-[0_14px_28px_rgba(7,126,190,0.38),inset_0_1px_0_rgba(255,255,255,0.30),inset_4px_0_0_rgba(209,246,255,0.88)]'
+                                  : 'border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.075),rgba(255,255,255,0.035))] text-slate-300 hover:border-cyan-200/35 hover:bg-white/12 hover:text-white',
                               ].join(' ')
                             }
                           >
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 ring-1 ring-white/10">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/14 ring-1 ring-white/15 transition group-hover/sub:bg-white/20">
                               <subItem.icon className="h-3.5 w-3.5" aria-hidden="true" />
                             </span>
                             <span className="truncate">{subItem.label}</span>
@@ -484,14 +484,14 @@ export default function AppLayout() {
                             to={subItem.to}
                             className={({ isActive }) =>
                               [
-                                'flex min-h-10 items-center gap-3 rounded-xl border px-3 py-2 text-[13px] font-semibold transition',
+                                'group/sub relative flex min-h-10 items-center gap-3 overflow-hidden rounded-xl border px-3 py-2 text-[13px] font-semibold transition',
                                 isActive
-                                  ? 'border-sky-300/35 bg-[linear-gradient(180deg,rgba(14,128,203,0.95),rgba(9,96,157,0.92))] text-white shadow-[0_10px_20px_rgba(0,91,160,0.26)]'
-                                  : 'border-white/10 bg-white/5 text-slate-300 hover:border-white/20 hover:bg-white/10 hover:text-white',
+                                  ? 'border-cyan-200/70 bg-[linear-gradient(135deg,#1bb7e6_0%,#0a73b8_48%,#064a7d_100%)] text-white shadow-[0_14px_28px_rgba(7,126,190,0.38),inset_0_1px_0_rgba(255,255,255,0.30),inset_4px_0_0_rgba(209,246,255,0.88)]'
+                                  : 'border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.075),rgba(255,255,255,0.035))] text-slate-300 hover:border-cyan-200/35 hover:bg-white/12 hover:text-white',
                               ].join(' ')
                             }
                           >
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 ring-1 ring-white/10">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/14 ring-1 ring-white/15 transition group-hover/sub:bg-white/20">
                               <subItem.icon className="h-3.5 w-3.5" aria-hidden="true" />
                             </span>
                             <span className="truncate">{subItem.label}</span>
