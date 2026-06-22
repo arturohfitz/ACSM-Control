@@ -10,12 +10,6 @@ const projectStatus = [
   { label: 'Cancelado', value: 'cancelled' },
 ]
 
-const supplySourceOptions = [
-  { label: 'Constructora', value: 'constructor' },
-  { label: 'Inmobiliaria', value: 'developer' },
-  { label: 'Tercero', value: 'third_party' },
-]
-
 function relationIds(item: Record<string, unknown>, key: string) {
   const values = item[key]
   if (!Array.isArray(values)) return []
@@ -185,66 +179,6 @@ export const resources: Record<string, ResourceConfig> = {
       { name: 'bedrooms', label: 'Recamaras', type: 'number' },
       { name: 'bathrooms', label: 'Banos', type: 'number', step: '0.5' },
       { name: 'base_notes', label: 'Notas base', type: 'textarea' },
-    ],
-  },
-  projectMaterialPrices: {
-    title: 'Tabulador del desarrollo',
-    endpoint: '/project-material-prices',
-    permissionName: 'materials',
-    createLabel: 'Nuevo precio de tabulador',
-    editLabel: 'Editar precio de tabulador',
-    createdMessage: 'Precio de tabulador guardado correctamente',
-    updatedMessage: 'Precio de tabulador actualizado correctamente',
-    columns: [
-      'id',
-      'project_id',
-      'house_model_id',
-      'material_id',
-      'unit',
-      'unit_price',
-      'supply_source',
-      'include_in_quote',
-    ],
-    columnLabels: {
-      id: 'ID',
-      project_id: 'Desarrollo',
-      house_model_id: 'Modelo',
-      material_id: 'Material',
-      unit: 'Unidad',
-      unit_price: 'Precio unitario',
-      supply_source: 'Lo provee',
-      include_in_quote: 'Cotizar',
-    },
-    fields: [
-      {
-        name: 'project_id',
-        label: 'Desarrollo',
-        type: 'number',
-        required: true,
-        relation: { endpoint: '/projects', labelField: 'name' },
-      },
-      {
-        name: 'house_model_id',
-        label: 'Modelo del desarrollo',
-        type: 'number',
-        relation: { endpoint: '/house-models', labelField: 'name' },
-      },
-      {
-        name: 'material_id',
-        label: 'Material',
-        type: 'number',
-        required: true,
-        relation: { endpoint: '/materials', labelField: 'name' },
-      },
-      { name: 'unit', label: 'Unidad' },
-      { name: 'unit_price', label: 'Precio unitario', type: 'number', step: '0.0001', required: true },
-      { name: 'supply_source', label: 'Lo provee', type: 'select', options: supplySourceOptions, required: true, defaultValue: 'constructor' },
-      { name: 'supplier_name', label: 'Proveedor' },
-      { name: 'include_in_quote', label: 'Incluir en cotizacion', type: 'checkbox', defaultValue: true },
-      { name: 'source_document_name', label: 'Documento fuente' },
-      { name: 'effective_date', label: 'Fecha precio', type: 'date' },
-      { name: 'notes', label: 'Notas', type: 'textarea' },
-      { name: 'is_active', label: 'Activo', type: 'checkbox', defaultValue: true },
     ],
   },
   materials: {

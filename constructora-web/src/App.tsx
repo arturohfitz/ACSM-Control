@@ -11,7 +11,6 @@ import {
   HouseModelsPage,
   LaborRatesPage,
   MaterialsPage,
-  ProjectMaterialPricesPage,
   RolesPage,
   SuppliersPage,
   UsersPage,
@@ -40,7 +39,6 @@ export default function App() {
           <Route path="/clients" element={<ClientsPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/house-models" element={<HouseModelsPage />} />
-          <Route path="/project-material-prices" element={<ProjectMaterialPricesPage />} />
           <Route path="/materials" element={<MaterialsPage />} />
           <Route path="/suppliers" element={<SuppliersPage />} />
           <Route path="/supplier-agreements" element={<SupplierAgreementsPage />} />
