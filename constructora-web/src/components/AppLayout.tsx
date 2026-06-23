@@ -38,7 +38,6 @@ const navItems = [
   { to: '/', label: 'Inicio', icon: Home, permission: null },
   { to: '/companies', label: 'Constructoras', icon: Building2, permission: 'companies:view' },
   { to: '/clients', label: 'Inmobiliarias', icon: Building2, permission: 'clients:view' },
-  { to: '/materials', label: 'Catalogo materiales', icon: Package, permission: 'materials:view' },
   { to: '/field-requisitions', label: 'Obra', icon: HardHat, permission: 'material_requisitions:create' },
   { to: '/purchasing', label: 'Compras', icon: ShoppingCart, permission: 'supplier_rfq:view' },
   { to: '/inventory', label: 'Inventario', icon: Warehouse, permission: 'inventory:view' },
@@ -109,6 +108,12 @@ const purchasingSubItems = [
 ]
 
 const workSubItems = [
+  {
+    to: '/materials',
+    label: 'Catalogo materiales',
+    icon: Package,
+    permission: 'materials:view',
+  },
   {
     to: '/field-requisitions',
     label: 'Req. material de obra',
@@ -282,6 +287,7 @@ export default function AppLayout() {
     location.pathname === '/projects' ||
     location.pathname === '/house-models'
   const isWorkRoute =
+    location.pathname === '/materials' ||
     location.pathname.startsWith('/field-requisitions') ||
     location.pathname === '/construction-concepts'
   const isPurchasingRoute =
