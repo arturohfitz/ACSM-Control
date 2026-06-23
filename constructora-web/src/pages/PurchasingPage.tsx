@@ -1227,7 +1227,8 @@ export default function PurchasingPage() {
   function selectRfqForQuote(rfqId: number) {
     setSelectedRfqId(rfqId)
     window.setTimeout(() => {
-      quoteCaptureRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      const target = quoteUploadsRef.current ?? quoteCaptureRef.current
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }, 80)
   }
 
