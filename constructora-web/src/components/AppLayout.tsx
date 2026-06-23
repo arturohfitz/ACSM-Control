@@ -41,8 +41,6 @@ const navItems = [
   { to: '/projects', label: 'Desarrollos', icon: FolderKanban, permission: 'projects:view' },
   { to: '/house-models', label: 'Modelos', icon: Layers3, permission: 'house_models:view' },
   { to: '/materials', label: 'Catalogo materiales', icon: Package, permission: 'materials:view' },
-  { to: '/suppliers', label: 'Proveedores', icon: Store, permission: 'suppliers:view' },
-  { to: '/supplier-agreements', label: 'Convenios', icon: Handshake, permission: 'supplier_agreements:view' },
   { to: '/field-requisitions', label: 'Obra', icon: HardHat, permission: 'material_requisitions:create' },
   {
     to: '/construction-concepts',
@@ -70,6 +68,18 @@ const purchasingSubItems = [
     label: 'Solicitudes',
     icon: ShoppingCart,
     permission: 'supplier_rfq:view',
+  },
+  {
+    to: '/suppliers',
+    label: 'Proveedores',
+    icon: Store,
+    permission: 'suppliers:view',
+  },
+  {
+    to: '/supplier-agreements',
+    label: 'Convenios',
+    icon: Handshake,
+    permission: 'supplier_agreements:view',
   },
   {
     to: '/purchasing/approvals',
@@ -249,7 +259,10 @@ export default function AppLayout() {
   const navigate = useNavigate()
   const title = titles[location.pathname] ?? 'ACSM Control'
   const isWorkRoute = location.pathname.startsWith('/field-requisitions')
-  const isPurchasingRoute = location.pathname.startsWith('/purchasing')
+  const isPurchasingRoute =
+    location.pathname.startsWith('/purchasing') ||
+    location.pathname === '/suppliers' ||
+    location.pathname === '/supplier-agreements'
   const isInventoryRoute = location.pathname.startsWith('/inventory')
   const [workOpen, setWorkOpen] = useState(isWorkRoute)
   const [purchasingOpen, setPurchasingOpen] = useState(isPurchasingRoute)
@@ -278,8 +291,12 @@ export default function AppLayout() {
     [hasPermission],
   )
   const visibleNavItems = useMemo(
-    () => navItems.filter((item) => !item.permission || hasPermission(item.permission)),
-    [hasPermission],
+    () =>
+      navItems.filter((item) => {
+        if (item.to === '/purchasing') return visiblePurchasingSubItems.length > 0
+        return !item.permission || hasPermission(item.permission)
+      }),
+    [hasPermission, visiblePurchasingSubItems.length],
   )
 
   useEffect(() => {
@@ -416,6 +433,14 @@ export default function AppLayout() {
             const hasWorkChildren = item.to === '/field-requisitions' && visibleWorkSubItems.length > 0
             const hasPurchasingChildren = item.to === '/purchasing' && visiblePurchasingSubItems.length > 0
             const hasInventoryChildren = item.to === '/inventory' && visibleInventorySubItems.length > 0
+            const primaryTo =
+              hasWorkChildren
+                ? visibleWorkSubItems[0].to
+                : hasPurchasingChildren
+                  ? visiblePurchasingSubItems[0].to
+                  : hasInventoryChildren
+                    ? visibleInventorySubItems[0].to
+                    : item.to
             const isModuleOpen =
               (hasWorkChildren && workOpen) ||
               (hasPurchasingChildren && purchasingOpen) ||
@@ -432,7 +457,7 @@ export default function AppLayout() {
                 ].join(' ')}
               >
                 <NavLink
-                  to={item.to}
+                  to={primaryTo}
                   end={item.to === '/'}
                   className={({ isActive }) => {
                     const isSectionActive =
