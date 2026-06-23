@@ -82,7 +82,7 @@ from app.services.email_outbox import (
     process_email_outbox_for_company,
     queue_email,
 )
-from app.services.emailer import rfq_email_content
+from app.services.emailer import purchase_order_email_content, rfq_email_content
 from app.services.notifications import notify_permission, notify_user_id, resolve_notifications
 from app.services.permissions import user_has_permission
 from app.services.tenancy import company_id_for_write, ensure_same_company, scoped_select
@@ -348,6 +348,44 @@ def _queue_rfq_emails(db: Session, rfq: SupplierRFQ, requested_by: int | None = 
     else:
         rfq.status = "email_error"
     return queued_count, error_count
+
+
+def _queue_purchase_order_email(
+    db: Session,
+    purchase_order: PurchaseOrder,
+    requested_by: int | None = None,
+) -> bool:
+    supplier = purchase_order.supplier
+    recipient = (supplier.contact_email or "").strip() if supplier else ""
+    if not recipient:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El proveedor no tiene correo de contacto configurado.",
+        )
+
+    if has_active_or_sent_message(
+        db,
+        related_entity_type="PurchaseOrder",
+        related_entity_id=purchase_order.id,
+        recipient_email=recipient,
+    ):
+        return False
+
+    subject, text_body, html_body = purchase_order_email_content(purchase_order)
+    queue_email(
+        db,
+        company_id=purchase_order.company_id,
+        requested_by=requested_by,
+        message_type="purchase_order",
+        related_entity_type="PurchaseOrder",
+        related_entity_id=purchase_order.id,
+        recipient_email=recipient,
+        recipient_name=supplier.contact_name or supplier.name if supplier else None,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+    )
+    return True
 
 
 def _invoice_status_for_po(purchase_order: PurchaseOrder) -> tuple[str, int, str]:
@@ -2138,7 +2176,11 @@ def get_purchase_order(
     purchase_order = db.scalar(
         select(PurchaseOrder)
         .where(PurchaseOrder.id == purchase_order_id)
-        .options(selectinload(PurchaseOrder.supplier), selectinload(PurchaseOrder.items))
+        .options(
+            selectinload(PurchaseOrder.project),
+            selectinload(PurchaseOrder.supplier),
+            selectinload(PurchaseOrder.items),
+        )
     )
     if purchase_order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
@@ -2149,10 +2191,17 @@ def get_purchase_order(
 @router.post("/purchase-orders/{purchase_order_id}/send", response_model=PurchaseOrderRead)
 def send_purchase_order(
     purchase_order_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("purchase_orders", "send")),
 ) -> PurchaseOrder:
     purchase_order = get_purchase_order(purchase_order_id, db, current_user)
+    if purchase_order.status not in {"issued", "sent"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se pueden enviar ordenes de compra emitidas.",
+        )
+    queued_email = _queue_purchase_order_email(db, purchase_order, requested_by=current_user.id)
     if purchase_order.status == "issued":
         purchase_order.status = "sent"
     record_event(
@@ -2165,9 +2214,11 @@ def send_purchase_order(
         company_id=purchase_order.company_id,
         label=purchase_order.po_number,
         description=f"{current_user.full_name} envio la orden de compra {purchase_order.po_number}",
-        metadata={"status": purchase_order.status},
+        metadata={"status": purchase_order.status, "correo_encolado": queued_email},
     )
     db.commit()
+    if queued_email:
+        background_tasks.add_task(process_email_outbox_for_company, purchase_order.company_id)
     return get_purchase_order(purchase_order_id, db, current_user)
 
 
