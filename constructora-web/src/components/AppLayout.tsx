@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity,
@@ -222,6 +222,22 @@ type NotificationCounts = {
   open: number
 }
 
+type NotificationAlertSettings = {
+  sound_enabled: boolean
+  sound_volume: number
+  flash_enabled: boolean
+  repeat_alert_minutes: number
+}
+
+const defaultNotificationAlertSettings: NotificationAlertSettings = {
+  sound_enabled: true,
+  sound_volume: 45,
+  flash_enabled: true,
+  repeat_alert_minutes: 5,
+}
+
+export const NOTIFICATION_SETTINGS_UPDATED_EVENT = 'acsm:notification-settings-updated'
+
 function focusForNotification(notification: NotificationItem) {
   const hasExplicitFocus = notification.action_url?.includes('focus=') ?? false
   if (hasExplicitFocus) return null
@@ -305,11 +321,18 @@ export default function AppLayout() {
     unread: 0,
     open: 0,
   })
+  const [notificationAlertSettings, setNotificationAlertSettings] = useState<NotificationAlertSettings>(
+    defaultNotificationAlertSettings,
+  )
+  const [notificationFlash, setNotificationFlash] = useState(false)
   const [notificationsLoading, setNotificationsLoading] = useState(false)
   const [notificationsError, setNotificationsError] = useState('')
   const [actionNotice, setActionNotice] = useState<
     (Required<ActionNoticePayload> & { id: number }) | null
   >(null)
+  const previousUnreadRef = useRef(0)
+  const lastNotificationAlertAtRef = useRef(0)
+  const audioContextRef = useRef<AudioContext | null>(null)
   const visibleRealEstateSubItems = useMemo(
     () => realEstateSubItems.filter((item) => hasPermission(item.permission)),
     [hasPermission],
@@ -358,14 +381,89 @@ export default function AppLayout() {
     setInventoryOpen(isInventoryRoute)
   }, [isInventoryRoute])
 
+  const triggerNotificationFlash = useCallback(() => {
+    if (!notificationAlertSettings.flash_enabled) return
+    setNotificationFlash(true)
+    window.setTimeout(() => setNotificationFlash(false), 1800)
+  }, [notificationAlertSettings.flash_enabled])
+
+  const playNotificationTone = useCallback(() => {
+    if (!notificationAlertSettings.sound_enabled || notificationAlertSettings.sound_volume <= 0) return
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!AudioContextClass) return
+      const audioContext = audioContextRef.current ?? new AudioContextClass()
+      audioContextRef.current = audioContext
+      const startAt = audioContext.currentTime
+      const gain = audioContext.createGain()
+      gain.gain.setValueAtTime(0, startAt)
+      gain.gain.linearRampToValueAtTime(notificationAlertSettings.sound_volume / 1000, startAt + 0.025)
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.68)
+      gain.connect(audioContext.destination)
+
+      const first = audioContext.createOscillator()
+      first.type = 'sine'
+      first.frequency.setValueAtTime(660, startAt)
+      first.frequency.exponentialRampToValueAtTime(880, startAt + 0.18)
+      first.connect(gain)
+      first.start(startAt)
+      first.stop(startAt + 0.32)
+
+      const second = audioContext.createOscillator()
+      second.type = 'triangle'
+      second.frequency.setValueAtTime(990, startAt + 0.18)
+      second.frequency.exponentialRampToValueAtTime(1320, startAt + 0.42)
+      second.connect(gain)
+      second.start(startAt + 0.18)
+      second.stop(startAt + 0.62)
+    } catch {
+      // Browsers may block audio until the user interacts with the page.
+    }
+  }, [notificationAlertSettings.sound_enabled, notificationAlertSettings.sound_volume])
+
+  const runNotificationAlert = useCallback(() => {
+    lastNotificationAlertAtRef.current = Date.now()
+    triggerNotificationFlash()
+    playNotificationTone()
+  }, [playNotificationTone, triggerNotificationFlash])
+
+  const loadNotificationSettings = useCallback(async () => {
+    try {
+      const settings = await apiRequest<NotificationAlertSettings>('/settings/notifications')
+      setNotificationAlertSettings({
+        sound_enabled: settings.sound_enabled,
+        sound_volume: settings.sound_volume,
+        flash_enabled: settings.flash_enabled,
+        repeat_alert_minutes: settings.repeat_alert_minutes,
+      })
+    } catch {
+      setNotificationAlertSettings(defaultNotificationAlertSettings)
+    }
+  }, [])
+
   const loadNotificationCounts = useCallback(async () => {
     try {
       const counts = await apiRequest<NotificationCounts>('/notifications/counts')
       setNotificationCounts(counts)
+      const previousUnread = previousUnreadRef.current
+      const now = Date.now()
+      const repeatIntervalMs = notificationAlertSettings.repeat_alert_minutes * 60 * 1000
+      if (counts.unread > previousUnread) {
+        runNotificationAlert()
+      } else if (
+        counts.unread > 0 &&
+        repeatIntervalMs > 0 &&
+        now - lastNotificationAlertAtRef.current >= repeatIntervalMs
+      ) {
+        runNotificationAlert()
+      }
+      previousUnreadRef.current = counts.unread
     } catch {
       setNotificationCounts({ unread: 0, open: 0 })
     }
-  }, [])
+  }, [notificationAlertSettings.repeat_alert_minutes, runNotificationAlert])
 
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true)
@@ -389,10 +487,29 @@ export default function AppLayout() {
 
   useEffect(() => {
     if (!user) return
+    void loadNotificationSettings()
     loadNotificationCounts()
     const timer = window.setInterval(loadNotificationCounts, 60000)
     return () => window.clearInterval(timer)
-  }, [loadNotificationCounts, user])
+  }, [loadNotificationCounts, loadNotificationSettings, user])
+
+  useEffect(() => {
+    function handleSettingsUpdated(event: Event) {
+      const detail = (event as CustomEvent<NotificationAlertSettings>).detail
+      if (!detail) {
+        void loadNotificationSettings()
+        return
+      }
+      setNotificationAlertSettings({
+        sound_enabled: detail.sound_enabled,
+        sound_volume: detail.sound_volume,
+        flash_enabled: detail.flash_enabled,
+        repeat_alert_minutes: detail.repeat_alert_minutes,
+      })
+    }
+    window.addEventListener(NOTIFICATION_SETTINGS_UPDATED_EVENT, handleSettingsUpdated)
+    return () => window.removeEventListener(NOTIFICATION_SETTINGS_UPDATED_EVENT, handleSettingsUpdated)
+  }, [loadNotificationSettings])
 
   useEffect(() => {
     if (notificationsOpen) {
@@ -459,6 +576,7 @@ export default function AppLayout() {
 
   return (
     <div className="acsm-app-shell min-h-screen overflow-x-hidden bg-acsm-canvas text-acsm-ink lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">
+      {notificationFlash ? <div className="acsm-notification-system-flash" aria-hidden="true" /> : null}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] border-r border-acsm-sidebar-line bg-[linear-gradient(180deg,#081321_0%,#102a4b_54%,#09172a_100%)] text-white shadow-[18px_0_48px_rgba(2,13,31,0.34)] lg:flex lg:flex-col">
         <div className="flex h-[72px] items-center gap-3 border-b border-acsm-sidebar-line px-4">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-[linear-gradient(145deg,rgba(255,255,255,0.16),rgba(255,255,255,0.04))] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
@@ -697,7 +815,10 @@ export default function AppLayout() {
               <button
                 type="button"
                 onClick={() => setNotificationsOpen((value) => !value)}
-                className="acsm-notification-button relative inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] transition hover:bg-white/20"
+                className={[
+                  'acsm-notification-button relative inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] transition hover:bg-white/20',
+                  notificationCounts.unread > 0 ? 'acsm-notification-attention' : '',
+                ].join(' ')}
                 aria-label="Notificaciones"
               >
                 <Bell className="h-5 w-5" aria-hidden="true" />
@@ -726,7 +847,10 @@ export default function AppLayout() {
           <button
             type="button"
             onClick={() => setNotificationsOpen((value) => !value)}
-            className="acsm-notification-button relative inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/20 lg:hidden"
+            className={[
+              'acsm-notification-button relative inline-flex h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/20 lg:hidden',
+              notificationCounts.unread > 0 ? 'acsm-notification-attention' : '',
+            ].join(' ')}
             aria-label="Notificaciones"
           >
             <Bell className="h-4 w-4" aria-hidden="true" />

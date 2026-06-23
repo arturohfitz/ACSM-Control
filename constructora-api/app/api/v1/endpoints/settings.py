@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_permission
+from app.api.deps import get_current_user, require_permission
 from app.db.session import get_db
-from app.models import EmailOutboxMessage, SystemEmailSettings, User
+from app.models import EmailOutboxMessage, SystemEmailSettings, SystemNotificationSettings, User
 from app.schemas.system_settings import (
     EmailOutboxMessageRead,
     EmailOutboxProcessResult,
@@ -15,6 +15,8 @@ from app.schemas.system_settings import (
     EmailSettingsUpsert,
     EmailTestRequest,
     EmailTestResult,
+    NotificationSettingsRead,
+    NotificationSettingsUpsert,
 )
 from app.services.audit import record_event, snapshot
 from app.services.email_outbox import process_pending_email_outbox
@@ -59,6 +61,30 @@ def _serialize(settings: SystemEmailSettings) -> EmailSettingsRead:
     )
 
 
+def _serialize_notification_settings(settings: SystemNotificationSettings) -> NotificationSettingsRead:
+    return NotificationSettingsRead(
+        id=settings.id,
+        company_id=settings.company_id,
+        sound_enabled=settings.sound_enabled,
+        sound_volume=settings.sound_volume,
+        flash_enabled=settings.flash_enabled,
+        repeat_alert_minutes=settings.repeat_alert_minutes,
+        created_at=settings.created_at,
+        updated_at=settings.updated_at,
+    )
+
+
+def _notification_settings_for_company(db: Session, company_id: int) -> SystemNotificationSettings:
+    settings = db.scalar(
+        select(SystemNotificationSettings).where(SystemNotificationSettings.company_id == company_id)
+    )
+    if settings is None:
+        settings = SystemNotificationSettings(company_id=company_id)
+        db.add(settings)
+        db.flush()
+    return settings
+
+
 @router.get("/email", response_model=EmailSettingsRead | None)
 def get_email_settings(
     company_id: int | None = None,
@@ -70,6 +96,60 @@ def get_email_settings(
         select(SystemEmailSettings).where(SystemEmailSettings.company_id == target_company_id)
     )
     return _serialize(settings) if settings else None
+
+
+@router.get("/notifications", response_model=NotificationSettingsRead)
+def get_notification_settings(
+    company_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> NotificationSettingsRead:
+    target_company_id = _company_id(current_user, company_id)
+    settings = _notification_settings_for_company(db, target_company_id)
+    db.commit()
+    db.refresh(settings)
+    return _serialize_notification_settings(settings)
+
+
+@router.put("/notifications", response_model=NotificationSettingsRead)
+def upsert_notification_settings(
+    payload: NotificationSettingsUpsert,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("settings", "edit")),
+) -> NotificationSettingsRead:
+    target_company_id = company_id_for_write(current_user, payload.company_id)
+    settings = _notification_settings_for_company(db, target_company_id)
+    before = snapshot(settings)
+    data = payload.model_dump(exclude={"company_id"})
+    for key, value in data.items():
+        setattr(settings, key, value)
+    after = snapshot(
+        settings,
+        [
+            "sound_enabled",
+            "sound_volume",
+            "flash_enabled",
+            "repeat_alert_minutes",
+        ],
+    )
+    record_event(
+        db,
+        current_user,
+        module="ajustes",
+        action="update_notifications",
+        entity_type="SystemNotificationSettings",
+        entity_id=settings.id,
+        company_id=settings.company_id,
+        label="Notificaciones",
+        description=f"{current_user.full_name} actualizo la configuracion de notificaciones",
+        metadata={
+            "antes": {key: before.get(key) for key in after},
+            "despues": after,
+        },
+    )
+    db.commit()
+    db.refresh(settings)
+    return _serialize_notification_settings(settings)
 
 
 @router.put("/email", response_model=EmailSettingsRead)

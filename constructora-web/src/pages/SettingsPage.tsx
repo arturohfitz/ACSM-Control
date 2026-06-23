@@ -1,10 +1,11 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { MailCheck, RefreshCw, Save, Send, Settings } from 'lucide-react'
+import { Bell, MailCheck, RefreshCw, Save, Send, Settings, Volume2 } from 'lucide-react'
 
 import { brand } from '../config/brand'
 import { useAuth } from '../auth/AuthContext'
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
+import { NOTIFICATION_SETTINGS_UPDATED_EVENT } from '../components/AppLayout'
 
 type EmailSettings = {
   id: number
@@ -45,6 +46,22 @@ type EmailForm = {
   is_active: boolean
 }
 
+type NotificationSettings = {
+  id: number
+  company_id: number
+  sound_enabled: boolean
+  sound_volume: number
+  flash_enabled: boolean
+  repeat_alert_minutes: number
+}
+
+type NotificationForm = {
+  sound_enabled: boolean
+  sound_volume: string
+  flash_enabled: boolean
+  repeat_alert_minutes: string
+}
+
 const emptyForm: EmailForm = {
   sender_name: 'ACSM Control',
   sender_email: 'info@acsmcontrol.com',
@@ -60,6 +77,13 @@ const emptyForm: EmailForm = {
   imap_username: 'info@acsmcontrol.com',
   imap_password: '',
   is_active: true,
+}
+
+const emptyNotificationForm: NotificationForm = {
+  sound_enabled: true,
+  sound_volume: '45',
+  flash_enabled: true,
+  repeat_alert_minutes: '5',
 }
 
 function fromSettings(settings: EmailSettings | null): EmailForm {
@@ -82,26 +106,44 @@ function fromSettings(settings: EmailSettings | null): EmailForm {
   }
 }
 
+function fromNotificationSettings(settings: NotificationSettings | null): NotificationForm {
+  if (!settings) return { ...emptyNotificationForm }
+  return {
+    sound_enabled: settings.sound_enabled,
+    sound_volume: String(settings.sound_volume),
+    flash_enabled: settings.flash_enabled,
+    repeat_alert_minutes: String(settings.repeat_alert_minutes),
+  }
+}
+
 export default function SettingsPage() {
   const { hasPermission } = useAuth()
   const canEditSettings = hasPermission('settings:edit')
   const canTestEmail = hasPermission('settings:test_email')
   const [settings, setSettings] = useState<EmailSettings | null>(null)
   const [form, setForm] = useState<EmailForm>(emptyForm)
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null)
+  const [notificationForm, setNotificationForm] = useState<NotificationForm>(emptyNotificationForm)
   const [testRecipient, setTestRecipient] = useState('info@acsmcontrol.com')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [savingNotifications, setSavingNotifications] = useState(false)
 
   async function loadSettings() {
     setLoading(true)
     setError('')
     try {
-      const data = await apiRequest<EmailSettings | null>('/settings/email')
+      const [data, notificationData] = await Promise.all([
+        apiRequest<EmailSettings | null>('/settings/email'),
+        apiRequest<NotificationSettings>('/settings/notifications'),
+      ])
       setSettings(data)
       setForm(fromSettings(data))
       setTestRecipient(data?.sender_email ?? emptyForm.sender_email)
+      setNotificationSettings(notificationData)
+      setNotificationForm(fromNotificationSettings(notificationData))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar ajustes')
     } finally {
@@ -115,6 +157,10 @@ export default function SettingsPage() {
 
   function patchForm(patch: Partial<EmailForm>) {
     setForm((current) => ({ ...current, ...patch }))
+  }
+
+  function patchNotificationForm(patch: Partial<NotificationForm>) {
+    setNotificationForm((current) => ({ ...current, ...patch }))
   }
 
   async function saveEmailSettings(event: FormEvent<HTMLFormElement>) {
@@ -173,6 +219,39 @@ export default function SettingsPage() {
     }
   }
 
+  async function saveNotificationSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canEditSettings) {
+      setError('No tienes permiso para editar la configuracion.')
+      return
+    }
+    setSavingNotifications(true)
+    setError('')
+    setMessage('')
+    try {
+      const payload = {
+        sound_enabled: notificationForm.sound_enabled,
+        sound_volume: Number(notificationForm.sound_volume || 0),
+        flash_enabled: notificationForm.flash_enabled,
+        repeat_alert_minutes: Number(notificationForm.repeat_alert_minutes || 5),
+      }
+      const data = await apiRequest<NotificationSettings>('/settings/notifications', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      })
+      setNotificationSettings(data)
+      setNotificationForm(fromNotificationSettings(data))
+      window.dispatchEvent(new CustomEvent(NOTIFICATION_SETTINGS_UPDATED_EVENT, { detail: data }))
+      const successMessage = 'Configuracion de notificaciones guardada.'
+      setMessage(successMessage)
+      showActionNotice(successMessage)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible guardar notificaciones')
+    } finally {
+      setSavingNotifications(false)
+    }
+  }
+
   return (
     <div className="space-y-5">
       {error && (
@@ -205,6 +284,7 @@ export default function SettingsPage() {
         </div>
 
         <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="space-y-5">
           <form onSubmit={(event) => void saveEmailSettings(event)} className="space-y-5">
             <div className="rounded-2xl border border-acsm-line bg-slate-50/70 p-4">
               <div className="mb-4 flex items-center justify-between gap-3">
@@ -395,6 +475,98 @@ export default function SettingsPage() {
               </button>
             </div>
           </form>
+
+          <form
+            onSubmit={(event) => void saveNotificationSettings(event)}
+            className="rounded-2xl border border-acsm-line bg-white p-4"
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-sky-200 bg-sky-50 text-sky-700">
+                  <Bell className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-acsm-ink">Alertas del sistema</h3>
+                  <p className="text-sm text-acsm-muted">
+                    Controla sonido, destello y recordatorios de notificaciones pendientes.
+                  </p>
+                </div>
+              </div>
+              <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-800">
+                {notificationSettings ? 'Configurado' : 'Predeterminado'}
+              </span>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="rounded-2xl border border-acsm-line bg-slate-50/80 p-4">
+                <span className="flex items-center justify-between gap-3 text-sm font-bold text-acsm-ink">
+                  Sonido de notificacion
+                  <input
+                    type="checkbox"
+                    checked={notificationForm.sound_enabled}
+                    disabled={!canEditSettings}
+                    onChange={(event) => patchNotificationForm({ sound_enabled: event.target.checked })}
+                  />
+                </span>
+                <p className="mt-1 text-xs text-acsm-muted">Reproduce un tono corto al detectar nuevas alertas.</p>
+              </label>
+              <label className="rounded-2xl border border-acsm-line bg-slate-50/80 p-4">
+                <span className="flex items-center justify-between gap-3 text-sm font-bold text-acsm-ink">
+                  Destello visual
+                  <input
+                    type="checkbox"
+                    checked={notificationForm.flash_enabled}
+                    disabled={!canEditSettings}
+                    onChange={(event) => patchNotificationForm({ flash_enabled: event.target.checked })}
+                  />
+                </span>
+                <p className="mt-1 text-xs text-acsm-muted">Ilumina la interfaz brevemente cuando llega una alerta.</p>
+              </label>
+              <label className="text-sm font-semibold text-acsm-ink">
+                <span className="mb-2 flex items-center gap-2">
+                  <Volume2 className="h-4 w-4 text-sky-700" aria-hidden="true" />
+                  Volumen: {notificationForm.sound_volume}%
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={notificationForm.sound_volume}
+                  disabled={!canEditSettings || !notificationForm.sound_enabled}
+                  onChange={(event) => patchNotificationForm({ sound_volume: event.target.value })}
+                  className="w-full"
+                />
+              </label>
+              <label className="text-sm font-semibold text-acsm-ink">
+                Repetir alerta cada
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    max="60"
+                    value={notificationForm.repeat_alert_minutes}
+                    disabled={!canEditSettings}
+                    onChange={(event) => patchNotificationForm({ repeat_alert_minutes: event.target.value })}
+                    className="h-11 w-28 rounded-xl border border-acsm-line bg-white px-3 text-sm"
+                  />
+                  <span className="text-sm font-semibold text-acsm-muted">minutos si sigue pendiente</span>
+                </div>
+              </label>
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="submit"
+                disabled={savingNotifications || !canEditSettings}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-gradient-to-r from-blue-800 to-sky-600 px-4 text-sm font-bold text-white shadow-lg shadow-blue-900/20 hover:from-blue-900 hover:to-sky-700 disabled:opacity-60"
+              >
+                <Save className="h-4 w-4" aria-hidden="true" />
+                {savingNotifications ? 'Guardando...' : 'Guardar alertas'}
+              </button>
+            </div>
+          </form>
+          </div>
 
           <aside className="space-y-4">
             <div className="rounded-2xl border border-acsm-line bg-slate-50/80 p-4">

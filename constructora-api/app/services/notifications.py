@@ -48,6 +48,7 @@ def users_with_permission(
     company_id: int,
     module: str,
     action: str,
+    include_master_admin: bool = False,
 ) -> list[User]:
     permission = db.scalar(
         select(Permission).where(Permission.module == module, Permission.action == action)
@@ -66,16 +67,15 @@ def users_with_permission(
         .options(selectinload(User.roles), selectinload(User.user_client_accesses))
     )
     if role_ids:
-        statement = statement.where(
-            or_(
-                User.is_master_admin.is_(True),
-                User.id.in_(
-                    select(UserRole.user_id).where(UserRole.role_id.in_(role_ids))
-                ),
-            )
+        role_user_filter = User.id.in_(
+            select(UserRole.user_id).where(UserRole.role_id.in_(role_ids))
         )
+        if include_master_admin:
+            statement = statement.where(or_(User.is_master_admin.is_(True), role_user_filter))
+        else:
+            statement = statement.where(User.is_master_admin.is_(False), role_user_filter)
     else:
-        statement = statement.where(User.is_master_admin.is_(True))
+        statement = statement.where(User.is_master_admin.is_(True) if include_master_admin else False)
 
     users = list(db.scalars(statement).unique().all())
     return users
@@ -178,11 +178,18 @@ def notify_permission(
     company_id: int,
     module: str,
     action: str,
+    include_master_admin: bool = False,
     **kwargs,
 ) -> int:
     return notify_users(
         db,
-        users_with_permission(db, company_id=company_id, module=module, action=action),
+        users_with_permission(
+            db,
+            company_id=company_id,
+            module=module,
+            action=action,
+            include_master_admin=include_master_admin,
+        ),
         company_id=company_id,
         **kwargs,
     )

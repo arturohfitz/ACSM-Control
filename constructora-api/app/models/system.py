@@ -33,6 +33,20 @@ class SystemEmailSettings(TimestampMixin, Base):
     last_test_message: Mapped[str | None] = mapped_column(Text)
 
 
+class SystemNotificationSettings(TimestampMixin, Base):
+    __tablename__ = "system_notification_settings"
+    __table_args__ = (
+        UniqueConstraint("company_id", name="uq_system_notification_settings_company"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    sound_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sound_volume: Mapped[int] = mapped_column(Integer, default=45, nullable=False)
+    flash_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    repeat_alert_minutes: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+
+
 class EmailOutboxMessage(TimestampMixin, Base):
     __tablename__ = "email_outbox_messages"
 

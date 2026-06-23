@@ -76,3 +76,20 @@ class EmailOutboxProcessResult(BaseModel):
     procesados: int
     enviados: int
     errores: int
+
+
+class NotificationSettingsBase(BaseModel):
+    company_id: int | None = None
+    sound_enabled: bool = True
+    sound_volume: int = Field(default=45, ge=0, le=100)
+    flash_enabled: bool = True
+    repeat_alert_minutes: int = Field(default=5, ge=1, le=60)
+
+
+class NotificationSettingsUpsert(NotificationSettingsBase):
+    pass
+
+
+class NotificationSettingsRead(NotificationSettingsBase, TimestampRead):
+    id: int
+    company_id: int
