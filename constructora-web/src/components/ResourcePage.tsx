@@ -107,7 +107,6 @@ const permissionModuleLabels: Record<string, string> = {
   house_models: 'Modelos',
   materials: 'Materiales',
   material_requisitions: 'Requerimientos de obra',
-  labor: 'Mano de obra',
   construction_concepts: 'Conceptos',
   inventory: 'Inventario',
   suppliers: 'Proveedores',

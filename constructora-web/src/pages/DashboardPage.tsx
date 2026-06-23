@@ -1,17 +1,16 @@
-import { FolderKanban, Hammer, Package, Store, Users } from 'lucide-react'
+import { FolderKanban, Package, Store, Users } from 'lucide-react'
 
 const metrics = [
   { label: 'Desarrollos', value: '0', icon: FolderKanban },
   { label: 'Materiales', value: '0', icon: Package },
   { label: 'Proveedores', value: '0', icon: Store },
-  { label: 'Mano de obra', value: '0', icon: Hammer },
   { label: 'Usuarios', value: '0', icon: Users },
 ]
 
 export default function DashboardPage() {
   return (
     <div className="space-y-5">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map((metric) => (
           <div key={metric.label} className="rounded-md border border-acsm-line bg-white p-4 shadow-panel">
             <div className="mb-4 flex items-center justify-between">
@@ -28,8 +27,8 @@ export default function DashboardPage() {
           <div>
             <h2 className="text-base font-semibold">Operacion inicial</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-acsm-muted">
-              Captura inmobiliarias, desarrollos, modelos, conceptos, materiales y mano de obra
-              para alimentar compras, inventario y control operativo por desarrollo.
+              Captura inmobiliarias, desarrollos, modelos, conceptos y materiales para alimentar
+              compras, inventario y control operativo por desarrollo.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm">

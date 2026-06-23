@@ -22,10 +22,6 @@ export function SuppliersPage() {
   return <ResourcePage config={resources.suppliers} />
 }
 
-export function LaborRatesPage() {
-  return <ResourcePage config={resources.laborRates} />
-}
-
 export function ConstructionConceptsPage() {
   return <ResourcePage config={resources.constructionConcepts} />
 }

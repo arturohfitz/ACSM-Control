@@ -12,7 +12,6 @@ import {
   ExternalLink,
   FileUp,
   FolderKanban,
-  Hammer,
   Handshake,
   HardHat,
   Home,
@@ -45,7 +44,6 @@ const navItems = [
   { to: '/suppliers', label: 'Proveedores', icon: Store, permission: 'suppliers:view' },
   { to: '/supplier-agreements', label: 'Convenios', icon: Handshake, permission: 'supplier_agreements:view' },
   { to: '/field-requisitions', label: 'Obra', icon: HardHat, permission: 'material_requisitions:create' },
-  { to: '/labor-rates', label: 'Mano de obra', icon: Hammer, permission: 'labor:view' },
   {
     to: '/construction-concepts',
     label: 'Conceptos',
@@ -151,7 +149,6 @@ const titles: Record<string, string> = {
   '/suppliers': 'Proveedores',
   '/supplier-agreements': 'Convenios de proveedores',
   '/field-requisitions': 'Requerimientos de obra',
-  '/labor-rates': 'Mano de obra',
   '/construction-concepts': 'Conceptos de obra',
   '/purchasing': 'Compras',
   '/purchasing/material-requisitions': 'Requerimientos de obra',
