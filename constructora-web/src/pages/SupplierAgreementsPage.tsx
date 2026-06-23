@@ -19,7 +19,7 @@ type Client = {
 
 type HouseModel = {
   id: number
-  client_id: number
+  client_id: number | null
   name: string
   construction_m2: string
 }
@@ -87,13 +87,15 @@ export default function SupplierAgreementsPage() {
     [agreements, selectedId],
   )
 
-  const filteredModels = useMemo(
-    () =>
-      houseModels.filter((model) =>
-        agreementForm.client_id ? model.client_id === Number(agreementForm.client_id) : true,
-      ),
-    [agreementForm.client_id, houseModels],
-  )
+  const selectedClientId = agreementForm.client_id ? Number(agreementForm.client_id) : null
+  const selectedFormModelId = agreementForm.house_model_id ? Number(agreementForm.house_model_id) : null
+
+  const filteredModels = useMemo(() => {
+    if (!selectedClientId) return []
+    return houseModels
+      .filter((model) => Number(model.client_id) === selectedClientId)
+      .sort((a, b) => a.name.localeCompare(b.name, 'es'))
+  }, [houseModels, selectedClientId])
 
   const supplierById = useMemo(
     () => new Map(suppliers.map((supplier) => [supplier.id, supplier])),
@@ -128,6 +130,14 @@ export default function SupplierAgreementsPage() {
     void loadData()
   }, [])
 
+  useEffect(() => {
+    if (!selectedFormModelId) return
+    const modelBelongsToClient = filteredModels.some((model) => model.id === selectedFormModelId)
+    if (!modelBelongsToClient) {
+      setAgreementForm((current) => ({ ...current, house_model_id: '' }))
+    }
+  }, [filteredModels, selectedFormModelId])
+
   function updateAgreementField(name: keyof typeof agreementForm, value: string) {
     setAgreementForm((current) => {
       const next = { ...current, [name]: value }
@@ -157,6 +167,10 @@ export default function SupplierAgreementsPage() {
       const supplier = supplierById.get(Number(agreementForm.supplier_id))
       const client = clientById.get(Number(agreementForm.client_id))
       const model = modelById.get(Number(agreementForm.house_model_id))
+      if (!model || Number(model.client_id) !== Number(agreementForm.client_id)) {
+        setError('El modelo seleccionado no pertenece a la inmobiliaria seleccionada.')
+        return
+      }
       const created = await apiRequest<SupplierAgreement>('/purchasing/supplier-agreements', {
         method: 'POST',
         body: JSON.stringify({
@@ -395,16 +409,29 @@ export default function SupplierAgreementsPage() {
           <select
             value={agreementForm.house_model_id}
             onChange={(event) => updateAgreementField('house_model_id', event.target.value)}
-            className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
+            disabled={!agreementForm.client_id || filteredModels.length === 0}
+            className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
             required
           >
-            <option value="">Modelo de casa</option>
+            <option value="">
+              {!agreementForm.client_id
+                ? 'Selecciona una inmobiliaria primero'
+                : filteredModels.length
+                  ? 'Modelo de casa'
+                  : 'Sin modelos para esta inmobiliaria'}
+            </option>
             {filteredModels.map((model) => (
               <option key={model.id} value={model.id}>
                 {model.name}
               </option>
             ))}
           </select>
+          {agreementForm.client_id && filteredModels.length === 0 ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+              Esta inmobiliaria no tiene modelos de casa registrados. Crea o asigna el modelo antes de generar
+              convenios.
+            </div>
+          ) : null}
           <input
             value={agreementForm.name}
             onChange={(event) => updateAgreementField('name', event.target.value)}
