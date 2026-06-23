@@ -284,6 +284,30 @@ class MaterialRead(MaterialBase, TimestampRead):
     id: int
 
 
+class MaterialModelCatalogRead(BaseModel):
+    id: int
+    project_id: int
+    project_name: str
+    client_id: int
+    client_name: str
+    house_model_id: int
+    house_model_name: str
+    material_id: int | None = None
+    material_name: str
+    source_code: str | None = None
+    family: str | None = None
+    unit: str
+    quantity_per_house: NonNegativeDecimal
+    assigned_houses: NonNegativeDecimal
+    total_required: NonNegativeDecimal
+    unit_cost_reference: NonNegativeDecimal | None = None
+    total_cost_reference: NonNegativeDecimal | None = None
+    catalog_unit_price: NonNegativeDecimal | None = None
+    supplier_name: str | None = None
+    validation_status: ReviewStatus
+    is_linked: bool
+
+
 class LaborRateBase(BaseModel):
     company_id: int | None = None
     name: str = Field(min_length=1, max_length=200)

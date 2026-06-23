@@ -9,7 +9,6 @@ import {
   CompaniesPage,
   ConstructionConceptsPage,
   HouseModelsPage,
-  MaterialsPage,
   RolesPage,
   SuppliersPage,
   UsersPage,
@@ -17,6 +16,7 @@ import {
 import InventoryPage from './pages/InventoryPage'
 import LoginPage from './pages/LoginPage'
 import MaterialRequisitionsPage from './pages/MaterialRequisitionsPage'
+import MaterialsPage from './pages/MaterialsPage'
 import ProjectsPage from './pages/ProjectsPage'
 import PurchasingApprovalsPage from './pages/PurchasingApprovalsPage'
 import PurchasingOrdersPage from './pages/PurchasingOrdersPage'

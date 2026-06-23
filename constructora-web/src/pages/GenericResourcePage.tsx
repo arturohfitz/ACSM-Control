@@ -14,10 +14,6 @@ export function HouseModelsPage() {
   return <HouseModelsByDeveloperPage />
 }
 
-export function MaterialsPage() {
-  return <ResourcePage config={resources.materials} />
-}
-
 export function SuppliersPage() {
   return <ResourcePage config={resources.suppliers} />
 }
