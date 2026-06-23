@@ -5,7 +5,12 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
 from app.models import Company, Role, User
-from app.services.permissions import ensure_default_permissions, set_role_permissions, set_user_roles
+from app.services.permissions import (
+    ensure_default_company_roles,
+    ensure_default_permissions,
+    set_role_permissions,
+    set_user_roles,
+)
 
 
 def seed_admin(db: Session) -> User:
@@ -54,6 +59,7 @@ def seed_admin(db: Session) -> User:
         user.is_master_admin = True
 
     set_user_roles(db, user.id, [role.id])
+    ensure_default_company_roles(db, company.id)
     db.commit()
     db.refresh(user)
     return user

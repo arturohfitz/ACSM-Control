@@ -4,10 +4,15 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import require_permission
 from app.db.session import get_db
-from app.models import Role, User
+from app.models import Permission, Role, User
 from app.schemas.user import RoleCreate, RoleRead, RoleUpdate
 from app.services.crud import delete_item, get_or_404
-from app.services.permissions import set_role_permissions
+from app.services.permissions import (
+    ensure_default_permissions,
+    permission_code,
+    set_role_permissions,
+    tenant_permission_ids,
+)
 from app.services.tenancy import get_user_company_id
 
 
@@ -43,6 +48,30 @@ def _get_role_for_user(db: Session, role_id: int, current_user: User) -> Role:
     return role
 
 
+def _permission_ids_for_write(
+    db: Session,
+    current_user: User,
+    permission_ids: list[int],
+) -> list[int]:
+    if current_user.is_master_admin:
+        return permission_ids
+    desired = set(permission_ids)
+    if not desired:
+        return []
+    permissions = ensure_default_permissions(db)
+    requested_permissions = db.scalars(select(Permission).where(Permission.id.in_(desired))).all()
+    if len(requested_permissions) != len(desired):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uno o mas permisos no existen",
+        )
+    requested_codes = {
+        permission_code(permission.module, permission.action)
+        for permission in requested_permissions
+    }
+    return tenant_permission_ids(permissions, requested_codes)
+
+
 @router.get("", response_model=list[RoleRead])
 def list_roles(
     skip: int = 0,
@@ -76,7 +105,11 @@ def create_role(
     role = Role(**data)
     db.add(role)
     db.flush()
-    set_role_permissions(db, role.id, payload.permission_ids)
+    set_role_permissions(
+        db,
+        role.id,
+        _permission_ids_for_write(db, current_user, payload.permission_ids),
+    )
     db.commit()
     db.refresh(role)
     return role
@@ -115,7 +148,11 @@ def update_role(
     for field, value in data.items():
         setattr(role, field, value)
     if payload.permission_ids is not None:
-        set_role_permissions(db, role.id, payload.permission_ids)
+        set_role_permissions(
+            db,
+            role.id,
+            _permission_ids_for_write(db, current_user, payload.permission_ids),
+        )
     db.commit()
     db.refresh(role)
     return role

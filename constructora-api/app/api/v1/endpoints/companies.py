@@ -75,14 +75,14 @@ def onboard_company(
         else []
     )
     admin_role = next(
-        (role for role in roles if role.name == "Administrador de constructora"),
+        (role for role in roles if role.name == "Administrador"),
         None,
     )
     if admin_role is None:
         all_roles = ensure_default_company_roles(db, company.id)
         roles = all_roles
         admin_role = next(
-            role for role in all_roles if role.name == "Administrador de constructora"
+            role for role in all_roles if role.name == "Administrador"
         )
 
     admin_user = User(
