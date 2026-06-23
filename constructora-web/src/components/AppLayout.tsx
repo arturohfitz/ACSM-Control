@@ -38,8 +38,6 @@ const navItems = [
   { to: '/', label: 'Inicio', icon: Home, permission: null },
   { to: '/companies', label: 'Constructoras', icon: Building2, permission: 'companies:view' },
   { to: '/clients', label: 'Inmobiliarias', icon: Building2, permission: 'clients:view' },
-  { to: '/projects', label: 'Desarrollos', icon: FolderKanban, permission: 'projects:view' },
-  { to: '/house-models', label: 'Modelos', icon: Layers3, permission: 'house_models:view' },
   { to: '/materials', label: 'Catalogo materiales', icon: Package, permission: 'materials:view' },
   { to: '/field-requisitions', label: 'Obra', icon: HardHat, permission: 'material_requisitions:create' },
   {
@@ -60,6 +58,27 @@ const navItems = [
   { to: '/roles', label: 'Roles', icon: Shield, permission: 'roles:view' },
   { to: '/events', label: 'Eventos', icon: Activity, permission: 'events:view' },
   { to: '/settings', label: 'Ajustes', icon: Settings, permission: 'settings:view' },
+]
+
+const realEstateSubItems = [
+  {
+    to: '/clients',
+    label: 'Inmobiliarias',
+    icon: Building2,
+    permission: 'clients:view',
+  },
+  {
+    to: '/projects',
+    label: 'Desarrollos',
+    icon: FolderKanban,
+    permission: 'projects:view',
+  },
+  {
+    to: '/house-models',
+    label: 'Modelos',
+    icon: Layers3,
+    permission: 'house_models:view',
+  },
 ]
 
 const purchasingSubItems = [
@@ -258,12 +277,17 @@ export default function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const title = titles[location.pathname] ?? 'ACSM Control'
+  const isRealEstateRoute =
+    location.pathname === '/clients' ||
+    location.pathname === '/projects' ||
+    location.pathname === '/house-models'
   const isWorkRoute = location.pathname.startsWith('/field-requisitions')
   const isPurchasingRoute =
     location.pathname.startsWith('/purchasing') ||
     location.pathname === '/suppliers' ||
     location.pathname === '/supplier-agreements'
   const isInventoryRoute = location.pathname.startsWith('/inventory')
+  const [realEstateOpen, setRealEstateOpen] = useState(isRealEstateRoute)
   const [workOpen, setWorkOpen] = useState(isWorkRoute)
   const [purchasingOpen, setPurchasingOpen] = useState(isPurchasingRoute)
   const [inventoryOpen, setInventoryOpen] = useState(isInventoryRoute)
@@ -278,6 +302,10 @@ export default function AppLayout() {
   const [actionNotice, setActionNotice] = useState<
     (Required<ActionNoticePayload> & { id: number }) | null
   >(null)
+  const visibleRealEstateSubItems = useMemo(
+    () => realEstateSubItems.filter((item) => hasPermission(item.permission)),
+    [hasPermission],
+  )
   const visibleWorkSubItems = useMemo(
     () => workSubItems.filter((item) => hasPermission(item.permission)),
     [hasPermission],
@@ -293,11 +321,16 @@ export default function AppLayout() {
   const visibleNavItems = useMemo(
     () =>
       navItems.filter((item) => {
+        if (item.to === '/clients') return visibleRealEstateSubItems.length > 0
         if (item.to === '/purchasing') return visiblePurchasingSubItems.length > 0
         return !item.permission || hasPermission(item.permission)
       }),
-    [hasPermission, visiblePurchasingSubItems.length],
+    [hasPermission, visiblePurchasingSubItems.length, visibleRealEstateSubItems.length],
   )
+
+  useEffect(() => {
+    setRealEstateOpen(isRealEstateRoute)
+  }, [isRealEstateRoute])
 
   useEffect(() => {
     setWorkOpen(isWorkRoute)
@@ -430,18 +463,19 @@ export default function AppLayout() {
         <nav className="scrollbar-thin flex-1 space-y-2 overflow-y-auto px-3 py-5">
           {visibleNavItems.map((item) => {
             const Icon = item.icon
+            const hasRealEstateChildren = item.to === '/clients' && visibleRealEstateSubItems.length > 0
             const hasWorkChildren = item.to === '/field-requisitions' && visibleWorkSubItems.length > 0
             const hasPurchasingChildren = item.to === '/purchasing' && visiblePurchasingSubItems.length > 0
             const hasInventoryChildren = item.to === '/inventory' && visibleInventorySubItems.length > 0
-            const primaryTo =
-              hasWorkChildren
-                ? visibleWorkSubItems[0].to
-                : hasPurchasingChildren
-                  ? visiblePurchasingSubItems[0].to
-                  : hasInventoryChildren
-                    ? visibleInventorySubItems[0].to
-                    : item.to
+            const primaryTo = (() => {
+              if (hasRealEstateChildren) return visibleRealEstateSubItems[0].to
+              if (hasWorkChildren) return visibleWorkSubItems[0].to
+              if (hasPurchasingChildren) return visiblePurchasingSubItems[0].to
+              if (hasInventoryChildren) return visibleInventorySubItems[0].to
+              return item.to
+            })()
             const isModuleOpen =
+              (hasRealEstateChildren && realEstateOpen) ||
               (hasWorkChildren && workOpen) ||
               (hasPurchasingChildren && purchasingOpen) ||
               (hasInventoryChildren && inventoryOpen)
@@ -462,6 +496,7 @@ export default function AppLayout() {
                   className={({ isActive }) => {
                     const isSectionActive =
                       isActive ||
+                      (item.to === '/clients' && isRealEstateRoute) ||
                       (item.to === '/field-requisitions' && isWorkRoute) ||
                       (item.to === '/purchasing' && isPurchasingRoute) ||
                       (item.to === '/inventory' && isInventoryRoute)
@@ -477,10 +512,11 @@ export default function AppLayout() {
                     <Icon className="h-4 w-4" aria-hidden="true" />
                   </span>
                   <span className="truncate">{item.label}</span>
-                  {hasWorkChildren || hasPurchasingChildren || hasInventoryChildren ? (
+                  {hasRealEstateChildren || hasWorkChildren || hasPurchasingChildren || hasInventoryChildren ? (
                     <ChevronDown
                       className={[
                         'ml-auto h-4 w-4 shrink-0 opacity-80 transition-transform',
+                        (hasRealEstateChildren && realEstateOpen) ||
                         (hasWorkChildren && workOpen) ||
                         (hasPurchasingChildren && purchasingOpen) ||
                         (hasInventoryChildren && inventoryOpen)
@@ -491,6 +527,34 @@ export default function AppLayout() {
                     />
                   ) : null}
                 </NavLink>
+                {hasRealEstateChildren ? (
+                  <div className="mt-1 space-y-1">
+                    {realEstateOpen ? (
+                      <div className="space-y-1 border-l border-sky-200/20 pl-3">
+                        {visibleRealEstateSubItems.map((subItem) => (
+                          <NavLink
+                            key={subItem.to}
+                            to={subItem.to}
+                            end
+                            className={({ isActive }) =>
+                              [
+                                'group/sub relative flex min-h-10 items-center gap-3 overflow-hidden rounded-xl border px-3 py-2 text-[13px] font-semibold transition',
+                                isActive
+                                  ? 'border-cyan-200/70 bg-[linear-gradient(135deg,#1bb7e6_0%,#0a73b8_48%,#064a7d_100%)] text-white shadow-[0_14px_28px_rgba(7,126,190,0.38),inset_0_1px_0_rgba(255,255,255,0.30),inset_4px_0_0_rgba(209,246,255,0.88)]'
+                                  : 'border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.075),rgba(255,255,255,0.035))] text-slate-300 hover:border-cyan-200/35 hover:bg-white/12 hover:text-white',
+                              ].join(' ')
+                            }
+                          >
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/14 ring-1 ring-white/15 transition group-hover/sub:bg-white/20">
+                              <subItem.icon className="h-3.5 w-3.5" aria-hidden="true" />
+                            </span>
+                            <span className="truncate">{subItem.label}</span>
+                          </NavLink>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {hasWorkChildren ? (
                   <div className="mt-1 space-y-1">
                     {workOpen ? (
