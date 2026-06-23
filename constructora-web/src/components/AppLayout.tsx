@@ -40,12 +40,6 @@ const navItems = [
   { to: '/clients', label: 'Inmobiliarias', icon: Building2, permission: 'clients:view' },
   { to: '/materials', label: 'Catalogo materiales', icon: Package, permission: 'materials:view' },
   { to: '/field-requisitions', label: 'Obra', icon: HardHat, permission: 'material_requisitions:create' },
-  {
-    to: '/construction-concepts',
-    label: 'Conceptos',
-    icon: ClipboardList,
-    permission: 'construction_concepts:view',
-  },
   { to: '/purchasing', label: 'Compras', icon: ShoppingCart, permission: 'supplier_rfq:view' },
   { to: '/inventory', label: 'Inventario', icon: Warehouse, permission: 'inventory:view' },
   {
@@ -120,6 +114,12 @@ const workSubItems = [
     label: 'Req. material de obra',
     icon: ClipboardList,
     permission: 'material_requisitions:create',
+  },
+  {
+    to: '/construction-concepts',
+    label: 'Conceptos',
+    icon: ClipboardList,
+    permission: 'construction_concepts:view',
   },
 ]
 
@@ -281,7 +281,9 @@ export default function AppLayout() {
     location.pathname === '/clients' ||
     location.pathname === '/projects' ||
     location.pathname === '/house-models'
-  const isWorkRoute = location.pathname.startsWith('/field-requisitions')
+  const isWorkRoute =
+    location.pathname.startsWith('/field-requisitions') ||
+    location.pathname === '/construction-concepts'
   const isPurchasingRoute =
     location.pathname.startsWith('/purchasing') ||
     location.pathname === '/suppliers' ||
@@ -322,10 +324,16 @@ export default function AppLayout() {
     () =>
       navItems.filter((item) => {
         if (item.to === '/clients') return visibleRealEstateSubItems.length > 0
+        if (item.to === '/field-requisitions') return visibleWorkSubItems.length > 0
         if (item.to === '/purchasing') return visiblePurchasingSubItems.length > 0
         return !item.permission || hasPermission(item.permission)
       }),
-    [hasPermission, visiblePurchasingSubItems.length, visibleRealEstateSubItems.length],
+    [
+      hasPermission,
+      visiblePurchasingSubItems.length,
+      visibleRealEstateSubItems.length,
+      visibleWorkSubItems.length,
+    ],
   )
 
   useEffect(() => {
