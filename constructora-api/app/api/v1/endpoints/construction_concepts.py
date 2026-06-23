@@ -1,11 +1,23 @@
-from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import require_permission
 from app.db.session import get_db
-from app.models import ConceptLabor, ConceptMaterial, ConstructionConcept, LaborRate, Material, User
+from app.models import (
+    Client,
+    ConceptLabor,
+    ConceptMaterial,
+    ConstructionConcept,
+    HouseModelBudgetActivity,
+    LaborRate,
+    Material,
+    Project,
+    ProjectHouseModel,
+    User,
+)
 from app.schemas.business import (
+    ConstructionConceptModelCatalogRead,
     ConstructionConceptCreate,
     ConstructionConceptRead,
     ConstructionConceptUpdate,
@@ -38,6 +50,97 @@ def list_concepts(
             statement.options(*_concept_options()).offset(skip).limit(limit)
         ).all()
     )
+
+
+@router.get("/model-catalog", response_model=list[ConstructionConceptModelCatalogRead])
+def list_model_concept_catalog(
+    project_id: int,
+    house_model_id: int,
+    q: str | None = None,
+    limit: int = Query(default=500, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("construction_concepts", "view")),
+) -> list[ConstructionConceptModelCatalogRead]:
+    project = get_or_404(db, Project, project_id)
+    ensure_same_company(current_user, project, db=db)
+    client = get_or_404(db, Client, project.client_id)
+    assignment = db.scalar(
+        select(ProjectHouseModel)
+        .where(
+            ProjectHouseModel.project_id == project_id,
+            ProjectHouseModel.house_model_id == house_model_id,
+        )
+        .options(selectinload(ProjectHouseModel.house_model))
+    )
+    if assignment is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El modelo no esta asignado al desarrollo seleccionado",
+        )
+
+    statement = (
+        select(HouseModelBudgetActivity)
+        .where(
+            HouseModelBudgetActivity.client_id == project.client_id,
+            HouseModelBudgetActivity.house_model_id == house_model_id,
+            HouseModelBudgetActivity.validation_status != "ignored",
+        )
+        .options(selectinload(HouseModelBudgetActivity.construction_concept))
+        .order_by(
+            HouseModelBudgetActivity.sort_order,
+            HouseModelBudgetActivity.id,
+        )
+        .limit(limit)
+    )
+    if q:
+        needle = f"%{q.strip()}%"
+        statement = statement.where(
+            or_(
+                HouseModelBudgetActivity.description.ilike(needle),
+                HouseModelBudgetActivity.source_code.ilike(needle),
+                HouseModelBudgetActivity.chapter_name.ilike(needle),
+            )
+        )
+
+    activities = list(db.scalars(statement).all())
+    return [
+        ConstructionConceptModelCatalogRead(
+            id=activity.id,
+            project_id=project.id,
+            project_name=project.name,
+            client_id=client.id,
+            client_name=client.name,
+            house_model_id=assignment.house_model_id,
+            house_model_name=assignment.house_model.name,
+            construction_concept_id=activity.construction_concept_id,
+            concept_code=(
+                activity.construction_concept.code
+                if activity.construction_concept is not None
+                else activity.source_code
+            ),
+            concept_name=(
+                activity.construction_concept.name
+                if activity.construction_concept is not None
+                else activity.description
+            ),
+            chapter_code=activity.chapter_code,
+            chapter_name=activity.chapter_name,
+            source_code=activity.source_code,
+            unit=(
+                activity.construction_concept.unit
+                if activity.construction_concept is not None
+                else activity.unit
+            ),
+            quantity_per_house=activity.quantity_per_house,
+            assigned_houses=assignment.quantity,
+            total_required=activity.quantity_per_house * assignment.quantity,
+            unit_price_reference=activity.unit_price_reference,
+            total_price_reference=activity.total_price_reference,
+            validation_status=activity.validation_status,
+            is_linked=activity.construction_concept_id is not None,
+        )
+        for activity in activities
+    ]
 
 
 @router.post("", response_model=ConstructionConceptRead, status_code=status.HTTP_201_CREATED)

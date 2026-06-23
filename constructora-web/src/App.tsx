@@ -7,12 +7,12 @@ import EventsPage from './pages/EventsPage'
 import {
   ClientsPage,
   CompaniesPage,
-  ConstructionConceptsPage,
   HouseModelsPage,
   RolesPage,
   SuppliersPage,
   UsersPage,
 } from './pages/GenericResourcePage'
+import ConstructionConceptsPage from './pages/ConstructionConceptsPage'
 import InventoryPage from './pages/InventoryPage'
 import LoginPage from './pages/LoginPage'
 import MaterialRequisitionsPage from './pages/MaterialRequisitionsPage'

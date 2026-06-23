@@ -18,10 +18,6 @@ export function SuppliersPage() {
   return <ResourcePage config={resources.suppliers} />
 }
 
-export function ConstructionConceptsPage() {
-  return <ResourcePage config={resources.constructionConcepts} />
-}
-
 export function UsersPage() {
   return <ResourcePage config={resources.users} />
 }

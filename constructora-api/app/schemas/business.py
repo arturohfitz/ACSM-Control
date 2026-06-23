@@ -389,6 +389,30 @@ class ConstructionConceptRead(ConstructionConceptBase, TimestampRead):
     concept_labor: list[ConceptLaborRead] = Field(default_factory=list)
 
 
+class ConstructionConceptModelCatalogRead(BaseModel):
+    id: int
+    project_id: int
+    project_name: str
+    client_id: int
+    client_name: str
+    house_model_id: int
+    house_model_name: str
+    construction_concept_id: int | None = None
+    concept_code: str | None = None
+    concept_name: str
+    chapter_code: str | None = None
+    chapter_name: str | None = None
+    source_code: str | None = None
+    unit: str
+    quantity_per_house: NonNegativeDecimal
+    assigned_houses: NonNegativeDecimal
+    total_required: NonNegativeDecimal
+    unit_price_reference: NonNegativeDecimal | None = None
+    total_price_reference: NonNegativeDecimal | None = None
+    validation_status: ReviewStatus
+    is_linked: bool
+
+
 class HouseModelConceptCreate(BaseModel):
     construction_concept_id: int
     quantity_formula_type: QuantityFormulaType = "fixed"
