@@ -115,16 +115,16 @@ const workSubItems = [
     permission: 'materials:view',
   },
   {
-    to: '/field-requisitions',
-    label: 'Req. material de obra',
-    icon: ClipboardList,
-    permission: 'material_requisitions:create',
-  },
-  {
     to: '/construction-concepts',
     label: 'Conceptos',
     icon: ClipboardList,
     permission: 'construction_concepts:view',
+  },
+  {
+    to: '/field-requisitions',
+    label: 'Req. material de obra',
+    icon: ClipboardList,
+    permission: 'material_requisitions:create',
   },
 ]
 
