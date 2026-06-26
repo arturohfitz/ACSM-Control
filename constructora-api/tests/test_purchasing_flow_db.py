@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.v1.endpoints.inventory import create_reception
@@ -18,6 +18,7 @@ from app.api.v1.endpoints.purchasing import (
     list_supplier_quote_approvals,
     request_supplier_rfq_approval,
     supplier_rfq_comparison,
+    update_purchase_order_billing_mode,
     validate_supplier_invoice,
 )
 from app.core.security import get_password_hash
@@ -29,6 +30,7 @@ from app.models import (
     Project,
     ProjectWarehouse,
     PurchaseOrder,
+    SupplierInvoiceItem,
     Supplier,
     SupplierInvoice,
     SupplierRFQ,
@@ -36,7 +38,9 @@ from app.models import (
 )
 from app.schemas.inventory import MaterialReceptionCreate, MaterialReceptionItemCreate
 from app.schemas.purchasing import (
+    PurchaseOrderBillingModeUpdate,
     SupplierInvoiceCreate,
+    SupplierInvoiceItemCreate,
     SupplierPaymentCreate,
     SupplierQuoteCreate,
     SupplierQuoteItemCreate,
@@ -375,6 +379,208 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.assertIn(("facturas_proveedor", "create", "SupplierInvoice"), event_keys)
         self.assertIn(("facturas_proveedor", "validate", "SupplierInvoice"), event_keys)
         self.assertIn(("pagos_proveedores", "schedule", "SupplierPayment"), event_keys)
+
+    def test_purchase_order_partial_billing_and_payments(self) -> None:
+        rfq = create_supplier_rfq(
+            SupplierRFQCreate(
+                project_id=self.project.id,
+                warehouse_id=self.warehouse.id,
+                title=f"Flujo OC parcial {self.suffix}",
+                required_by=date.today() + timedelta(days=10),
+                response_deadline=date.today() + timedelta(days=5),
+                supplier_ids=[supplier.id for supplier in self.suppliers],
+                items=[
+                    SupplierRFQItemCreate(
+                        source_code="MOR-001",
+                        description="Mortero en saco",
+                        unit="saco",
+                        quantity=Decimal("100"),
+                    ),
+                ],
+            ),
+            BackgroundTasks(),
+            self.db,
+            self.user,
+        )
+        quote = None
+        for index, supplier in enumerate(self.suppliers, start=1):
+            created_quote = create_supplier_quote(
+                rfq.id,
+                SupplierQuoteCreate(
+                    supplier_id=supplier.id,
+                    quote_number=f"COT-PARCIAL-{index}-{self.suffix}",
+                    delivery_days=supplier.average_delivery_days,
+                    payment_terms_days=supplier.payment_terms_days,
+                    items=[
+                        SupplierQuoteItemCreate(
+                            rfq_item_id=rfq.items[0].id,
+                            unit_price=Decimal("25") + Decimal(index - 1),
+                        ),
+                    ],
+                ),
+                self.db,
+                self.user,
+            )
+            if index == 1:
+                quote = created_quote
+        assert quote is not None
+        request_supplier_rfq_approval(
+            rfq.id,
+            SupplierRFQApprovalRequest(request_notes="Comparativo completo para pagos parciales"),
+            self.db,
+            self.user,
+        )
+        approval_result = approve_supplier_quote(quote.id, self.db, self.user)
+        purchase_order = approval_result["purchase_order"]
+        expected_list = approval_result["expected_list"]
+
+        purchase_order = update_purchase_order_billing_mode(
+            purchase_order.id,
+            PurchaseOrderBillingModeUpdate(billing_mode="partial"),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(purchase_order.billing_mode, "partial")
+
+        purchase_order = self._get_purchase_order(purchase_order.id)
+        po_item = purchase_order.items[0]
+        create_reception(
+            self.project.id,
+            MaterialReceptionCreate(
+                warehouse_id=self.warehouse.id,
+                expected_list_id=expected_list.id,
+                delivery_reference=f"ENTREGA-50-{self.suffix}",
+                received_by="Almacen CI",
+                items=[
+                    MaterialReceptionItemCreate(
+                        expected_item_id=expected_list.items[0].id,
+                        received_quantity=Decimal("50"),
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+
+        purchase_order = self._get_purchase_order(purchase_order.id)
+        self.assertEqual(purchase_order.status, "partially_received")
+        first_invoice = create_supplier_invoice(
+            SupplierInvoiceCreate(
+                purchase_order_id=purchase_order.id,
+                invoice_number=f"FAC-PARCIAL-1-{self.suffix}",
+                invoice_date=date.today(),
+                total=Decimal("1250.00"),
+                items=[
+                    SupplierInvoiceItemCreate(
+                        purchase_order_item_id=po_item.id,
+                        quantity=Decimal("50"),
+                        unit_price=Decimal("25"),
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(first_invoice.status, "approved_for_payment")
+        self.assertEqual(first_invoice.purchase_order.status, "partially_received")
+
+        blocked_invoice = create_supplier_invoice(
+            SupplierInvoiceCreate(
+                purchase_order_id=purchase_order.id,
+                invoice_number=f"FAC-EXCESO-{self.suffix}",
+                invoice_date=date.today(),
+                total=Decimal("25.00"),
+                items=[
+                    SupplierInvoiceItemCreate(
+                        purchase_order_item_id=po_item.id,
+                        quantity=Decimal("1"),
+                        unit_price=Decimal("25"),
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(blocked_invoice.status, "blocked")
+
+        first_payment = create_supplier_payment(
+            SupplierPaymentCreate(
+                supplier_invoice_id=first_invoice.id,
+                amount=first_invoice.total,
+                scheduled_date=date.today(),
+                paid_at=date.today(),
+                status="paid",
+                reference=f"PAGO-PARCIAL-1-{self.suffix}",
+            ),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(first_payment.status, "paid")
+        purchase_order = self._get_purchase_order(purchase_order.id)
+        self.assertEqual(purchase_order.status, "partially_received")
+
+        create_reception(
+            self.project.id,
+            MaterialReceptionCreate(
+                warehouse_id=self.warehouse.id,
+                expected_list_id=expected_list.id,
+                delivery_reference=f"ENTREGA-100-{self.suffix}",
+                received_by="Almacen CI",
+                items=[
+                    MaterialReceptionItemCreate(
+                        expected_item_id=expected_list.items[0].id,
+                        received_quantity=Decimal("50"),
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+        purchase_order = self._get_purchase_order(purchase_order.id)
+        self.assertEqual(purchase_order.status, "received")
+
+        second_invoice = create_supplier_invoice(
+            SupplierInvoiceCreate(
+                purchase_order_id=purchase_order.id,
+                invoice_number=f"FAC-PARCIAL-2-{self.suffix}",
+                invoice_date=date.today(),
+                total=Decimal("1250.00"),
+                items=[
+                    SupplierInvoiceItemCreate(
+                        purchase_order_item_id=po_item.id,
+                        quantity=Decimal("50"),
+                        unit_price=Decimal("25"),
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(second_invoice.status, "approved_for_payment")
+        create_supplier_payment(
+            SupplierPaymentCreate(
+                supplier_invoice_id=second_invoice.id,
+                amount=second_invoice.total,
+                scheduled_date=date.today(),
+                paid_at=date.today(),
+                status="paid",
+                reference=f"PAGO-PARCIAL-2-{self.suffix}",
+            ),
+            self.db,
+            self.user,
+        )
+        purchase_order = self._get_purchase_order(purchase_order.id)
+        self.assertEqual(purchase_order.status, "closed")
+
+        paid_quantity = self.db.scalar(
+            select(func.coalesce(func.sum(SupplierInvoiceItem.quantity), 0))
+            .join(SupplierInvoice, SupplierInvoice.id == SupplierInvoiceItem.supplier_invoice_id)
+            .where(
+                SupplierInvoiceItem.purchase_order_item_id == po_item.id,
+                SupplierInvoice.status == "paid",
+            )
+        )
+        self.assertEqual(paid_quantity, Decimal("100"))
 
 
 if __name__ == "__main__":

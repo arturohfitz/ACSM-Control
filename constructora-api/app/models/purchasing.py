@@ -321,6 +321,7 @@ class PurchaseOrder(TimestampMixin, Base):
     )
     po_number: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(40), default="issued", nullable=False)
+    billing_mode: Mapped[str] = mapped_column(String(40), default="single", nullable=False)
     issued_at: Mapped[date] = mapped_column(Date, nullable=False)
     expected_delivery_date: Mapped[date | None] = mapped_column(Date)
     payment_terms_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
@@ -383,7 +384,33 @@ class SupplierInvoice(TimestampMixin, Base):
 
     supplier: Mapped[Supplier] = relationship(back_populates="invoices")
     purchase_order: Mapped[PurchaseOrder] = relationship(back_populates="invoices")
+    items: Mapped[list["SupplierInvoiceItem"]] = relationship(
+        back_populates="supplier_invoice", cascade="all, delete-orphan"
+    )
     payments: Mapped[list["SupplierPayment"]] = relationship(back_populates="invoice")
+
+
+class SupplierInvoiceItem(Base):
+    __tablename__ = "supplier_invoice_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    supplier_invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_invoices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    purchase_order_item_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_order_items.id"), nullable=False, index=True
+    )
+    material_id: Mapped[int | None] = mapped_column(ForeignKey("materials.id"), index=True)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    unit: Mapped[str] = mapped_column(String(40), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    line_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    supplier_invoice: Mapped[SupplierInvoice] = relationship(back_populates="items")
+    purchase_order_item: Mapped[PurchaseOrderItem] = relationship()
+    material: Mapped["Material | None"] = relationship()
 
 
 class SupplierPayment(TimestampMixin, Base):

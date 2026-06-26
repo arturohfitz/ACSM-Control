@@ -29,6 +29,7 @@ from app.models import (
     SupplierAgreement,
     SupplierAgreementItem,
     SupplierInvoice,
+    SupplierInvoiceItem,
     SupplierPayment,
     SupplierQuote,
     SupplierQuoteApproval,
@@ -42,6 +43,7 @@ from app.models import (
 )
 from app.schemas.purchasing import (
     PurchaseOrderApprovalRead,
+    PurchaseOrderBillingModeUpdate,
     PurchaseOrderRead,
     SupplierAgreementCreate,
     SupplierAgreementEligibility,
@@ -403,6 +405,98 @@ def _invoice_status_for_po(purchase_order: PurchaseOrder) -> tuple[str, int, str
         0,
         "Factura aprobada para gestion de pago. La orden de compra esta completa.",
     )
+
+
+def _invoiced_quantities_by_po_item(
+    db: Session,
+    purchase_order: PurchaseOrder,
+    *,
+    exclude_invoice_id: int | None = None,
+    paid_only: bool = False,
+) -> dict[int, Decimal]:
+    invoice_statuses = ("paid",) if paid_only else ("received", "approved_for_payment", "scheduled", "paid")
+    statement = (
+        select(SupplierInvoiceItem.purchase_order_item_id, func.coalesce(func.sum(SupplierInvoiceItem.quantity), 0))
+        .join(SupplierInvoice, SupplierInvoice.id == SupplierInvoiceItem.supplier_invoice_id)
+        .where(
+            SupplierInvoice.purchase_order_id == purchase_order.id,
+            SupplierInvoice.status.in_(invoice_statuses),
+        )
+        .group_by(SupplierInvoiceItem.purchase_order_item_id)
+    )
+    if exclude_invoice_id is not None:
+        statement = statement.where(SupplierInvoice.id != exclude_invoice_id)
+    return {item_id: Decimal(quantity) for item_id, quantity in db.execute(statement).all()}
+
+
+def _invoice_status_for_items(
+    db: Session,
+    invoice: SupplierInvoice,
+    *,
+    exclude_invoice_id: int | None = None,
+) -> tuple[str, int, str]:
+    purchase_order = invoice.purchase_order
+    if purchase_order.billing_mode != "partial":
+        return (
+            "blocked",
+            len(invoice.items),
+            "La orden de compra esta en modo pago unico. Cambiala a facturacion parcial para pagar entregas parciales.",
+        )
+    already_invoiced = _invoiced_quantities_by_po_item(
+        db,
+        purchase_order,
+        exclude_invoice_id=exclude_invoice_id,
+    )
+    blocked_lines = 0
+    for item in invoice.items:
+        available = item.purchase_order_item.received_quantity - already_invoiced.get(
+            item.purchase_order_item_id,
+            Decimal("0"),
+        )
+        if item.quantity > available:
+            blocked_lines += 1
+    if blocked_lines:
+        return (
+            "blocked",
+            blocked_lines,
+            "La factura queda bloqueada porque incluye cantidades mayores a lo recibido o ya facturado.",
+        )
+    return (
+        "approved_for_payment",
+        0,
+        "Factura aprobada para pago parcial contra material recibido.",
+    )
+
+
+def _invoice_status(invoice: SupplierInvoice, db: Session) -> tuple[str, int, str]:
+    if invoice.items:
+        return _invoice_status_for_items(db, invoice, exclude_invoice_id=invoice.id)
+    return _invoice_status_for_po(invoice.purchase_order)
+
+
+def _sync_purchase_order_after_payment(db: Session, purchase_order: PurchaseOrder) -> None:
+    db.flush()
+    if purchase_order.billing_mode == "partial":
+        paid_quantities = _invoiced_quantities_by_po_item(db, purchase_order, paid_only=True)
+        fully_paid = bool(purchase_order.items) and all(
+            paid_quantities.get(item.id, Decimal("0")) >= item.quantity_ordered
+            for item in purchase_order.items
+        )
+        if fully_paid:
+            purchase_order.status = "closed"
+        else:
+            _sync_purchase_order_status(purchase_order)
+        return
+    paid_invoice_exists = db.scalar(
+        select(SupplierInvoice.id)
+        .where(
+            SupplierInvoice.purchase_order_id == purchase_order.id,
+            SupplierInvoice.status == "paid",
+        )
+        .limit(1)
+    )
+    if paid_invoice_exists and _po_is_complete(purchase_order):
+        purchase_order.status = "closed"
 
 
 @router.get("/suppliers", response_model=list[SupplierRead])
@@ -2222,6 +2316,32 @@ def send_purchase_order(
     return get_purchase_order(purchase_order_id, db, current_user)
 
 
+@router.patch("/purchase-orders/{purchase_order_id}/billing-mode", response_model=PurchaseOrderRead)
+def update_purchase_order_billing_mode(
+    purchase_order_id: int,
+    payload: PurchaseOrderBillingModeUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("purchase_orders", "send")),
+) -> PurchaseOrder:
+    purchase_order = get_purchase_order(purchase_order_id, db, current_user)
+    if purchase_order.billing_mode != payload.billing_mode:
+        invoice_count = db.scalar(
+            select(func.count(SupplierInvoice.id)).where(
+                SupplierInvoice.purchase_order_id == purchase_order.id
+            )
+        )
+        if invoice_count:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se puede cambiar el modo de facturacion cuando la orden ya tiene facturas registradas.",
+            )
+    before = snapshot(purchase_order, ["billing_mode"])
+    purchase_order.billing_mode = payload.billing_mode
+    record_update(db, current_user, module="ordenes_compra", item=purchase_order, before=before)
+    db.commit()
+    return get_purchase_order(purchase_order_id, db, current_user)
+
+
 @router.get("/supplier-invoices", response_model=list[SupplierInvoiceRead])
 def list_supplier_invoices(
     skip: int = 0,
@@ -2236,6 +2356,7 @@ def list_supplier_invoices(
                 selectinload(SupplierInvoice.supplier),
                 selectinload(SupplierInvoice.purchase_order)
                 .selectinload(PurchaseOrder.items),
+                selectinload(SupplierInvoice.items),
             )
             .order_by(SupplierInvoice.due_date, SupplierInvoice.created_at.desc())
             .offset(skip)
@@ -2252,11 +2373,50 @@ def create_supplier_invoice(
 ) -> SupplierInvoice:
     purchase_order = get_purchase_order(payload.purchase_order_id, db, current_user)
     supplier = purchase_order.supplier
-    invoice_status, _pending, message = _invoice_status_for_po(purchase_order)
+    if purchase_order.billing_mode == "partial" and not payload.items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Captura las partidas facturadas para una orden en modo parcial.",
+        )
+    if purchase_order.billing_mode != "partial" and payload.items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cambia la orden a facturacion parcial antes de capturar partidas.",
+        )
     due_date = payload.due_date or invoice_due_date(
         payload.invoice_date,
         purchase_order.payment_terms_days,
     )
+    po_item_by_id = {item.id: item for item in purchase_order.items}
+    invoice_items: list[SupplierInvoiceItem] = []
+    items_total = Decimal("0")
+    for item_payload in payload.items:
+        po_item = po_item_by_id.get(item_payload.purchase_order_item_id)
+        if po_item is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Una partida de factura no pertenece a la orden de compra.",
+            )
+        unit_price = item_payload.unit_price if item_payload.unit_price is not None else po_item.unit_price
+        line_total = (item_payload.quantity * unit_price).quantize(Decimal("0.01"))
+        items_total += line_total
+        invoice_items.append(
+            SupplierInvoiceItem(
+                purchase_order_item_id=po_item.id,
+                material_id=po_item.material_id,
+                description=po_item.description,
+                unit=po_item.unit,
+                quantity=item_payload.quantity,
+                unit_price=unit_price,
+                line_total=line_total,
+                notes=item_payload.notes,
+            )
+        )
+    if invoice_items and abs(items_total - payload.total) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El total de la factura no coincide con las partidas capturadas.",
+        )
     invoice = SupplierInvoice(
         company_id=purchase_order.company_id,
         supplier_id=supplier.id,
@@ -2264,17 +2424,36 @@ def create_supplier_invoice(
         invoice_number=payload.invoice_number,
         invoice_date=payload.invoice_date,
         due_date=due_date,
-        subtotal=payload.subtotal,
+        subtotal=items_total if invoice_items else payload.subtotal,
         total=payload.total,
-        status=invoice_status,
+        status="received",
         document_name=payload.document_name,
-        notes=payload.notes or message,
+        notes=payload.notes,
         validated_at=_now(),
         validated_by=current_user.id,
     )
     db.add(invoice)
+    db.flush()
+    for invoice_item in invoice_items:
+        invoice_item.supplier_invoice_id = invoice.id
+        db.add(invoice_item)
+    db.flush()
+    invoice = db.scalar(
+        select(SupplierInvoice)
+        .where(SupplierInvoice.id == invoice.id)
+        .options(
+            selectinload(SupplierInvoice.items).selectinload(SupplierInvoiceItem.purchase_order_item),
+            selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+        )
+    )
+    if invoice is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    invoice_status, _pending, message = _invoice_status(invoice, db)
+    invoice.status = invoice_status
+    invoice.notes = payload.notes or message
     if invoice_status == "approved_for_payment":
-        purchase_order.status = "factured"
+        if not invoice.items:
+            invoice.purchase_order.status = "factured"
     db.flush()
     record_create(db, current_user, module="facturas_proveedor", item=invoice)
     if invoice_status == "approved_for_payment":
@@ -2329,12 +2508,15 @@ def validate_supplier_invoice(
     invoice = db.scalar(
         select(SupplierInvoice)
         .where(SupplierInvoice.id == invoice_id)
-        .options(selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items))
+        .options(
+            selectinload(SupplierInvoice.items).selectinload(SupplierInvoiceItem.purchase_order_item),
+            selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+        )
     )
     if invoice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
     ensure_same_company(current_user, invoice, db=db)
-    next_status, pending_items, message = _invoice_status_for_po(invoice.purchase_order)
+    next_status, pending_items, message = _invoice_status(invoice, db)
     invoice.status = next_status
     invoice.validated_at = _now()
     invoice.validated_by = current_user.id
@@ -2423,6 +2605,14 @@ def create_supplier_payment(
     )
     db.add(payment)
     invoice.status = "paid" if payment.status == "paid" else "scheduled"
+    if invoice.status == "paid":
+        purchase_order = db.scalar(
+            select(PurchaseOrder)
+            .where(PurchaseOrder.id == invoice.purchase_order_id)
+            .options(selectinload(PurchaseOrder.items))
+        )
+        if purchase_order is not None:
+            _sync_purchase_order_after_payment(db, purchase_order)
     db.flush()
     record_event(
         db,
@@ -2459,10 +2649,16 @@ def update_supplier_payment(
     for field, value in data.items():
         setattr(payment, field, value)
     updated = payment
-    invoice = get_or_404(db, SupplierInvoice, updated.supplier_invoice_id)
+    invoice = db.scalar(
+        select(SupplierInvoice)
+        .where(SupplierInvoice.id == updated.supplier_invoice_id)
+        .options(selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items))
+    )
+    if invoice is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
     if updated.status == "paid":
         invoice.status = "paid"
-        invoice.purchase_order.status = "closed"
+        _sync_purchase_order_after_payment(db, invoice.purchase_order)
     elif updated.status == "scheduled":
         invoice.status = "scheduled"
     record_update(db, current_user, module="pagos_proveedores", item=updated, before=before)

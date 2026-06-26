@@ -13,6 +13,7 @@ type PurchaseOrder = {
   id: number
   po_number: string
   status: string
+  billing_mode: 'single' | 'partial'
   subtotal: string
   payment_terms_days: number
   supplier?: Supplier | null
@@ -21,8 +22,17 @@ type PurchaseOrder = {
     description: string
     quantity_ordered: string
     received_quantity: string
+    unit_price: string
     unit: string
   }[]
+}
+
+type SupplierInvoiceItem = {
+  id: number
+  purchase_order_item_id: number
+  quantity: string
+  unit_price: string
+  line_total: string
 }
 
 type SupplierInvoice = {
@@ -38,6 +48,7 @@ type SupplierInvoice = {
   notes?: string | null
   supplier?: Supplier | null
   purchase_order?: PurchaseOrder | null
+  items: SupplierInvoiceItem[]
 }
 
 type SupplierPayment = {
@@ -91,6 +102,7 @@ export default function SupplierPaymentsPage() {
   const [invoiceDate, setInvoiceDate] = useState('')
   const [documentName, setDocumentName] = useState('')
   const [total, setTotal] = useState('')
+  const [invoiceRows, setInvoiceRows] = useState<Record<number, { quantity: string; unit_price: string }>>({})
 
   const [invoiceToPay, setInvoiceToPay] = useState('')
   const [scheduledDate, setScheduledDate] = useState('')
@@ -100,6 +112,38 @@ export default function SupplierPaymentsPage() {
     () => new Map(invoices.map((invoice) => [invoice.id, invoice])),
     [invoices],
   )
+  const selectedOrder = useMemo(
+    () => orders.find((order) => String(order.id) === purchaseOrderId) ?? null,
+    [orders, purchaseOrderId],
+  )
+  const invoicedQuantityByItem = useMemo(() => {
+    const activeStatuses = new Set(['received', 'approved_for_payment', 'scheduled', 'paid'])
+    const totals = new Map<number, number>()
+    for (const invoice of invoices) {
+      if (!activeStatuses.has(invoice.status)) continue
+      for (const item of invoice.items ?? []) {
+        totals.set(
+          item.purchase_order_item_id,
+          (totals.get(item.purchase_order_item_id) ?? 0) + Number(item.quantity || 0),
+        )
+      }
+    }
+    return totals
+  }, [invoices])
+  const partialInvoiceRows = useMemo(() => {
+    if (!selectedOrder) return []
+    return selectedOrder.items.map((item) => {
+      const received = Number(item.received_quantity || 0)
+      const invoiced = invoicedQuantityByItem.get(item.id) ?? 0
+      const available = Math.max(received - invoiced, 0)
+      const draft = invoiceRows[item.id] ?? { quantity: '', unit_price: item.unit_price || '0' }
+      const quantity = Number(draft.quantity || 0)
+      const unitPrice = Number(draft.unit_price || 0)
+      return { ...item, received, invoiced, available, draft, lineTotal: quantity * unitPrice }
+    })
+  }, [invoiceRows, invoicedQuantityByItem, selectedOrder])
+  const partialTotal = partialInvoiceRows.reduce((sum, row) => sum + row.lineTotal, 0)
+  const selectedOrderIsPartial = selectedOrder?.billing_mode === 'partial'
 
   async function loadData() {
     setLoading(true)
@@ -125,18 +169,75 @@ export default function SupplierPaymentsPage() {
     void loadData()
   }, [])
 
+  useEffect(() => {
+    if (!selectedOrder) {
+      setInvoiceRows({})
+      return
+    }
+    setInvoiceRows((current) => {
+      const next: Record<number, { quantity: string; unit_price: string }> = {}
+      for (const item of selectedOrder.items) {
+        next[item.id] = current[item.id] ?? { quantity: '', unit_price: item.unit_price || '0' }
+      }
+      return next
+    })
+  }, [selectedOrder])
+
+  function patchInvoiceRow(itemId: number, patch: Partial<{ quantity: string; unit_price: string }>) {
+    setInvoiceRows((current) => ({
+      ...current,
+      [itemId]: {
+        quantity: current[itemId]?.quantity ?? '',
+        unit_price: current[itemId]?.unit_price ?? '0',
+        ...patch,
+      },
+    }))
+  }
+
+  async function updateBillingMode(mode: 'single' | 'partial') {
+    if (!selectedOrder) return
+    setMessage('')
+    setError('')
+    try {
+      const updated = await apiRequest<PurchaseOrder>(
+        `/purchasing/purchase-orders/${selectedOrder.id}/billing-mode`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ billing_mode: mode }),
+        },
+      )
+      setOrders((current) => current.map((order) => (order.id === updated.id ? updated : order)))
+      const successMessage =
+        mode === 'partial'
+          ? `Orden ${updated.po_number} configurada para facturacion parcial.`
+          : `Orden ${updated.po_number} configurada para pago unico.`
+      setMessage(successMessage)
+      showActionNotice(successMessage)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible cambiar el modo de facturacion')
+    }
+  }
+
   async function createInvoice() {
     setMessage('')
     setError('')
     try {
+      const partialItems = partialInvoiceRows
+        .filter((row) => Number(row.draft.quantity || 0) > 0)
+        .map((row) => ({
+          purchase_order_item_id: row.id,
+          quantity: Number(row.draft.quantity),
+          unit_price: Number(row.draft.unit_price || row.unit_price || 0),
+        }))
       const created = await apiRequest<SupplierInvoice>('/purchasing/supplier-invoices', {
         method: 'POST',
         body: JSON.stringify({
           purchase_order_id: Number(purchaseOrderId),
           invoice_number: invoiceNumber,
           invoice_date: invoiceDate,
-          total: Number(total),
+          total: selectedOrderIsPartial ? Number(partialTotal.toFixed(2)) : Number(total),
           document_name: documentName || null,
+          items: selectedOrderIsPartial ? partialItems : [],
         }),
       })
       const successMessage = `Factura ${created.invoice_number} registrada como ${statusLabel(created.status)}.`
@@ -145,6 +246,7 @@ export default function SupplierPaymentsPage() {
       setInvoiceNumber('')
       setDocumentName('')
       setTotal('')
+      setInvoiceRows({})
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible registrar la factura')
@@ -237,7 +339,7 @@ export default function SupplierPaymentsPage() {
             <div>
               <h2 className="font-semibold text-acsm-ink">Facturas de proveedores</h2>
               <p className="text-xs text-acsm-muted">
-                El sistema bloquea pago si la orden de compra tiene material pendiente.
+                Valida facturas completas o por entregas parciales contra material recibido.
               </p>
             </div>
           </div>
@@ -263,10 +365,42 @@ export default function SupplierPaymentsPage() {
                 <option value="">Orden de compra</option>
                 {orders.map((order) => (
                   <option key={order.id} value={order.id}>
-                    {order.po_number} · {order.supplier?.name ?? 'Proveedor'} · {statusLabel(order.status)}
+                    {order.po_number} · {order.supplier?.name ?? 'Proveedor'} · {statusLabel(order.status)} ·{' '}
+                    {order.billing_mode === 'partial' ? 'Parcial' : 'Pago unico'}
                   </option>
                 ))}
               </select>
+              {selectedOrder && (
+                <div className="rounded-md border border-acsm-line bg-white p-2">
+                  <div className="mb-2 text-xs font-semibold uppercase text-acsm-muted">Modo de facturacion</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void updateBillingMode('single')}
+                      className={[
+                        'h-9 rounded-md border px-3 text-xs font-bold',
+                        !selectedOrderIsPartial
+                          ? 'border-blue-300 bg-blue-50 text-blue-800'
+                          : 'border-acsm-line bg-white text-acsm-ink hover:bg-acsm-paper',
+                      ].join(' ')}
+                    >
+                      Pago unico
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void updateBillingMode('partial')}
+                      className={[
+                        'h-9 rounded-md border px-3 text-xs font-bold',
+                        selectedOrderIsPartial
+                          ? 'border-blue-300 bg-blue-50 text-blue-800'
+                          : 'border-acsm-line bg-white text-acsm-ink hover:bg-acsm-paper',
+                      ].join(' ')}
+                    >
+                      Parcial por entregas
+                    </button>
+                  </div>
+                </div>
+              )}
               <input
                 value={invoiceNumber}
                 onChange={(event) => setInvoiceNumber(event.target.value)}
@@ -285,18 +419,82 @@ export default function SupplierPaymentsPage() {
                 placeholder="Archivo o referencia"
                 className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
               />
-              <input
-                type="number"
-                step="0.01"
-                value={total}
-                onChange={(event) => setTotal(event.target.value)}
-                placeholder="Total factura"
-                className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
-              />
+              {selectedOrderIsPartial ? (
+                <div className="overflow-hidden rounded-md border border-acsm-line bg-white">
+                  <div className="border-b border-acsm-line px-3 py-2 text-xs font-semibold uppercase text-acsm-muted">
+                    Partidas recibidas disponibles para facturar
+                  </div>
+                  <div className="max-h-[260px] overflow-auto">
+                    <table className="min-w-[680px] w-full text-xs">
+                      <thead className="bg-acsm-paper text-acsm-muted">
+                        <tr>
+                          <th className="px-2 py-2 text-left">Material</th>
+                          <th className="px-2 py-2 text-right">Recibido</th>
+                          <th className="px-2 py-2 text-right">Facturado</th>
+                          <th className="px-2 py-2 text-right">Disponible</th>
+                          <th className="px-2 py-2 text-right">Facturar</th>
+                          <th className="px-2 py-2 text-right">PU</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {partialInvoiceRows.map((row) => (
+                          <tr key={row.id} className="border-t border-acsm-line">
+                            <td className="px-2 py-2 font-semibold text-acsm-ink">{row.description}</td>
+                            <td className="px-2 py-2 text-right">{row.received.toLocaleString('es-MX')} {row.unit}</td>
+                            <td className="px-2 py-2 text-right">{row.invoiced.toLocaleString('es-MX')}</td>
+                            <td className="px-2 py-2 text-right">{row.available.toLocaleString('es-MX')}</td>
+                            <td className="px-2 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                max={row.available}
+                                step="0.0001"
+                                value={row.draft.quantity}
+                                onChange={(event) => patchInvoiceRow(row.id, { quantity: event.target.value })}
+                                disabled={row.available <= 0}
+                                className="h-8 w-full rounded-md border border-acsm-line px-2 text-right disabled:bg-slate-100"
+                              />
+                            </td>
+                            <td className="px-2 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.0001"
+                                value={row.draft.unit_price}
+                                onChange={(event) => patchInvoiceRow(row.id, { unit_price: event.target.value })}
+                                disabled={row.available <= 0}
+                                className="h-8 w-full rounded-md border border-acsm-line px-2 text-right disabled:bg-slate-100"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="border-t border-acsm-line px-3 py-2 text-right text-sm font-bold text-acsm-ink">
+                    Total parcial: {formatMoney(partialTotal)}
+                  </div>
+                </div>
+              ) : (
+                <input
+                  type="number"
+                  step="0.01"
+                  value={total}
+                  onChange={(event) => setTotal(event.target.value)}
+                  placeholder="Total factura"
+                  className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
+                />
+              )}
               <button
                 type="button"
                 onClick={() => void createInvoice()}
-                disabled={loading || !purchaseOrderId || !invoiceNumber || !invoiceDate || !total}
+                disabled={
+                  loading ||
+                  !purchaseOrderId ||
+                  !invoiceNumber ||
+                  !invoiceDate ||
+                  (selectedOrderIsPartial ? partialTotal <= 0 : !total)
+                }
                 className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
               >
                 <FileCheck2 className="h-4 w-4" aria-hidden="true" />

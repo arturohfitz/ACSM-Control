@@ -17,6 +17,7 @@ TABLES_TO_CLEAR = (
     "audit_events",
     "email_outbox_messages",
     "supplier_payments",
+    "supplier_invoice_items",
     "supplier_invoices",
     "material_reception_items",
     "material_receptions",

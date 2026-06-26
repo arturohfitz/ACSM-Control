@@ -34,6 +34,7 @@ RFQSupplierStatus = Literal[
 SupplierQuoteStatus = Literal["received", "approval_requested", "rejected", "discarded", "approved"]
 SupplierQuoteApprovalStatus = Literal["requested", "approved", "rejected", "cancelled"]
 SupplierRFQExceptionStatus = Literal["requested", "approved", "rejected", "used", "cancelled"]
+PurchaseOrderBillingMode = Literal["single", "partial"]
 PurchaseOrderStatus = Literal[
     "issued",
     "sent",
@@ -440,6 +441,7 @@ class PurchaseOrderRead(TimestampRead):
     supplier_quote_id: int | None = None
     po_number: str
     status: PurchaseOrderStatus
+    billing_mode: PurchaseOrderBillingMode = "single"
     issued_at: date
     expected_delivery_date: date | None = None
     payment_terms_days: int
@@ -451,6 +453,30 @@ class PurchaseOrderRead(TimestampRead):
     items: list[PurchaseOrderItemRead] = Field(default_factory=list)
 
 
+class PurchaseOrderBillingModeUpdate(BaseModel):
+    billing_mode: PurchaseOrderBillingMode
+
+
+class SupplierInvoiceItemCreate(BaseModel):
+    purchase_order_item_id: int
+    quantity: PositiveDecimal
+    unit_price: NonNegativeDecimal | None = None
+    notes: str | None = None
+
+
+class SupplierInvoiceItemRead(ORMModel):
+    id: int
+    supplier_invoice_id: int
+    purchase_order_item_id: int
+    material_id: int | None = None
+    description: str
+    unit: str
+    quantity: Decimal
+    unit_price: Decimal
+    line_total: Decimal
+    notes: str | None = None
+
+
 class SupplierInvoiceCreate(BaseModel):
     purchase_order_id: int
     invoice_number: str = Field(min_length=1, max_length=100)
@@ -460,6 +486,7 @@ class SupplierInvoiceCreate(BaseModel):
     total: PositiveDecimal
     document_name: str | None = Field(default=None, max_length=255)
     notes: str | None = None
+    items: list[SupplierInvoiceItemCreate] = Field(default_factory=list)
 
 
 class SupplierInvoiceRead(TimestampRead):
@@ -479,6 +506,7 @@ class SupplierInvoiceRead(TimestampRead):
     validated_by: int | None = None
     supplier: SupplierRead | None = None
     purchase_order: PurchaseOrderRead | None = None
+    items: list[SupplierInvoiceItemRead] = Field(default_factory=list)
 
 
 class SupplierPaymentCreate(BaseModel):
