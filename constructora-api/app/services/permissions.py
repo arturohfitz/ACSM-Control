@@ -73,6 +73,7 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     ("supplier_agreements", "edit", "Editar convenios de proveedores"),
     ("supplier_agreements", "delete", "Eliminar convenios de proveedores"),
     ("supplier_agreements", "use", "Crear solicitudes directas por convenio"),
+    ("supplier_agreements", "approve", "Aprobar o rechazar convenios de proveedores"),
     ("supplier_rfq", "view", "Ver solicitudes a proveedores"),
     ("supplier_rfq", "create", "Crear solicitudes a proveedores"),
     ("supplier_rfq", "edit", "Editar solicitudes a proveedores"),

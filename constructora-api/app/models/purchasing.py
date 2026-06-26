@@ -62,6 +62,12 @@ class SupplierAgreement(TimestampMixin, Base):
     average_delivery_days: Mapped[int | None] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approval_status: Mapped[str] = mapped_column(String(40), default="requested", nullable=False, index=True)
+    request_notes: Mapped[str | None] = mapped_column(Text)
+    decision_notes: Mapped[str | None] = mapped_column(Text)
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     supplier: Mapped[Supplier] = relationship(back_populates="agreements")
     client: Mapped["Client"] = relationship()
@@ -70,6 +76,7 @@ class SupplierAgreement(TimestampMixin, Base):
         back_populates="agreement", cascade="all, delete-orphan"
     )
     creator: Mapped["User | None"] = relationship(foreign_keys=[created_by])
+    decider: Mapped["User | None"] = relationship(foreign_keys=[decided_by])
 
 
 class SupplierAgreementItem(TimestampMixin, Base):

@@ -11,10 +11,13 @@ from sqlalchemy.orm import selectinload
 from app.api.v1.endpoints.inventory import create_reception
 from app.api.v1.endpoints.purchasing import (
     approve_supplier_quote,
+    approve_supplier_agreement,
+    create_supplier_agreement,
     create_supplier_quote,
     create_supplier_rfq,
     create_supplier_invoice,
     create_supplier_payment,
+    list_supplier_agreement_approvals,
     list_supplier_quote_approvals,
     request_supplier_rfq_approval,
     supplier_rfq_comparison,
@@ -27,7 +30,9 @@ from app.models import (
     AuditEvent,
     Client,
     Company,
+    HouseModel,
     Project,
+    ProjectHouseModel,
     ProjectWarehouse,
     PurchaseOrder,
     SupplierInvoiceItem,
@@ -39,6 +44,7 @@ from app.models import (
 from app.schemas.inventory import MaterialReceptionCreate, MaterialReceptionItemCreate
 from app.schemas.purchasing import (
     PurchaseOrderBillingModeUpdate,
+    SupplierAgreementCreate,
     SupplierInvoiceCreate,
     SupplierInvoiceItemCreate,
     SupplierPaymentCreate,
@@ -46,6 +52,7 @@ from app.schemas.purchasing import (
     SupplierQuoteItemCreate,
     SupplierRFQApprovalRequest,
     SupplierRFQCreate,
+    SupplierRFQExceptionDecision,
     SupplierRFQItemCreate,
 )
 
@@ -581,6 +588,107 @@ class PurchasingFlowDBTest(unittest.TestCase):
             )
         )
         self.assertEqual(paid_quantity, Decimal("100"))
+
+    def test_supplier_agreement_requires_admin_approval_before_use(self) -> None:
+        house_model = HouseModel(
+            company_id=self.company.id,
+            client_id=self.client.id,
+            name=f"Modelo convenio {self.suffix}",
+            construction_m2=Decimal("61.91"),
+        )
+        self.db.add(house_model)
+        self.db.flush()
+        self.db.add(
+            ProjectHouseModel(
+                project_id=self.project.id,
+                house_model_id=house_model.id,
+                quantity=Decimal("10"),
+            )
+        )
+        self.db.commit()
+
+        agreement = create_supplier_agreement(
+            SupplierAgreementCreate(
+                supplier_id=self.suppliers[0].id,
+                client_id=self.client.id,
+                house_model_id=house_model.id,
+                name=f"Convenio pendiente {self.suffix}",
+                request_notes="Proveedor autorizado por direccion comercial.",
+            ),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(agreement.approval_status, "requested")
+
+        self.user.is_master_admin = True
+        pending = list_supplier_agreement_approvals("requested", 0, 20, self.db, self.user)
+        self.user.is_master_admin = False
+        self.assertIn(agreement.id, {item.id for item in pending})
+
+        self.user.is_master_admin = True
+        with self.assertRaises(HTTPException) as not_authorized:
+            create_supplier_rfq(
+                SupplierRFQCreate(
+                    project_id=self.project.id,
+                    warehouse_id=self.warehouse.id,
+                    title=f"Solicitud convenio pendiente {self.suffix}",
+                    required_by=date.today() + timedelta(days=5),
+                    response_deadline=date.today() + timedelta(days=2),
+                    supplier_ids=[self.suppliers[0].id],
+                    supplier_agreement_id=agreement.id,
+                    items=[
+                        SupplierRFQItemCreate(
+                            source_code="COV-001",
+                            description="Material por convenio",
+                            unit="pieza",
+                            quantity=Decimal("10"),
+                        )
+                    ],
+                ),
+                BackgroundTasks(),
+                self.db,
+                self.user,
+            )
+        self.user.is_master_admin = False
+        self.assertEqual(not_authorized.exception.status_code, 400)
+        self.assertEqual(
+            not_authorized.exception.detail,
+            "El convenio esta pendiente de autorizacion administrativa",
+        )
+
+        approved = approve_supplier_agreement(
+            agreement.id,
+            SupplierRFQExceptionDecision(decision_notes="Autorizado por administracion."),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(approved.approval_status, "approved")
+
+        self.user.is_master_admin = True
+        rfq = create_supplier_rfq(
+            SupplierRFQCreate(
+                project_id=self.project.id,
+                warehouse_id=self.warehouse.id,
+                title=f"Solicitud convenio aprobado {self.suffix}",
+                required_by=date.today() + timedelta(days=5),
+                response_deadline=date.today() + timedelta(days=2),
+                supplier_ids=[self.suppliers[0].id],
+                supplier_agreement_id=agreement.id,
+                items=[
+                    SupplierRFQItemCreate(
+                        source_code="COV-001",
+                        description="Material por convenio",
+                        unit="pieza",
+                        quantity=Decimal("10"),
+                    )
+                ],
+            ),
+            BackgroundTasks(),
+            self.db,
+            self.user,
+        )
+        self.user.is_master_admin = False
+        self.assertEqual(rfq.request_type, "agreement")
 
 
 if __name__ == "__main__":

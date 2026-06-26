@@ -10,6 +10,7 @@ from app.schemas.inventory import ExpectedMaterialListRead
 
 SupplierStatus = Literal["active", "suspended", "blocked"]
 SupplierAgreementStatus = Literal["active", "suspended", "expired"]
+SupplierAgreementApprovalStatus = Literal["requested", "approved", "rejected", "cancelled"]
 SupplierAgreementItemStatus = Literal["active", "inactive"]
 RFQStatus = Literal[
     "draft",
@@ -131,6 +132,23 @@ class SupplierAgreementItemRead(SupplierAgreementItemBase, TimestampRead):
     agreement_id: int
 
 
+class UserSummaryRead(ORMModel):
+    id: int
+    full_name: str
+    email: str
+
+
+class SupplierAgreementClientRead(ORMModel):
+    id: int
+    name: str
+
+
+class SupplierAgreementHouseModelRead(ORMModel):
+    id: int
+    name: str
+    client_id: int | None = None
+
+
 class SupplierAgreementBase(BaseModel):
     company_id: int | None = None
     supplier_id: int
@@ -144,6 +162,7 @@ class SupplierAgreementBase(BaseModel):
     payment_terms_days: int = Field(default=30, ge=0)
     average_delivery_days: int | None = Field(default=None, ge=0)
     notes: str | None = None
+    request_notes: str | None = None
 
 
 class SupplierAgreementCreate(SupplierAgreementBase):
@@ -163,13 +182,23 @@ class SupplierAgreementUpdate(BaseModel):
     payment_terms_days: int | None = Field(default=None, ge=0)
     average_delivery_days: int | None = Field(default=None, ge=0)
     notes: str | None = None
+    request_notes: str | None = None
 
 
 class SupplierAgreementRead(SupplierAgreementBase, TimestampRead):
     id: int
     company_id: int
     created_by: int | None = None
+    approval_status: SupplierAgreementApprovalStatus = "requested"
+    decision_notes: str | None = None
+    requested_at: datetime | None = None
+    decided_by: int | None = None
+    decided_at: datetime | None = None
     supplier: SupplierRead | None = None
+    client: SupplierAgreementClientRead | None = None
+    house_model: SupplierAgreementHouseModelRead | None = None
+    creator: UserSummaryRead | None = None
+    decider: UserSummaryRead | None = None
     items: list[SupplierAgreementItemRead] = Field(default_factory=list)
 
 
@@ -204,12 +233,6 @@ class SupplierRFQSupplierRead(ORMModel):
     portal_last_accessed_at: datetime | None = None
     notes: str | None = None
     supplier: SupplierRead | None = None
-
-
-class UserSummaryRead(ORMModel):
-    id: int
-    full_name: str
-    email: str
 
 
 class SupplierRFQCreate(BaseModel):

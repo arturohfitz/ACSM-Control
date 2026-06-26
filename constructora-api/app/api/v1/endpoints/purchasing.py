@@ -117,7 +117,11 @@ def _supplier_for_user(db: Session, supplier_id: int, current_user: User) -> Sup
 def _agreement_options():
     return (
         selectinload(SupplierAgreement.supplier),
+        selectinload(SupplierAgreement.client),
+        selectinload(SupplierAgreement.house_model),
         selectinload(SupplierAgreement.items),
+        selectinload(SupplierAgreement.creator),
+        selectinload(SupplierAgreement.decider),
     )
 
 
@@ -129,6 +133,11 @@ def _validate_agreement_scope(
     items: list,
 ) -> None:
     today = date.today()
+    if agreement.approval_status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El convenio esta pendiente de autorizacion administrativa",
+        )
     if agreement.status != "active":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -656,12 +665,48 @@ def _validate_agreement_item_payload(
     return data
 
 
+def _mark_agreement_pending_approval(
+    db: Session,
+    agreement: SupplierAgreement,
+    current_user: User,
+    reason: str,
+) -> None:
+    agreement.approval_status = "requested"
+    agreement.requested_at = _now()
+    agreement.decision_notes = None
+    agreement.decided_by = None
+    agreement.decided_at = None
+    notify_permission(
+        db,
+        company_id=agreement.company_id,
+        module="supplier_agreements",
+        action="approve",
+        notification_type="supplier_agreement_approval_requested",
+        title="Convenio pendiente de autorizar",
+        body=f"{current_user.full_name} solicito autorizar el convenio {agreement.name}.",
+        category="task",
+        priority="high",
+        source_module="compras",
+        entity_type="SupplierAgreement",
+        entity_id=agreement.id,
+        entity_label=agreement.name,
+        action_url="/purchasing/approvals",
+        metadata={
+            "reason": reason,
+            "supplier_id": agreement.supplier_id,
+            "client_id": agreement.client_id,
+            "house_model_id": agreement.house_model_id,
+        },
+    )
+
+
 @router.get("/supplier-agreements", response_model=list[SupplierAgreementRead])
 def list_supplier_agreements(
     supplier_id: int | None = None,
     client_id: int | None = None,
     house_model_id: int | None = None,
     status_filter: str | None = None,
+    approval_status: str | None = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
@@ -676,10 +721,12 @@ def list_supplier_agreements(
         statement = statement.where(SupplierAgreement.house_model_id == house_model_id)
     if status_filter:
         statement = statement.where(SupplierAgreement.status == status_filter)
+    if approval_status:
+        statement = statement.where(SupplierAgreement.approval_status == approval_status)
     return list(
         db.scalars(
             statement.options(*_agreement_options())
-            .order_by(SupplierAgreement.status, SupplierAgreement.name)
+            .order_by(SupplierAgreement.approval_status, SupplierAgreement.status, SupplierAgreement.name)
             .offset(skip)
             .limit(limit)
         ).all()
@@ -705,9 +752,148 @@ def create_supplier_agreement(
             item_payload.model_dump(),
         )
         db.add(SupplierAgreementItem(agreement_id=agreement.id, **item_data))
+    _mark_agreement_pending_approval(db, agreement, current_user, "create")
     record_create(db, current_user, module="convenios_proveedor", item=agreement)
     db.commit()
     return _agreement_for_user(db, agreement.id, current_user)
+
+
+@router.get("/supplier-agreement-approvals", response_model=list[SupplierAgreementRead])
+def list_supplier_agreement_approvals(
+    approval_status: str = "requested",
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[SupplierAgreement]:
+    can_create = user_has_permission(current_user, "supplier_agreements", "create")
+    can_approve = user_has_permission(current_user, "supplier_agreements", "approve")
+    if not can_create and not can_approve:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permiso requerido: supplier_agreements:create o supplier_agreements:approve",
+        )
+    statement = scoped_select(select(SupplierAgreement), SupplierAgreement, current_user)
+    if approval_status != "all":
+        statement = statement.where(SupplierAgreement.approval_status == approval_status)
+    if not can_approve:
+        statement = statement.where(SupplierAgreement.created_by == current_user.id)
+    return list(
+        db.scalars(
+            statement.options(*_agreement_options())
+            .order_by(SupplierAgreement.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        ).all()
+    )
+
+
+@router.post("/supplier-agreements/{agreement_id}/approve", response_model=SupplierAgreementRead)
+def approve_supplier_agreement(
+    agreement_id: int,
+    payload: SupplierRFQExceptionDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "approve")),
+) -> SupplierAgreement:
+    agreement = _agreement_for_user(db, agreement_id, current_user)
+    if agreement.approval_status != "requested":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El convenio ya fue atendido")
+    agreement.approval_status = "approved"
+    agreement.decision_notes = payload.decision_notes
+    agreement.decided_by = current_user.id
+    agreement.decided_at = _now()
+    record_event(
+        db,
+        current_user,
+        module="convenios_proveedor",
+        action="approve",
+        entity_type="SupplierAgreement",
+        entity_id=agreement.id,
+        company_id=agreement.company_id,
+        label=agreement.name,
+        description=f"{current_user.full_name} autorizo el convenio {agreement.name}",
+        metadata={"approval_status": agreement.approval_status},
+    )
+    resolve_notifications(
+        db,
+        company_id=agreement.company_id,
+        notification_type="supplier_agreement_approval_requested",
+        entity_type="SupplierAgreement",
+        entity_id=agreement.id,
+    )
+    if agreement.created_by is not None:
+        notify_user_id(
+            db,
+            user_id=agreement.created_by,
+            company_id=agreement.company_id,
+            notification_type="supplier_agreement_approved",
+            title="Convenio autorizado",
+            body=f"El convenio {agreement.name} ya puede usarse para cotizacion directa.",
+            category="info",
+            priority="normal",
+            source_module="compras",
+            entity_type="SupplierAgreement",
+            entity_id=agreement.id,
+            entity_label=agreement.name,
+            action_url="/supplier-agreements",
+            metadata={"approval_status": agreement.approval_status},
+        )
+    db.commit()
+    return _agreement_for_user(db, agreement_id, current_user)
+
+
+@router.post("/supplier-agreements/{agreement_id}/reject", response_model=SupplierAgreementRead)
+def reject_supplier_agreement(
+    agreement_id: int,
+    payload: SupplierRFQExceptionDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_agreements", "approve")),
+) -> SupplierAgreement:
+    agreement = _agreement_for_user(db, agreement_id, current_user)
+    if agreement.approval_status != "requested":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El convenio ya fue atendido")
+    agreement.approval_status = "rejected"
+    agreement.decision_notes = payload.decision_notes
+    agreement.decided_by = current_user.id
+    agreement.decided_at = _now()
+    record_event(
+        db,
+        current_user,
+        module="convenios_proveedor",
+        action="reject",
+        entity_type="SupplierAgreement",
+        entity_id=agreement.id,
+        company_id=agreement.company_id,
+        label=agreement.name,
+        description=f"{current_user.full_name} rechazo el convenio {agreement.name}",
+        metadata={"approval_status": agreement.approval_status},
+    )
+    resolve_notifications(
+        db,
+        company_id=agreement.company_id,
+        notification_type="supplier_agreement_approval_requested",
+        entity_type="SupplierAgreement",
+        entity_id=agreement.id,
+    )
+    if agreement.created_by is not None:
+        notify_user_id(
+            db,
+            user_id=agreement.created_by,
+            company_id=agreement.company_id,
+            notification_type="supplier_agreement_rejected",
+            title="Convenio rechazado",
+            body=f"El convenio {agreement.name} fue rechazado.",
+            category="warning",
+            priority="high",
+            source_module="compras",
+            entity_type="SupplierAgreement",
+            entity_id=agreement.id,
+            entity_label=agreement.name,
+            action_url="/supplier-agreements",
+            metadata={"decision_notes": agreement.decision_notes},
+        )
+    db.commit()
+    return _agreement_for_user(db, agreement_id, current_user)
 
 
 @router.get("/supplier-agreements/eligible", response_model=list[SupplierAgreementEligibility])
@@ -723,6 +909,7 @@ def list_eligible_supplier_agreements(
         SupplierAgreement.client_id == project.client_id,
         SupplierAgreement.house_model_id.in_(project_model_ids),
         SupplierAgreement.status == "active",
+        SupplierAgreement.approval_status == "approved",
     )
     agreements = db.scalars(statement.options(*_agreement_options()).order_by(SupplierAgreement.name)).all()
     result: list[SupplierAgreementEligibility] = []
@@ -762,9 +949,10 @@ def update_supplier_agreement(
     data = payload.model_dump(exclude_unset=True)
     if data:
         data = _validate_agreement_payload(db, current_user, data, agreement)
-        before = snapshot(agreement, list(data.keys()))
+        before = snapshot(agreement, list(data.keys()) + ["approval_status"])
         for field, value in data.items():
             setattr(agreement, field, value)
+        _mark_agreement_pending_approval(db, agreement, current_user, "update")
         record_update(db, current_user, module="convenios_proveedor", item=agreement, before=before)
     db.commit()
     return _agreement_for_user(db, agreement_id, current_user)
@@ -798,6 +986,7 @@ def create_supplier_agreement_item(
     item = SupplierAgreementItem(agreement_id=agreement.id, **data)
     db.add(item)
     db.flush()
+    _mark_agreement_pending_approval(db, agreement, current_user, "item_create")
     record_create(db, current_user, module="convenios_proveedor", item=item)
     db.commit()
     db.refresh(item)
@@ -822,6 +1011,7 @@ def update_supplier_agreement_item(
         before = snapshot(item, list(data.keys()))
         for field, value in data.items():
             setattr(item, field, value)
+        _mark_agreement_pending_approval(db, agreement, current_user, "item_update")
         record_update(db, current_user, module="convenios_proveedor", item=item, before=before)
     db.commit()
     db.refresh(item)
@@ -840,6 +1030,7 @@ def delete_supplier_agreement_item(
     if item.agreement_id != agreement.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
     record_delete(db, current_user, module="convenios_proveedor", item=item)
+    _mark_agreement_pending_approval(db, agreement, current_user, "item_delete")
     db.delete(item)
     db.commit()
 

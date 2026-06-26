@@ -37,6 +37,11 @@ type SupplierAgreement = {
   payment_terms_days?: number | null
   average_delivery_days?: number | null
   notes?: string | null
+  request_notes?: string | null
+  approval_status: string
+  decision_notes?: string | null
+  requested_at?: string | null
+  decided_at?: string | null
   supplier?: Supplier | null
 }
 
@@ -51,6 +56,7 @@ const emptyAgreement = {
   payment_terms_days: '30',
   average_delivery_days: '',
   notes: '',
+  request_notes: '',
 }
 
 function statusLabel(status: string) {
@@ -58,8 +64,18 @@ function statusLabel(status: string) {
     active: 'Activo',
     suspended: 'Suspendido',
     expired: 'Vencido',
+    requested: 'Pendiente de autorizacion',
+    approved: 'Autorizado',
+    rejected: 'Rechazado',
+    cancelled: 'Cancelado',
   }
   return labels[status] ?? status
+}
+
+function approvalBadgeClass(status: string) {
+  if (status === 'approved') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (status === 'rejected') return 'border-red-200 bg-red-50 text-red-700'
+  return 'border-amber-200 bg-amber-50 text-amber-800'
 }
 
 function formatDate(value?: string | null) {
@@ -189,11 +205,12 @@ export default function SupplierAgreementsPage() {
             ? Number(agreementForm.average_delivery_days)
             : null,
           notes: agreementForm.notes || null,
+          request_notes: agreementForm.request_notes || null,
         }),
       })
       setAgreementForm({ ...emptyAgreement })
       setDrawerOpen(false)
-      showActionNotice('Convenio creado. Ya puede usarse para cotizacion directa.', 'success')
+      showActionNotice('Convenio enviado a autorizacion administrativa.', 'success')
       await loadData(created.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible crear el convenio')
@@ -217,7 +234,7 @@ export default function SupplierAgreementsPage() {
             <p className="text-xs font-bold uppercase tracking-[0.22em] text-acsm-muted">Compras</p>
             <h2 className="text-xl font-bold text-acsm-ink">Convenios de proveedores</h2>
             <p className="text-sm text-acsm-muted">
-              Marca proveedores con convenio por inmobiliaria y modelo. No requiere capturar materiales.
+              Registra convenios por proveedor, inmobiliaria y modelo. Administracion debe autorizarlos antes de usarlos.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -268,6 +285,9 @@ export default function SupplierAgreementsPage() {
                     <span className="mt-2 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">
                       {statusLabel(agreement.status)}
                     </span>
+                    <span className={`ml-2 mt-2 inline-flex rounded-full border px-2 py-1 text-xs font-bold ${approvalBadgeClass(agreement.approval_status)}`}>
+                      {statusLabel(agreement.approval_status)}
+                    </span>
                   </button>
                 )
               })}
@@ -292,7 +312,7 @@ export default function SupplierAgreementsPage() {
                     </p>
                     <h3 className="text-2xl font-bold text-acsm-ink">{selectedAgreement.name}</h3>
                     <p className="text-sm text-acsm-muted">
-                      Este proveedor puede recibir cotizacion directa para el modelo seleccionado.
+                      Este proveedor solo puede recibir cotizacion directa cuando el convenio este autorizado.
                     </p>
                   </div>
                 </div>
@@ -309,6 +329,12 @@ export default function SupplierAgreementsPage() {
                   <div className="rounded-xl border border-acsm-line bg-white p-4">
                     <span className="text-xs font-bold uppercase text-acsm-muted">Modelo</span>
                     <div className="mt-1 font-bold text-acsm-ink">{selectedModel?.name ?? 'Modelo'}</div>
+                  </div>
+                  <div className="rounded-xl border border-acsm-line bg-white p-4">
+                    <span className="text-xs font-bold uppercase text-acsm-muted">Autorizacion</span>
+                    <div className="mt-1 font-bold text-acsm-ink">
+                      {statusLabel(selectedAgreement.approval_status)}
+                    </div>
                   </div>
                   <div className="rounded-xl border border-acsm-line bg-white p-4">
                     <span className="text-xs font-bold uppercase text-acsm-muted">Credito</span>
@@ -334,6 +360,13 @@ export default function SupplierAgreementsPage() {
                   <div className="mt-4 rounded-xl border border-acsm-line bg-white p-4">
                     <span className="text-xs font-bold uppercase text-acsm-muted">Notas</span>
                     <p className="mt-1 text-sm text-acsm-ink">{selectedAgreement.notes}</p>
+                  </div>
+                ) : null}
+
+                {selectedAgreement.decision_notes ? (
+                  <div className="mt-4 rounded-xl border border-acsm-line bg-white p-4">
+                    <span className="text-xs font-bold uppercase text-acsm-muted">Decision administrativa</span>
+                    <p className="mt-1 text-sm text-acsm-ink">{selectedAgreement.decision_notes}</p>
                   </div>
                 ) : null}
               </div>
@@ -479,6 +512,12 @@ export default function SupplierAgreementsPage() {
             onChange={(event) => updateAgreementField('notes', event.target.value)}
             placeholder="Notas del convenio"
             className="min-h-24 w-full rounded-xl border border-acsm-line bg-white px-3 py-2"
+          />
+          <textarea
+            value={agreementForm.request_notes}
+            onChange={(event) => updateAgreementField('request_notes', event.target.value)}
+            placeholder="Justificacion para administracion"
+            className="min-h-20 w-full rounded-xl border border-acsm-line bg-white px-3 py-2"
           />
           {error ? (
             <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

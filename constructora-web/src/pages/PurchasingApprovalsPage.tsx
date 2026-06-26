@@ -89,6 +89,27 @@ type SupplierRFQException = {
   requester?: UserSummary | null
 }
 
+type SupplierAgreementApproval = {
+  id: number
+  name: string
+  status: string
+  approval_status: string
+  agreement_number?: string | null
+  valid_from?: string | null
+  valid_until?: string | null
+  payment_terms_days?: number | null
+  average_delivery_days?: number | null
+  notes?: string | null
+  request_notes?: string | null
+  decision_notes?: string | null
+  requested_at?: string | null
+  created_at: string
+  supplier?: Supplier | null
+  client?: { id: number; name: string } | null
+  house_model?: { id: number; name: string } | null
+  creator?: UserSummary | null
+}
+
 type ComparisonRow = {
   supplier_quote_id: number
   supplier_name: string
@@ -148,8 +169,10 @@ function approvalRequestContext(notes?: string | null) {
 export default function PurchasingApprovalsPage() {
   const [approvals, setApprovals] = useState<SupplierQuoteApproval[]>([])
   const [rfqExceptions, setRfqExceptions] = useState<SupplierRFQException[]>([])
+  const [agreementApprovals, setAgreementApprovals] = useState<SupplierAgreementApproval[]>([])
   const [selectedApprovalId, setSelectedApprovalId] = useState<number | null>(null)
   const [selectedExceptionId, setSelectedExceptionId] = useState<number | null>(null)
+  const [selectedAgreementId, setSelectedAgreementId] = useState<number | null>(null)
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
   const [quotes, setQuotes] = useState<SupplierQuote[]>([])
   const [selectedQuoteId, setSelectedQuoteId] = useState<number | null>(null)
@@ -165,6 +188,10 @@ export default function PurchasingApprovalsPage() {
   const selectedException = useMemo(
     () => rfqExceptions.find((entry) => entry.id === selectedExceptionId) ?? null,
     [rfqExceptions, selectedExceptionId],
+  )
+  const selectedAgreement = useMemo(
+    () => agreementApprovals.find((entry) => entry.id === selectedAgreementId) ?? null,
+    [agreementApprovals, selectedAgreementId],
   )
   const selectedQuote = useMemo(
     () =>
@@ -188,16 +215,24 @@ export default function PurchasingApprovalsPage() {
     setLoading(true)
     setError('')
     try {
-      const [data, exceptionData] = await Promise.all([
+      const [data, exceptionData, agreementData] = await Promise.all([
         apiRequest<SupplierQuoteApproval[]>('/purchasing/supplier-quote-approvals?approval_status=requested'),
         apiRequest<SupplierRFQException[]>('/purchasing/supplier-rfq-exceptions?approval_status=requested'),
+        apiRequest<SupplierAgreementApproval[]>('/purchasing/supplier-agreement-approvals?approval_status=requested'),
       ])
       setApprovals(data)
       setRfqExceptions(exceptionData)
-      if (exceptionData.length && !nextSelectedId) {
+      setAgreementApprovals(agreementData)
+      if (agreementData.length && !nextSelectedId) {
+        setSelectedAgreementId(agreementData[0].id)
+        setSelectedExceptionId(null)
+        setSelectedApprovalId(null)
+      } else if (exceptionData.length && !nextSelectedId) {
+        setSelectedAgreementId(null)
         setSelectedExceptionId(exceptionData[0].id)
         setSelectedApprovalId(null)
       } else {
+        setSelectedAgreementId(null)
         setSelectedApprovalId(nextSelectedId ?? data[0]?.id ?? null)
         setSelectedExceptionId(null)
       }
@@ -234,7 +269,7 @@ export default function PurchasingApprovalsPage() {
     setSelectedQuoteId(selectedApproval?.supplier_quote_id ?? null)
     void loadComparison(selectedApproval?.rfq_id)
     setDecisionNotes('')
-  }, [selectedApproval?.id, selectedException?.id])
+  }, [selectedApproval?.id, selectedException?.id, selectedAgreement?.id])
 
   async function approveSelected() {
     if (!selectedApproval || !selectedQuote) return
@@ -282,6 +317,40 @@ export default function PurchasingApprovalsPage() {
       await loadApprovals()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible aprobar la excepcion')
+    }
+  }
+
+  async function approveSelectedAgreement() {
+    if (!selectedAgreement) return
+    setError('')
+    setMessage('')
+    try {
+      await apiRequest(`/purchasing/supplier-agreements/${selectedAgreement.id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ decision_notes: decisionNotes || null }),
+      })
+      notifySuccess('Convenio autorizado. Compras ya puede usarlo para cotizacion directa.')
+      setSelectedAgreementId(null)
+      await loadApprovals()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible autorizar el convenio')
+    }
+  }
+
+  async function rejectSelectedAgreement() {
+    if (!selectedAgreement) return
+    setError('')
+    setMessage('')
+    try {
+      await apiRequest(`/purchasing/supplier-agreements/${selectedAgreement.id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ decision_notes: decisionNotes || null }),
+      })
+      notifySuccess('Convenio rechazado.', 'warning')
+      setSelectedAgreementId(null)
+      await loadApprovals()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible rechazar el convenio')
     }
   }
 
@@ -344,17 +413,46 @@ export default function PurchasingApprovalsPage() {
               <div>
                 <h3 className="font-bold text-acsm-ink">Pendientes</h3>
                 <p className="text-xs text-acsm-muted">
-                  {approvals.length + rfqExceptions.length} por revisar
+                  {approvals.length + rfqExceptions.length + agreementApprovals.length} por revisar
                 </p>
               </div>
               {loading ? <span className="text-xs text-acsm-muted">Cargando...</span> : null}
             </div>
             <div className="max-h-[520px] overflow-y-auto">
+              {agreementApprovals.map((entry) => (
+                <button
+                  key={`agreement-${entry.id}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedAgreementId(entry.id)
+                    setSelectedExceptionId(null)
+                    setSelectedApprovalId(null)
+                  }}
+                  className={[
+                    'block w-full border-l-4 border-b border-acsm-line px-4 py-4 text-left transition',
+                    selectedAgreement?.id === entry.id
+                      ? 'border-emerald-600 bg-white shadow-[inset_0_0_0_1px_rgba(5,150,105,0.24)]'
+                      : 'border-transparent hover:bg-white',
+                  ].join(' ')}
+                >
+                  <span className="block text-sm font-bold text-acsm-ink">{entry.name}</span>
+                  <span className="mt-1 block text-xs font-semibold text-emerald-800">
+                    Convenio de proveedor
+                  </span>
+                  <span className="mt-3 block text-sm font-semibold text-acsm-ink">
+                    {entry.supplier?.name ?? 'Proveedor'} · {entry.client?.name ?? 'Inmobiliaria'}
+                  </span>
+                  <span className="text-xs text-acsm-muted">
+                    Modelo {entry.house_model?.name ?? '-'} · solicitado por {entry.creator?.full_name ?? 'Sin usuario'}
+                  </span>
+                </button>
+              ))}
               {rfqExceptions.map((entry) => (
                 <button
                   key={`exception-${entry.id}`}
                   type="button"
                   onClick={() => {
+                    setSelectedAgreementId(null)
                     setSelectedExceptionId(entry.id)
                     setSelectedApprovalId(null)
                   }}
@@ -383,7 +481,11 @@ export default function PurchasingApprovalsPage() {
                   <button
                     key={approval.id}
                     type="button"
-                    onClick={() => setSelectedApprovalId(approval.id)}
+                    onClick={() => {
+                      setSelectedAgreementId(null)
+                      setSelectedExceptionId(null)
+                      setSelectedApprovalId(approval.id)
+                    }}
                     className={[
                       'block w-full border-l-4 border-b border-acsm-line px-4 py-4 text-left transition',
                       selectedApproval?.id === approval.id
@@ -411,16 +513,106 @@ export default function PurchasingApprovalsPage() {
                   </button>
                 )
               })}
-              {!approvals.length && !rfqExceptions.length ? (
+              {!approvals.length && !rfqExceptions.length && !agreementApprovals.length ? (
                 <div className="px-4 py-12 text-center text-sm text-acsm-muted">
-                  No hay cotizaciones pendientes de aprobacion.
+                  No hay aprobaciones pendientes.
                 </div>
               ) : null}
             </div>
           </aside>
 
           <div className="min-w-0 p-5">
-            {selectedException ? (
+            {selectedAgreement ? (
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
+                      Convenio pendiente de autorizacion
+                    </p>
+                    <h3 className="text-2xl font-bold text-acsm-ink">{selectedAgreement.name}</h3>
+                    <p className="text-sm text-acsm-muted">
+                      Solicitado por {selectedAgreement.creator?.full_name ?? 'Sin usuario'} ·{' '}
+                      {formatDateTime(selectedAgreement.requested_at ?? selectedAgreement.created_at)}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <div className="rounded-xl border border-acsm-line bg-white p-3">
+                      <div className="text-xs font-bold uppercase text-acsm-muted">Proveedor</div>
+                      <div className="mt-1 text-sm font-bold text-acsm-ink">
+                        {selectedAgreement.supplier?.name ?? '-'}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-acsm-line bg-white p-3">
+                      <div className="text-xs font-bold uppercase text-acsm-muted">Credito</div>
+                      <div className="mt-1 text-sm font-bold text-acsm-ink">
+                        {selectedAgreement.payment_terms_days ?? selectedAgreement.supplier?.payment_terms_days ?? 0} dias
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-acsm-line bg-white p-3">
+                      <div className="text-xs font-bold uppercase text-acsm-muted">Estado</div>
+                      <div className="mt-1 text-sm font-bold text-acsm-ink">
+                        {statusLabel(selectedAgreement.approval_status)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <section className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-xl border border-acsm-line bg-white p-4">
+                    <div className="text-xs font-bold uppercase text-acsm-muted">Inmobiliaria</div>
+                    <div className="mt-1 font-bold text-acsm-ink">{selectedAgreement.client?.name ?? '-'}</div>
+                  </div>
+                  <div className="rounded-xl border border-acsm-line bg-white p-4">
+                    <div className="text-xs font-bold uppercase text-acsm-muted">Modelo</div>
+                    <div className="mt-1 font-bold text-acsm-ink">{selectedAgreement.house_model?.name ?? '-'}</div>
+                  </div>
+                  <div className="rounded-xl border border-acsm-line bg-white p-4">
+                    <div className="text-xs font-bold uppercase text-acsm-muted">Vigencia</div>
+                    <div className="mt-1 font-bold text-acsm-ink">
+                      {selectedAgreement.valid_from ?? '-'} - {selectedAgreement.valid_until ?? '-'}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <h4 className="font-bold text-emerald-950">Justificacion de compras</h4>
+                  <p className="mt-2 whitespace-pre-wrap text-sm font-semibold text-emerald-900">
+                    {selectedAgreement.request_notes || selectedAgreement.notes || 'Sin justificacion capturada.'}
+                  </p>
+                </section>
+
+                <div className="rounded-xl border border-acsm-line bg-white p-4">
+                  <label className="block text-sm font-bold text-acsm-ink">
+                    Comentarios de decision
+                    <textarea
+                      value={decisionNotes}
+                      onChange={(event) => setDecisionNotes(event.target.value)}
+                      rows={3}
+                      className="mt-2 w-full rounded-xl border border-acsm-line px-3 py-2 text-sm"
+                      placeholder="Motivo de autorizacion o rechazo"
+                    />
+                  </label>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void approveSelectedAgreement()}
+                      className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white hover:bg-acsm-green-hover"
+                    >
+                      <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                      Autorizar convenio
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void rejectSelectedAgreement()}
+                      className="inline-flex h-10 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-bold text-red-700 hover:bg-red-100"
+                    >
+                      <XCircle className="h-4 w-4" aria-hidden="true" />
+                      Rechazar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : selectedException ? (
               <div className="space-y-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>

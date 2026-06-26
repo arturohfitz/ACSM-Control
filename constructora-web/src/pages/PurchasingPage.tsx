@@ -112,6 +112,7 @@ type SupplierAgreement = {
   house_model_id: number
   name: string
   status: string
+  approval_status?: string
   valid_from?: string | null
   valid_until?: string | null
   payment_terms_days?: number | null
@@ -914,6 +915,7 @@ export default function PurchasingPage() {
       const validFrom = agreement.valid_from ? new Date(`${agreement.valid_from}T00:00:00`) : null
       const validUntil = agreement.valid_until ? new Date(`${agreement.valid_until}T00:00:00`) : null
       return (
+        agreement.approval_status !== 'approved' ||
         agreement.status !== 'active' ||
         Boolean(validFrom && validFrom > today) ||
         Boolean(validUntil && validUntil < today)
@@ -921,6 +923,16 @@ export default function PurchasingPage() {
     })
 
     if (unavailableAgreement) {
+      if (unavailableAgreement.approval_status && unavailableAgreement.approval_status !== 'approved') {
+        return {
+          title: 'Convenio pendiente de autorizacion',
+          body: `El convenio ${unavailableAgreement.name} existe, pero aun no esta autorizado por administracion.`,
+          steps: [
+            'Solicita a administracion aprobarlo en Compras / Aprobaciones.',
+            'Mientras tanto selecciona minimo 3 proveedores o solicita excepcion.',
+          ],
+        }
+      }
       if (unavailableAgreement.status !== 'active') {
         return {
           title: 'Convenio no activo',
