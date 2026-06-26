@@ -1396,6 +1396,10 @@ def create_supplier_rfq(
                 requisition_item.approved_quantity = requisition_item.requested_quantity
             requisition_item.status = "converted"
             requisition_item.supplier_rfq_item_id = rfq_item.id
+            rfq_item.house_model_id = material_requisition.house_model_id
+            rfq_item.house_model_material_requirement_id = (
+                requisition_item.house_model_material_requirement_id
+            )
     db.commit()
     rfq = db.scalar(
         select(SupplierRFQ)
@@ -2260,9 +2264,14 @@ def approve_supplier_quote(
     db.flush()
 
     for quote_item in quote.items:
+        rfq_item = quote_item.rfq_item
         po_item = PurchaseOrderItem(
             purchase_order_id=purchase_order.id,
             rfq_item_id=quote_item.rfq_item_id,
+            house_model_id=rfq_item.house_model_id if rfq_item else None,
+            house_model_material_requirement_id=(
+                rfq_item.house_model_material_requirement_id if rfq_item else None
+            ),
             material_id=quote_item.material_id,
             description=quote_item.description,
             unit=quote_item.unit,
@@ -2280,6 +2289,10 @@ def approve_supplier_quote(
                 company_id=quote.company_id,
                 expected_list_id=expected_list.id,
                 material_id=quote_item.material_id,
+                house_model_id=rfq_item.house_model_id if rfq_item else None,
+                house_model_material_requirement_id=(
+                    rfq_item.house_model_material_requirement_id if rfq_item else None
+                ),
                 purchase_order_item_id=po_item.id,
                 description=quote_item.description,
                 unit=quote_item.unit,

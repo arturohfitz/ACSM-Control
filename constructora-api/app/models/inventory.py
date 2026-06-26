@@ -64,6 +64,10 @@ class ExpectedMaterialItem(TimestampMixin, Base):
         index=True,
     )
     material_id: Mapped[int | None] = mapped_column(ForeignKey("materials.id"), index=True)
+    house_model_id: Mapped[int | None] = mapped_column(ForeignKey("house_models.id"), index=True)
+    house_model_material_requirement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("house_model_material_requirements.id"), index=True
+    )
     purchase_order_item_id: Mapped[int | None] = mapped_column(
         ForeignKey("purchase_order_items.id"), index=True
     )
@@ -81,6 +85,8 @@ class ExpectedMaterialItem(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     expected_list: Mapped[ExpectedMaterialList] = relationship(back_populates="items")
+    house_model: Mapped["HouseModel | None"] = relationship()
+    house_model_material_requirement: Mapped["HouseModelMaterialRequirement | None"] = relationship()
     reception_items: Mapped[list["MaterialReceptionItem"]] = relationship(
         back_populates="expected_item"
     )
@@ -126,6 +132,10 @@ class MaterialReceptionItem(Base):
         ForeignKey("expected_material_items.id"), nullable=False, index=True
     )
     material_id: Mapped[int | None] = mapped_column(ForeignKey("materials.id"), index=True)
+    house_model_id: Mapped[int | None] = mapped_column(ForeignKey("house_models.id"), index=True)
+    house_model_material_requirement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("house_model_material_requirements.id"), index=True
+    )
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     unit: Mapped[str] = mapped_column(String(40), nullable=False)
     received_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
@@ -134,6 +144,8 @@ class MaterialReceptionItem(Base):
 
     reception: Mapped[MaterialReception] = relationship(back_populates="items")
     expected_item: Mapped[ExpectedMaterialItem] = relationship(back_populates="reception_items")
+    house_model: Mapped["HouseModel | None"] = relationship()
+    house_model_material_requirement: Mapped["HouseModelMaterialRequirement | None"] = relationship()
 
 
 class WarehouseStock(TimestampMixin, Base):
@@ -151,9 +163,15 @@ class WarehouseStock(TimestampMixin, Base):
         ForeignKey("expected_material_items.id"), nullable=False, index=True
     )
     material_id: Mapped[int | None] = mapped_column(ForeignKey("materials.id"), index=True)
+    house_model_id: Mapped[int | None] = mapped_column(ForeignKey("house_models.id"), index=True)
+    house_model_material_requirement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("house_model_material_requirements.id"), index=True
+    )
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     unit: Mapped[str] = mapped_column(String(40), nullable=False)
     quantity_on_hand: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0, nullable=False)
 
     warehouse: Mapped[ProjectWarehouse] = relationship(back_populates="stock_items")
     expected_item: Mapped[ExpectedMaterialItem] = relationship(back_populates="stock_item")
+    house_model: Mapped["HouseModel | None"] = relationship()
+    house_model_material_requirement: Mapped["HouseModelMaterialRequirement | None"] = relationship()

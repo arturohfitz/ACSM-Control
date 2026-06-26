@@ -210,6 +210,8 @@ class SupplierAgreementEligibility(BaseModel):
 
 
 class SupplierRFQItemCreate(BaseModel):
+    house_model_id: int | None = None
+    house_model_material_requirement_id: int | None = None
     material_id: int | None = None
     source_code: str | None = Field(default=None, max_length=80)
     description: str = Field(min_length=1, max_length=255)

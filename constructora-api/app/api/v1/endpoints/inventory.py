@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models import (
     ExpectedMaterialItem,
     ExpectedMaterialList,
+    HouseModelMaterialRequirement,
     Material,
     MaterialReception,
     MaterialReceptionItem,
@@ -35,6 +36,7 @@ from app.schemas.inventory import (
     InventoryStatusItem,
     MaterialReceptionCreate,
     MaterialReceptionRead,
+    ProjectModelMaterialControlItem,
     ProjectWarehouseCreate,
     ProjectWarehouseRead,
     ProjectWarehouseUpdate,
@@ -124,6 +126,90 @@ def _clean_identifier(value: str | None) -> str | None:
         return None
     cleaned = re.sub(r"\s+", " ", value).strip()
     return cleaned or None
+
+
+def _normalized_line_key(
+    description: str | None,
+    unit: str | None,
+    source_code: str | None = None,
+) -> tuple[str, str, str]:
+    return (
+        (source_code or "").strip().lower(),
+        re.sub(r"\s+", " ", description or "").strip().lower(),
+        re.sub(r"\s+", " ", unit or "").strip().lower(),
+    )
+
+
+def _requirement_model_ids(db: Session, project: Project) -> set[int]:
+    return set(
+        db.scalars(
+            select(ProjectHouseModel.house_model_id).where(ProjectHouseModel.project_id == project.id)
+        ).all()
+    )
+
+
+def _resolve_requirement_context(
+    db: Session,
+    project: Project,
+    *,
+    material_id: int | None,
+    source_code: str | None,
+    description: str | None,
+    unit: str | None,
+    house_model_id: int | None = None,
+    requirement_id: int | None = None,
+) -> tuple[int | None, int | None]:
+    model_ids = _requirement_model_ids(db, project)
+    if not model_ids:
+        return house_model_id, requirement_id
+
+    if house_model_id is not None and house_model_id not in model_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El modelo de casa no esta asignado al desarrollo seleccionado",
+        )
+
+    if requirement_id is not None:
+        requirement = get_or_404(db, HouseModelMaterialRequirement, requirement_id)
+        if (
+            requirement.company_id != project.company_id
+            or requirement.client_id != project.client_id
+            or requirement.house_model_id not in model_ids
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La partida de explosion no pertenece al desarrollo seleccionado",
+            )
+        if house_model_id is not None and requirement.house_model_id != house_model_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La partida de explosion no pertenece al modelo seleccionado",
+            )
+        return requirement.house_model_id, requirement.id
+
+    statement = select(HouseModelMaterialRequirement).where(
+        HouseModelMaterialRequirement.company_id == project.company_id,
+        HouseModelMaterialRequirement.client_id == project.client_id,
+        HouseModelMaterialRequirement.house_model_id.in_(model_ids),
+        HouseModelMaterialRequirement.validation_status != "ignored",
+    )
+    if house_model_id is not None:
+        statement = statement.where(HouseModelMaterialRequirement.house_model_id == house_model_id)
+
+    requirements = list(db.scalars(statement).all())
+    candidates: list[HouseModelMaterialRequirement] = []
+    if material_id is not None:
+        candidates = [item for item in requirements if item.material_id == material_id]
+    if not candidates:
+        target_key = _normalized_line_key(description, unit, source_code)
+        candidates = [
+            item
+            for item in requirements
+            if _normalized_line_key(item.description, item.unit, item.source_code) == target_key
+        ]
+    if len(candidates) == 1:
+        return candidates[0].house_model_id, candidates[0].id
+    return house_model_id, None
 
 
 def _hash_text(source_text: str) -> str:
@@ -446,9 +532,25 @@ def _fill_expected_item_data(
     company_id: int,
     current_user: User,
     existing: ExpectedMaterialItem | None = None,
+    project: Project | None = None,
 ) -> dict:
     data = payload.model_dump(exclude_unset=True)
     material_id = data.get("material_id", existing.material_id if existing else None)
+    purchase_order_item_id = data.get(
+        "purchase_order_item_id",
+        existing.purchase_order_item_id if existing else None,
+    )
+    purchase_order_item = None
+    if purchase_order_item_id is not None:
+        purchase_order_item = get_or_404(db, PurchaseOrderItem, purchase_order_item_id)
+        ensure_same_company(current_user, purchase_order_item.purchase_order, db=db)
+        data["house_model_id"] = data.get("house_model_id") or purchase_order_item.house_model_id
+        data["house_model_material_requirement_id"] = (
+            data.get("house_model_material_requirement_id")
+            or purchase_order_item.house_model_material_requirement_id
+        )
+        material_id = data.get("material_id") or purchase_order_item.material_id
+        data["material_id"] = material_id
     material = None
     if material_id is not None:
         material = get_or_404(db, Material, material_id)
@@ -470,6 +572,22 @@ def _fill_expected_item_data(
         )
     data["description"] = description
     data["unit"] = unit
+    if project is not None:
+        house_model_id, requirement_id = _resolve_requirement_context(
+            db,
+            project,
+            material_id=material_id,
+            source_code=data.get("source_code", existing.source_code if existing else None),
+            description=description,
+            unit=unit,
+            house_model_id=data.get("house_model_id", existing.house_model_id if existing else None),
+            requirement_id=data.get(
+                "house_model_material_requirement_id",
+                existing.house_model_material_requirement_id if existing else None,
+            ),
+        )
+        data["house_model_id"] = house_model_id
+        data["house_model_material_requirement_id"] = requirement_id
     return data
 
 
@@ -503,6 +621,8 @@ def _upsert_stock(
             warehouse_id=warehouse.id,
             expected_item_id=expected_item.id,
             material_id=expected_item.material_id,
+            house_model_id=expected_item.house_model_id,
+            house_model_material_requirement_id=expected_item.house_model_material_requirement_id,
             description=expected_item.description,
             unit=expected_item.unit,
             quantity_on_hand=Decimal("0"),
@@ -658,6 +778,8 @@ def _status_response(items: list[ExpectedMaterialItem]) -> list[dict]:
                 "expected_item_id": item.id,
                 "expected_list_id": item.expected_list_id,
                 "material_id": item.material_id,
+                "house_model_id": item.house_model_id,
+                "house_model_material_requirement_id": item.house_model_material_requirement_id,
                 "source_code": item.source_code,
                 "description": item.description,
                 "unit": item.unit,
@@ -669,6 +791,150 @@ def _status_response(items: list[ExpectedMaterialItem]) -> list[dict]:
                 "over_received_quantity": over_received,
                 "status": item.status,
                 "notes": item.notes,
+            }
+        )
+    return response
+
+
+def _control_status(required: Decimal, received: Decimal) -> str:
+    if received <= 0:
+        return "pending"
+    if received < required:
+        return "partial"
+    if received == required:
+        return "complete"
+    return "over_received"
+
+
+def _percent(received: Decimal, required: Decimal) -> Decimal:
+    if required <= 0:
+        return Decimal("0")
+    return ((received / required) * Decimal("100")).quantize(Decimal("0.01"))
+
+
+def _project_model_material_control(db: Session, project: Project) -> list[dict]:
+    assignments = list(
+        db.scalars(
+            select(ProjectHouseModel)
+            .where(ProjectHouseModel.project_id == project.id)
+            .options(selectinload(ProjectHouseModel.house_model))
+        ).all()
+    )
+    if not assignments:
+        return []
+
+    assigned_by_model = {item.house_model_id: item for item in assignments}
+    model_ids = set(assigned_by_model)
+    requirements = list(
+        db.scalars(
+            select(HouseModelMaterialRequirement)
+            .where(
+                HouseModelMaterialRequirement.company_id == project.company_id,
+                HouseModelMaterialRequirement.client_id == project.client_id,
+                HouseModelMaterialRequirement.house_model_id.in_(model_ids),
+                HouseModelMaterialRequirement.validation_status != "ignored",
+            )
+            .order_by(
+                HouseModelMaterialRequirement.house_model_id,
+                HouseModelMaterialRequirement.sort_order,
+                HouseModelMaterialRequirement.description,
+            )
+        ).all()
+    )
+
+    material_index: dict[int, list[int]] = {}
+    model_material_index: dict[tuple[int, int], list[int]] = {}
+    text_index: dict[tuple[str, str, str], list[int]] = {}
+    model_text_index: dict[tuple[int, str, str, str], list[int]] = {}
+    for requirement in requirements:
+        if requirement.material_id is not None:
+            material_index.setdefault(requirement.material_id, []).append(requirement.id)
+            model_material_index.setdefault(
+                (requirement.house_model_id, requirement.material_id),
+                [],
+            ).append(requirement.id)
+        key = _normalized_line_key(
+            requirement.description,
+            requirement.unit,
+            requirement.source_code,
+        )
+        text_index.setdefault(key, []).append(requirement.id)
+        model_text_index.setdefault((requirement.house_model_id, *key), []).append(requirement.id)
+
+    received_by_requirement: dict[int, Decimal] = {item.id: Decimal("0") for item in requirements}
+    unassigned_by_signature: dict[tuple[int | None, str, str, str], Decimal] = {}
+    reception_rows = db.execute(
+        select(MaterialReceptionItem, ExpectedMaterialItem)
+        .join(MaterialReception, MaterialReception.id == MaterialReceptionItem.reception_id)
+        .join(ExpectedMaterialItem, ExpectedMaterialItem.id == MaterialReceptionItem.expected_item_id)
+        .where(MaterialReception.project_id == project.id)
+    ).all()
+    for reception_item, expected_item in reception_rows:
+        quantity = reception_item.received_quantity or Decimal("0")
+        house_model_id = reception_item.house_model_id or expected_item.house_model_id
+        requirement_id = (
+            reception_item.house_model_material_requirement_id
+            or expected_item.house_model_material_requirement_id
+        )
+        resolved_id = requirement_id if requirement_id in received_by_requirement else None
+        if resolved_id is None and house_model_id is not None and reception_item.material_id is not None:
+            candidates = model_material_index.get((house_model_id, reception_item.material_id), [])
+            if len(candidates) == 1:
+                resolved_id = candidates[0]
+        if resolved_id is None and reception_item.material_id is not None:
+            candidates = material_index.get(reception_item.material_id, [])
+            if len(candidates) == 1:
+                resolved_id = candidates[0]
+        key = _normalized_line_key(
+            reception_item.description,
+            reception_item.unit,
+            expected_item.source_code,
+        )
+        if resolved_id is None and house_model_id is not None:
+            candidates = model_text_index.get((house_model_id, *key), [])
+            if len(candidates) == 1:
+                resolved_id = candidates[0]
+        if resolved_id is None:
+            candidates = text_index.get(key, [])
+            if len(candidates) == 1:
+                resolved_id = candidates[0]
+        if resolved_id is not None:
+            received_by_requirement[resolved_id] += quantity
+            continue
+        signature = (reception_item.material_id, *key)
+        unassigned_by_signature[signature] = unassigned_by_signature.get(signature, Decimal("0")) + quantity
+
+    response = []
+    for requirement in requirements:
+        assignment = assigned_by_model[requirement.house_model_id]
+        required = requirement.quantity_per_house * assignment.quantity
+        received = received_by_requirement.get(requirement.id, Decimal("0"))
+        signature = (
+            requirement.material_id,
+            *_normalized_line_key(requirement.description, requirement.unit, requirement.source_code),
+        )
+        unassigned = unassigned_by_signature.get(signature, Decimal("0"))
+        pending = max(required - received, Decimal("0"))
+        over_received = max(received - required, Decimal("0"))
+        response.append(
+            {
+                "project_id": project.id,
+                "house_model_id": requirement.house_model_id,
+                "house_model_name": assignment.house_model.name,
+                "assigned_houses": assignment.quantity,
+                "house_model_material_requirement_id": requirement.id,
+                "material_id": requirement.material_id,
+                "source_code": requirement.source_code,
+                "description": requirement.description,
+                "unit": requirement.unit,
+                "quantity_per_house": requirement.quantity_per_house,
+                "required_quantity": required,
+                "received_quantity": received,
+                "unassigned_received_quantity": unassigned,
+                "pending_quantity": pending,
+                "over_received_quantity": over_received,
+                "received_percent": _percent(received, required),
+                "status": _control_status(required, received),
             }
         )
     return response
@@ -885,7 +1151,13 @@ def create_expected_material_list(
     db.flush()
 
     for item_payload in payload.items:
-        data = _fill_expected_item_data(db, item_payload, project.company_id, current_user)
+        data = _fill_expected_item_data(
+            db,
+            item_payload,
+            project.company_id,
+            current_user,
+            project=project,
+        )
         db.add(
             ExpectedMaterialItem(
                 company_id=project.company_id,
@@ -978,7 +1250,17 @@ def create_quick_inventory_document(
         if payload.warehouse_id is not None
         else _default_warehouse_for_project(db, project)
     )
-    house_model_id = _single_project_house_model_id(db, project)
+    house_model_id = payload.house_model_id or _single_project_house_model_id(db, project)
+    if house_model_id is not None:
+        _resolve_requirement_context(
+            db,
+            project,
+            material_id=None,
+            source_code=None,
+            description=None,
+            unit=None,
+            house_model_id=house_model_id,
+        )
     source_document_name = payload.source_document_name or payload.document_number
     list_name = payload.name or payload.document_number or f"Documento material {date.today().isoformat()}"
     _ensure_document_not_duplicated(
@@ -1026,10 +1308,22 @@ def create_quick_inventory_document(
                 payload.include_in_quote,
                 source_document_name,
             )
+        item_house_model_id, requirement_id = _resolve_requirement_context(
+            db,
+            project,
+            material_id=material.id if material else line.material_id,
+            source_code=line.source_code,
+            description=line.description,
+            unit=line.unit,
+            house_model_id=line.house_model_id or house_model_id,
+            requirement_id=line.house_model_material_requirement_id,
+        )
         expected_item = ExpectedMaterialItem(
             company_id=project.company_id,
             expected_list_id=expected_list.id,
             material_id=material.id if material else line.material_id,
+            house_model_id=item_house_model_id,
+            house_model_material_requirement_id=requirement_id,
             source_code=line.source_code,
             description=line.description,
             unit=line.unit,
@@ -1069,6 +1363,8 @@ def create_quick_inventory_document(
                     reception_id=reception.id,
                     expected_item_id=expected_item.id,
                     material_id=expected_item.material_id,
+                    house_model_id=expected_item.house_model_id,
+                    house_model_material_requirement_id=expected_item.house_model_material_requirement_id,
                     description=expected_item.description,
                     unit=expected_item.unit,
                     received_quantity=line.received_quantity or Decimal("0"),
@@ -1150,7 +1446,15 @@ def add_expected_material_item(
 ) -> ExpectedMaterialItem:
     expected_list = get_or_404(db, ExpectedMaterialList, expected_list_id)
     ensure_same_company(current_user, expected_list, db=db)
-    data = _fill_expected_item_data(db, payload, expected_list.company_id, current_user)
+    project = get_or_404(db, Project, expected_list.project_id)
+    ensure_same_company(current_user, project, db=db)
+    data = _fill_expected_item_data(
+        db,
+        payload,
+        expected_list.company_id,
+        current_user,
+        project=project,
+    )
     item = ExpectedMaterialItem(
         company_id=expected_list.company_id,
         expected_list_id=expected_list.id,
@@ -1180,7 +1484,17 @@ def update_expected_material_item(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No se puede cambiar la cantidad esperada si ya hay recepciones",
         )
-    data = _fill_expected_item_data(db, payload, item.company_id, current_user, existing=item)
+    expected_list = get_or_404(db, ExpectedMaterialList, item.expected_list_id)
+    project = get_or_404(db, Project, expected_list.project_id)
+    ensure_same_company(current_user, project, db=db)
+    data = _fill_expected_item_data(
+        db,
+        payload,
+        item.company_id,
+        current_user,
+        existing=item,
+        project=project,
+    )
     before = snapshot(item, list(data.keys()) + ["status"])
     for field, value in data.items():
         setattr(item, field, value)
@@ -1240,6 +1554,8 @@ def create_reception(
                 reception_id=reception.id,
                 expected_item_id=expected_item.id,
                 material_id=expected_item.material_id,
+                house_model_id=expected_item.house_model_id,
+                house_model_material_requirement_id=expected_item.house_model_material_requirement_id,
                 description=expected_item.description,
                 unit=expected_item.unit,
                 received_quantity=item_payload.received_quantity,
@@ -1318,6 +1634,19 @@ def project_inventory_status(
         ).all()
     )
     return _status_response(items)
+
+
+@router.get(
+    "/projects/{project_id}/model-material-control",
+    response_model=list[ProjectModelMaterialControlItem],
+)
+def project_model_material_control(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("inventory", "view")),
+) -> list[dict]:
+    project = _project_for_user(db, project_id, current_user)
+    return _project_model_material_control(db, project)
 
 
 @router.get("/projects/{project_id}/missing-materials", response_model=list[InventoryStatusItem])

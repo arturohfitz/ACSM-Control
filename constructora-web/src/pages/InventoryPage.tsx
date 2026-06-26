@@ -105,6 +105,8 @@ type PurchaseOrderReceiveRow = {
 
 type InventoryStatusItem = {
   expected_item_id: number
+  house_model_id?: number | null
+  house_model_material_requirement_id?: number | null
   source_code?: string | null
   description: string
   unit: string
@@ -126,9 +128,31 @@ type MaterialReception = {
 type WarehouseStock = {
   id: number
   warehouse_id: number
+  house_model_id?: number | null
+  house_model_material_requirement_id?: number | null
   description: string
   unit: string
   quantity_on_hand: string
+}
+
+type ProjectModelMaterialControlItem = {
+  project_id: number
+  house_model_id: number
+  house_model_name: string
+  assigned_houses: string
+  house_model_material_requirement_id: number
+  material_id?: number | null
+  source_code?: string | null
+  description: string
+  unit: string
+  quantity_per_house: string
+  required_quantity: string
+  received_quantity: string
+  unassigned_received_quantity: string
+  pending_quantity: string
+  over_received_quantity: string
+  received_percent: string
+  status: string
 }
 
 type InventoryMode =
@@ -160,6 +184,13 @@ function formatQuantity(value: string | number | null | undefined) {
   const parsed = Number(value)
   if (Number.isNaN(parsed)) return String(value)
   return parsed.toLocaleString('es-MX', { maximumFractionDigits: 4 })
+}
+
+function formatPercent(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '0%'
+  const parsed = Number(value)
+  if (Number.isNaN(parsed)) return `${value}%`
+  return `${parsed.toLocaleString('es-MX', { maximumFractionDigits: 2 })}%`
 }
 
 function numberOrNull(value: string) {
@@ -283,6 +314,8 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const [missingItems, setMissingItems] = useState<InventoryStatusItem[]>([])
   const [receptions, setReceptions] = useState<MaterialReception[]>([])
   const [stockItems, setStockItems] = useState<WarehouseStock[]>([])
+  const [modelControlItems, setModelControlItems] = useState<ProjectModelMaterialControlItem[]>([])
+  const [controlModelId, setControlModelId] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -297,6 +330,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const [documentName, setDocumentName] = useState('')
   const [documentHash, setDocumentHash] = useState('')
   const [receivedBy, setReceivedBy] = useState('')
+  const [documentHouseModelId, setDocumentHouseModelId] = useState('')
   const [rows, setRows] = useState<InventoryRow[]>([newRow()])
 
   const selectedProject = useMemo(
@@ -357,6 +391,40 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
     [expectedLists, selectedPurchaseOrderId],
   )
 
+  const controlModelOptions = useMemo(() => {
+    const byId = new Map<number, { id: number; name: string; assigned_houses: string }>()
+    for (const item of modelControlItems) {
+      byId.set(item.house_model_id, {
+        id: item.house_model_id,
+        name: item.house_model_name,
+        assigned_houses: item.assigned_houses,
+      })
+    }
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name))
+  }, [modelControlItems])
+
+  const filteredControlItems = useMemo(
+    () =>
+      controlModelId
+        ? modelControlItems.filter((item) => String(item.house_model_id) === controlModelId)
+        : modelControlItems,
+    [controlModelId, modelControlItems],
+  )
+
+  const controlTotals = useMemo(
+    () =>
+      filteredControlItems.reduce(
+        (totals, item) => ({
+          required: totals.required + Number(item.required_quantity),
+          received: totals.received + Number(item.received_quantity),
+          pending: totals.pending + Number(item.pending_quantity),
+          unassigned: totals.unassigned + Number(item.unassigned_received_quantity),
+        }),
+        { required: 0, received: 0, pending: 0, unassigned: 0 },
+      ),
+    [filteredControlItems],
+  )
+
   const showPurchaseOrderReceiving = mode === 'purchase_order'
   const showExternalDocument = mode === 'external_document' || mode === 'document_validation'
   const showDocuments = mode === 'documents'
@@ -381,7 +449,15 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
     if (!currentProjectId) return
     setError('')
     try {
-      const [warehouseData, expectedData, statusData, missingData, receptionData, orderData] =
+      const [
+        warehouseData,
+        expectedData,
+        statusData,
+        missingData,
+        receptionData,
+        orderData,
+        modelControlData,
+      ] =
         await Promise.all([
           apiRequest<ProjectWarehouse[]>(`/inventory/projects/${currentProjectId}/warehouses`),
           apiRequest<ExpectedMaterialList[]>(
@@ -393,6 +469,9 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           ),
           apiRequest<MaterialReception[]>(`/inventory/projects/${currentProjectId}/receptions`),
           apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders'),
+          apiRequest<ProjectModelMaterialControlItem[]>(
+            `/inventory/projects/${currentProjectId}/model-material-control`,
+          ),
         ])
       setWarehouses(warehouseData)
       setExpectedLists(expectedData)
@@ -400,6 +479,17 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setMissingItems(missingData)
       setReceptions(receptionData)
       setPurchaseOrders(orderData)
+      setModelControlItems(modelControlData)
+      setControlModelId((current) =>
+        current && modelControlData.some((item) => String(item.house_model_id) === current)
+          ? current
+          : '',
+      )
+      setDocumentHouseModelId((current) =>
+        current && modelControlData.some((item) => String(item.house_model_id) === current)
+          ? current
+          : '',
+      )
       setWarehouseId((current) => current || (warehouseData[0] ? String(warehouseData[0].id) : ''))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar inventario')
@@ -430,6 +520,8 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setWarehouseId('')
       setSelectedPurchaseOrderId('')
       setPoReceiveRows([])
+      setControlModelId('')
+      setDocumentHouseModelId('')
       void loadProjectInventory(projectId)
     }
   }, [projectId])
@@ -647,6 +739,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
         method: 'POST',
         body: JSON.stringify({
           warehouse_id: warehouseId ? Number(warehouseId) : null,
+          house_model_id: documentHouseModelId ? Number(documentHouseModelId) : null,
           name: documentNumber || documentName || `Material ${selectedProject?.name ?? ''}`.trim(),
           document_number: textOrNull(documentNumber),
           supplier_name: textOrNull(supplierName),
@@ -683,6 +776,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setDeliveryDate('')
       setDocumentName('')
       setDocumentHash('')
+      setDocumentHouseModelId('')
       await loadProjectInventory()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible guardar documento')
@@ -746,6 +840,148 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
             {notice}
           </div>
         ) : null}
+      </section>
+
+      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
+              <PackageCheck className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold">Control de avance por modelo</h2>
+              <p className="text-xs text-acsm-muted">
+                Compara la explosion aprobada contra lo recibido en inventario.
+              </p>
+            </div>
+          </div>
+          <select
+            value={controlModelId}
+            onChange={(event) => setControlModelId(event.target.value)}
+            className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm sm:w-72"
+          >
+            <option value="">Todos los modelos</option>
+            {controlModelOptions.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name} · {formatQuantity(model.assigned_houses)} viviendas
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-3 md:grid-cols-4">
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Requerido</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatQuantity(controlTotals.required)}
+            </div>
+          </div>
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Recibido</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatQuantity(controlTotals.received)}
+            </div>
+          </div>
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Pendiente</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatQuantity(controlTotals.pending)}
+            </div>
+          </div>
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Avance</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatPercent(
+                controlTotals.required > 0
+                  ? (controlTotals.received / controlTotals.required) * 100
+                  : 0,
+              )}
+            </div>
+          </div>
+        </div>
+
+        {controlTotals.unassigned > 0 ? (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Hay {formatQuantity(controlTotals.unassigned)} unidades recibidas sin asignacion segura a
+            modelo. Selecciona el modelo en cargas sin OC o revisa partidas compartidas entre modelos.
+          </div>
+        ) : null}
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1080px] text-sm">
+            <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
+              <tr>
+                <th className="px-4 py-3">Modelo</th>
+                <th className="px-4 py-3">Material</th>
+                <th className="px-4 py-3">Por vivienda</th>
+                <th className="px-4 py-3">Requerido</th>
+                <th className="px-4 py-3">Recibido</th>
+                <th className="px-4 py-3">Pendiente</th>
+                <th className="px-4 py-3">Avance</th>
+                <th className="px-4 py-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredControlItems.map((item) => (
+                <tr
+                  key={item.house_model_material_requirement_id}
+                  className="border-b border-acsm-line last:border-0"
+                >
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-acsm-ink">{item.house_model_name}</div>
+                    <div className="text-xs text-acsm-muted">
+                      {formatQuantity(item.assigned_houses)} viviendas
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-acsm-ink">{item.description}</div>
+                    <div className="text-xs text-acsm-muted">{item.source_code || '-'}</div>
+                    {Number(item.unassigned_received_quantity) > 0 ? (
+                      <div className="mt-1 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                        {formatQuantity(item.unassigned_received_quantity)} {item.unit} sin asignar
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="px-4 py-3">
+                    {formatQuantity(item.quantity_per_house)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    {formatQuantity(item.required_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    {formatQuantity(item.received_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    {formatQuantity(item.pending_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="h-2 w-28 overflow-hidden rounded-full bg-acsm-paper">
+                      <div
+                        className="h-full rounded-full bg-acsm-green"
+                        style={{ width: `${Math.min(Number(item.received_percent), 100)}%` }}
+                      />
+                    </div>
+                    <div className="mt-1 text-xs font-semibold text-acsm-muted">
+                      {formatPercent(item.received_percent)}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
+                      {item.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {!filteredControlItems.length ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-6 text-center text-acsm-muted">
+                    No hay explosion de materiales integrada para los modelos de este desarrollo.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {showPurchaseOrderReceiving ? (
@@ -1059,6 +1295,18 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
         ) : null}
 
         <div className="grid min-w-0 gap-3 border-b border-acsm-line p-3 md:grid-cols-3 xl:grid-cols-6">
+          <select
+            value={documentHouseModelId}
+            onChange={(event) => setDocumentHouseModelId(event.target.value)}
+            className="h-10 rounded-md border border-acsm-line px-3 text-sm"
+          >
+            <option value="">Modelo automatico</option>
+            {controlModelOptions.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name}
+              </option>
+            ))}
+          </select>
           <input
             value={documentNumber}
             onChange={(event) => setDocumentNumber(event.target.value)}

@@ -38,6 +38,8 @@ class ProjectWarehouseRead(ProjectWarehouseBase, TimestampRead):
 
 class ExpectedMaterialItemCreate(BaseModel):
     material_id: int | None = None
+    house_model_id: int | None = None
+    house_model_material_requirement_id: int | None = None
     purchase_order_item_id: int | None = None
     source_code: str | None = Field(default=None, max_length=80)
     description: str | None = Field(default=None, max_length=255)
@@ -59,6 +61,8 @@ class ExpectedMaterialItemCreate(BaseModel):
 
 class ExpectedMaterialItemUpdate(BaseModel):
     material_id: int | None = None
+    house_model_id: int | None = None
+    house_model_material_requirement_id: int | None = None
     purchase_order_item_id: int | None = None
     source_code: str | None = Field(default=None, max_length=80)
     description: str | None = Field(default=None, max_length=255)
@@ -75,6 +79,8 @@ class ExpectedMaterialItemRead(ORMModel):
     company_id: int
     expected_list_id: int
     material_id: int | None = None
+    house_model_id: int | None = None
+    house_model_material_requirement_id: int | None = None
     purchase_order_item_id: int | None = None
     source_code: str | None = None
     description: str
@@ -143,6 +149,8 @@ class MaterialReceptionItemRead(ORMModel):
     reception_id: int
     expected_item_id: int
     material_id: int | None = None
+    house_model_id: int | None = None
+    house_model_material_requirement_id: int | None = None
     description: str
     unit: str
     received_quantity: Decimal
@@ -169,6 +177,8 @@ class InventoryStatusItem(ORMModel):
     expected_item_id: int
     expected_list_id: int
     material_id: int | None = None
+    house_model_id: int | None = None
+    house_model_material_requirement_id: int | None = None
     source_code: str | None = None
     description: str
     unit: str
@@ -188,6 +198,8 @@ class WarehouseStockRead(TimestampRead):
     warehouse_id: int
     expected_item_id: int
     material_id: int | None = None
+    house_model_id: int | None = None
+    house_model_material_requirement_id: int | None = None
     description: str
     unit: str
     quantity_on_hand: NonNegativeDecimal
@@ -195,6 +207,8 @@ class WarehouseStockRead(TimestampRead):
 
 class QuickInventoryLine(BaseModel):
     material_id: int | None = None
+    house_model_id: int | None = None
+    house_model_material_requirement_id: int | None = None
     source_code: str | None = Field(default=None, max_length=80)
     description: str = Field(min_length=1, max_length=255)
     unit: str = Field(min_length=1, max_length=40)
@@ -228,6 +242,7 @@ class QuickInventoryParsedDocument(BaseModel):
 
 class QuickInventoryDocumentCreate(BaseModel):
     warehouse_id: int | None = None
+    house_model_id: int | None = None
     name: str | None = Field(default=None, max_length=200)
     document_number: str | None = Field(default=None, max_length=80)
     supplier_name: str | None = Field(default=None, max_length=200)
@@ -249,3 +264,23 @@ class QuickInventoryDocumentCreate(BaseModel):
 class QuickInventoryDocumentRead(BaseModel):
     expected_list: ExpectedMaterialListRead
     reception: MaterialReceptionRead | None = None
+
+
+class ProjectModelMaterialControlItem(BaseModel):
+    project_id: int
+    house_model_id: int
+    house_model_name: str
+    assigned_houses: Decimal
+    house_model_material_requirement_id: int
+    material_id: int | None = None
+    source_code: str | None = None
+    description: str
+    unit: str
+    quantity_per_house: Decimal
+    required_quantity: Decimal
+    received_quantity: Decimal
+    unassigned_received_quantity: Decimal
+    pending_quantity: Decimal
+    over_received_quantity: Decimal
+    received_percent: Decimal
+    status: InventoryItemStatus

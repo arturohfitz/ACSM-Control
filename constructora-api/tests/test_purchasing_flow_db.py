@@ -8,7 +8,7 @@ from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.api.v1.endpoints.inventory import create_reception
+from app.api.v1.endpoints.inventory import create_reception, project_model_material_control
 from app.api.v1.endpoints.purchasing import (
     approve_supplier_quote,
     approve_supplier_agreement,
@@ -30,7 +30,11 @@ from app.models import (
     AuditEvent,
     Client,
     Company,
+    ExpectedMaterialItem,
+    ExpectedMaterialList,
     HouseModel,
+    HouseModelDocument,
+    HouseModelMaterialRequirement,
     Project,
     ProjectHouseModel,
     ProjectWarehouse,
@@ -120,6 +124,96 @@ class PurchasingFlowDBTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
+
+    def test_model_material_control_tracks_partial_inventory_receipts(self) -> None:
+        house_model = HouseModel(
+            company_id=self.company.id,
+            client_id=self.client.id,
+            name=f"Modelo inventario {self.suffix}",
+            construction_m2=Decimal("61.91"),
+        )
+        self.db.add(house_model)
+        self.db.flush()
+        self.db.add(
+            ProjectHouseModel(
+                project_id=self.project.id,
+                house_model_id=house_model.id,
+                quantity=Decimal("2"),
+            )
+        )
+        document = HouseModelDocument(
+            company_id=self.company.id,
+            client_id=self.client.id,
+            house_model_id=house_model.id,
+            document_type="explosion",
+            file_name=f"explosion-{self.suffix}.xlsx",
+            file_hash=f"hash-{self.suffix}",
+            status="integrated",
+            total_items=1,
+        )
+        self.db.add(document)
+        self.db.flush()
+        requirement = HouseModelMaterialRequirement(
+            company_id=self.company.id,
+            client_id=self.client.id,
+            house_model_id=house_model.id,
+            document_id=document.id,
+            source_code="CEM-001",
+            description="Cemento normal gris",
+            unit="TON",
+            quantity_per_house=Decimal("10"),
+            validation_status="validated",
+        )
+        self.db.add(requirement)
+        self.db.flush()
+        expected_list = ExpectedMaterialList(
+            company_id=self.company.id,
+            project_id=self.project.id,
+            warehouse_id=self.warehouse.id,
+            name=f"Recepcion parcial {self.suffix}",
+            status="open",
+        )
+        self.db.add(expected_list)
+        self.db.flush()
+        expected_item = ExpectedMaterialItem(
+            company_id=self.company.id,
+            expected_list_id=expected_list.id,
+            house_model_id=house_model.id,
+            house_model_material_requirement_id=requirement.id,
+            source_code=requirement.source_code,
+            description=requirement.description,
+            unit=requirement.unit,
+            expected_quantity=Decimal("20"),
+            received_quantity=Decimal("0"),
+            status="pending",
+        )
+        self.db.add(expected_item)
+        self.db.commit()
+
+        create_reception(
+            self.project.id,
+            MaterialReceptionCreate(
+                warehouse_id=self.warehouse.id,
+                expected_list_id=expected_list.id,
+                items=[
+                    MaterialReceptionItemCreate(
+                        expected_item_id=expected_item.id,
+                        received_quantity=Decimal("5"),
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+
+        control = project_model_material_control(self.project.id, self.db, self.user)
+        self.assertEqual(len(control), 1)
+        row = control[0]
+        self.assertEqual(row["required_quantity"], Decimal("20"))
+        self.assertEqual(row["received_quantity"], Decimal("5"))
+        self.assertEqual(row["pending_quantity"], Decimal("15"))
+        self.assertEqual(row["received_percent"], Decimal("25.00"))
+        self.assertEqual(row["status"], "partial")
 
     def test_rfq_quote_comparison_and_approval_request(self) -> None:
         rfq_payload = SupplierRFQCreate(

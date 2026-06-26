@@ -424,6 +424,8 @@ def convert_material_requisition_to_rfq(
         quantity = item.approved_quantity or item.requested_quantity
         rfq_item = SupplierRFQItem(
             rfq_id=rfq.id,
+            house_model_id=requisition.house_model_id,
+            house_model_material_requirement_id=item.house_model_material_requirement_id,
             material_id=item.material_id,
             source_code=item.source_code,
             description=item.description,

@@ -173,6 +173,10 @@ class SupplierRFQItem(Base):
     rfq_id: Mapped[int] = mapped_column(
         ForeignKey("supplier_rfqs.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    house_model_id: Mapped[int | None] = mapped_column(ForeignKey("house_models.id"), index=True)
+    house_model_material_requirement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("house_model_material_requirements.id"), index=True
+    )
     material_id: Mapped[int | None] = mapped_column(ForeignKey("materials.id"), index=True)
     source_code: Mapped[str | None] = mapped_column(String(80))
     description: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -181,6 +185,8 @@ class SupplierRFQItem(Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     rfq: Mapped[SupplierRFQ] = relationship(back_populates="items")
+    house_model: Mapped["HouseModel | None"] = relationship()
+    house_model_material_requirement: Mapped["HouseModelMaterialRequirement | None"] = relationship()
     material: Mapped["Material | None"] = relationship()
     quote_items: Mapped[list["SupplierQuoteItem"]] = relationship(back_populates="rfq_item")
 
@@ -355,6 +361,10 @@ class PurchaseOrderItem(Base):
         ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False, index=True
     )
     rfq_item_id: Mapped[int | None] = mapped_column(ForeignKey("supplier_rfq_items.id"), index=True)
+    house_model_id: Mapped[int | None] = mapped_column(ForeignKey("house_models.id"), index=True)
+    house_model_material_requirement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("house_model_material_requirements.id"), index=True
+    )
     material_id: Mapped[int | None] = mapped_column(ForeignKey("materials.id"), index=True)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     unit: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -366,6 +376,8 @@ class PurchaseOrderItem(Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     purchase_order: Mapped[PurchaseOrder] = relationship(back_populates="items")
+    house_model: Mapped["HouseModel | None"] = relationship()
+    house_model_material_requirement: Mapped["HouseModelMaterialRequirement | None"] = relationship()
     material: Mapped["Material | None"] = relationship()
 
 
