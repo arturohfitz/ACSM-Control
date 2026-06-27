@@ -1841,7 +1841,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                 setReceptionSearch(event.target.value)
                 setReceptionHistoryExpanded(false)
               }}
-              placeholder="Proveedor, material, documento o recibe"
+              placeholder="Proveedor, material o documento"
               className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
             />
           </label>
