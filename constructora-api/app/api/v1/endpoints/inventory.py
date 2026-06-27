@@ -998,7 +998,7 @@ def _sync_reception_notifications(
         entity_type="PurchaseOrder",
         entity_id=purchase_order.id,
         entity_label=purchase_order.po_number,
-        action_url="/inventory/purchase-order-receiving",
+        action_url="/inventory/material-receiving?type=oc",
         project_id=expected_list.project_id,
         metadata={
             "expected_list_id": expected_list.id,

@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import AppLayout from './components/AppLayout'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -26,6 +26,13 @@ import SupplierAgreementsPage from './pages/SupplierAgreementsPage'
 import SupplierPaymentsPage from './pages/SupplierPaymentsPage'
 import SupplierQuotePortalPage from './pages/SupplierQuotePortalPage'
 
+function InventoryReceivingRedirect({ type }: { type: 'oc' | 'sin-oc' }) {
+  const location = useLocation()
+  const params = new URLSearchParams(location.search)
+  params.set('type', type)
+  return <Navigate to={`/inventory/material-receiving?${params.toString()}`} replace />
+}
+
 export default function App() {
   return (
     <Routes>
@@ -50,14 +57,18 @@ export default function App() {
           />
           <Route path="/purchasing/approvals" element={<PurchasingApprovalsPage />} />
           <Route path="/purchasing/orders" element={<PurchasingOrdersPage />} />
-          <Route path="/inventory" element={<Navigate to="/inventory/purchase-order-receiving" replace />} />
+          <Route path="/inventory" element={<InventoryReceivingRedirect type="oc" />} />
+          <Route
+            path="/inventory/material-receiving"
+            element={<InventoryPage mode="material_receiving" />}
+          />
           <Route
             path="/inventory/purchase-order-receiving"
-            element={<InventoryPage mode="purchase_order" />}
+            element={<InventoryReceivingRedirect type="oc" />}
           />
           <Route
             path="/inventory/external-receiving"
-            element={<InventoryPage mode="external_document" />}
+            element={<InventoryReceivingRedirect type="sin-oc" />}
           />
           <Route
             path="/inventory/document-validation"

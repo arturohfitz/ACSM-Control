@@ -10,7 +10,6 @@ import {
   Clock,
   ClipboardList,
   ExternalLink,
-  FileUp,
   FolderKanban,
   Handshake,
   HardHat,
@@ -130,17 +129,10 @@ const workSubItems = [
 
 const inventorySubItems = [
   {
-    to: '/inventory/purchase-order-receiving',
-    label: 'Recepcion por OC',
+    to: '/inventory/material-receiving',
+    label: 'Recepcion de materiales',
     icon: Warehouse,
     permission: 'inventory:view',
-    indent: true,
-  },
-  {
-    to: '/inventory/external-receiving',
-    label: 'Recepcion sin OC',
-    icon: FileUp,
-    permission: 'inventory:create',
     indent: true,
   },
   {
@@ -189,6 +181,7 @@ const titles: Record<string, string> = {
   '/purchasing/approvals': 'Aprobaciones de compras',
   '/purchasing/orders': 'Ordenes de compra',
   '/inventory': 'Inventario',
+  '/inventory/material-receiving': 'Recepcion de materiales',
   '/inventory/purchase-order-receiving': 'Recepcion por orden de compra',
   '/inventory/external-receiving': 'Recepcion sin orden de compra',
   '/inventory/document-validation': 'Validar documentos externos',

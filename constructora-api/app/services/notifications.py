@@ -346,7 +346,7 @@ def _sync_incomplete_purchase_order_notifications(db: Session, *, company_id: in
             entity_type="PurchaseOrder",
             entity_id=purchase_order.id,
             entity_label=purchase_order.po_number,
-            action_url="/inventory/purchase-order-receiving",
+            action_url="/inventory/material-receiving?type=oc",
             due_at=_day_to_datetime(purchase_order.issued_at),
             metadata={"pending_items": len(pending_items), "pending_quantity": str(pending_qty)},
         )

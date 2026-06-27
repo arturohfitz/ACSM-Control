@@ -1,4 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -156,6 +157,7 @@ type ProjectModelMaterialControlItem = {
 }
 
 type InventoryMode =
+  | 'material_receiving'
   | 'purchase_order'
   | 'external_document'
   | 'document_validation'
@@ -163,7 +165,14 @@ type InventoryMode =
   | 'missing'
   | 'stock'
 
+type MaterialReceivingType = 'purchase_order' | 'external_document'
 type ControlSortMode = 'material' | 'progress_asc' | 'progress_desc' | 'pending_desc' | 'status'
+
+function receivingTypeFromQuery(value: string | null): MaterialReceivingType {
+  return value === 'sin-oc' || value === 'external' || value === 'no-oc'
+    ? 'external_document'
+    : 'purchase_order'
+}
 
 function newRow(overrides: Partial<InventoryRow> = {}): InventoryRow {
   return {
@@ -301,6 +310,13 @@ function parsedRows(document: ParsedDocument): InventoryRow[] {
 }
 
 export default function InventoryPage({ mode = 'purchase_order' }: { mode?: InventoryMode }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const receivingQueryType = searchParams.get('type')
+  const initialReceivingType: MaterialReceivingType =
+    mode === 'external_document'
+      ? 'external_document'
+      : receivingTypeFromQuery(receivingQueryType)
+  const [receivingType, setReceivingType] = useState<MaterialReceivingType>(initialReceivingType)
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState('')
   const [warehouses, setWarehouses] = useState<ProjectWarehouse[]>([])
@@ -462,11 +478,28 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
     [filteredControlItems],
   )
 
-  const showPurchaseOrderReceiving = mode === 'purchase_order'
-  const showExternalDocument = mode === 'external_document' || mode === 'document_validation'
+  const showMaterialReceiving =
+    mode === 'material_receiving' || mode === 'purchase_order' || mode === 'external_document'
+  const showReceivingTypeSelector = mode === 'material_receiving'
+  const showPurchaseOrderReceiving =
+    showMaterialReceiving && receivingType === 'purchase_order'
+  const showExternalDocument =
+    mode === 'document_validation' ||
+    (showMaterialReceiving && receivingType === 'external_document')
   const showDocuments = mode === 'documents'
   const showMissing = mode === 'missing'
   const showStock = mode === 'stock'
+
+  function selectReceivingType(nextType: MaterialReceivingType) {
+    setReceivingType(nextType)
+    setError('')
+    setNotice('')
+    if (mode === 'material_receiving') {
+      const nextParams = new URLSearchParams(searchParams)
+      nextParams.set('type', nextType === 'purchase_order' ? 'oc' : 'sin-oc')
+      setSearchParams(nextParams, { replace: true })
+    }
+  }
 
   async function loadCatalogs() {
     setLoading(true)
@@ -551,6 +584,16 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   useEffect(() => {
     void loadCatalogs()
   }, [])
+
+  useEffect(() => {
+    if (mode === 'material_receiving') {
+      setReceivingType(receivingTypeFromQuery(receivingQueryType))
+      return
+    }
+    if (mode === 'purchase_order' || mode === 'external_document') {
+      setReceivingType(mode)
+    }
+  }, [mode, receivingQueryType])
 
   useEffect(() => {
     if (projectId) {
@@ -830,6 +873,50 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
 
   return (
     <div className="min-w-0 space-y-5">
+      {showReceivingTypeSelector ? (
+      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
+              <Warehouse className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold">Recepcion de materiales</h2>
+              <p className="text-xs text-acsm-muted">
+                Selecciona si el material llega contra una orden de compra o como recepcion sin OC.
+              </p>
+            </div>
+          </div>
+          <div className="grid w-full gap-2 rounded-md border border-acsm-line bg-acsm-paper p-1 sm:w-auto sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => selectReceivingType('purchase_order')}
+              className={`inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-semibold transition ${
+                receivingType === 'purchase_order'
+                  ? 'bg-acsm-green text-white shadow-sm'
+                  : 'text-acsm-ink hover:bg-white'
+              }`}
+            >
+              <Truck className="h-4 w-4" aria-hidden="true" />
+              Con OC
+            </button>
+            <button
+              type="button"
+              onClick={() => selectReceivingType('external_document')}
+              className={`inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-semibold transition ${
+                receivingType === 'external_document'
+                  ? 'bg-acsm-green text-white shadow-sm'
+                  : 'text-acsm-ink hover:bg-white'
+              }`}
+            >
+              <FileUp className="h-4 w-4" aria-hidden="true" />
+              Sin OC
+            </button>
+          </div>
+        </div>
+      </section>
+      ) : null}
+
       {!showPurchaseOrderReceiving ? (
       <section className="overflow-hidden rounded-md border border-acsm-line bg-white p-3 shadow-panel">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">

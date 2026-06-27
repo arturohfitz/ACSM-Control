@@ -2370,7 +2370,7 @@ def approve_supplier_quote(
         entity_type="PurchaseOrder",
         entity_id=purchase_order.id,
         entity_label=purchase_order.po_number,
-        action_url="/inventory/purchase-order-receiving",
+        action_url="/inventory/material-receiving?type=oc",
         project_id=rfq.project_id,
         metadata={"supplier_id": quote.supplier_id, "subtotal": str(quote.subtotal)},
     )
@@ -2694,7 +2694,7 @@ def create_supplier_invoice(
             entity_type="SupplierInvoice",
             entity_id=invoice.id,
             entity_label=invoice.invoice_number,
-            action_url="/inventory/purchase-order-receiving",
+            action_url="/inventory/material-receiving?type=oc",
             project_id=purchase_order.project_id,
             metadata={"purchase_order_id": purchase_order.id, "total": str(invoice.total)},
         )
