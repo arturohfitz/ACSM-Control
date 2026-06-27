@@ -59,6 +59,7 @@ type RequisitionItem = {
   source_code?: string | null
   description: string
   unit: string
+  requested_unit?: string | null
   requested_quantity: string
   approved_quantity?: string | null
   status: string
@@ -92,6 +93,7 @@ type MaterialRequisition = {
 type DraftItem = {
   requirement: AvailableRequirement
   quantity: string
+  requestedUnit: string
   notes: string
 }
 
@@ -113,6 +115,23 @@ const priorityLabels: Record<string, string> = {
   high: 'Alta',
   urgent: 'Urgente',
 }
+
+const unitSuggestions = [
+  'PZA',
+  'TON',
+  'KG',
+  'M',
+  'M2',
+  'M3',
+  'SACO',
+  'BULTO',
+  'ROLLO',
+  'CAJA',
+  'CUBETA',
+  'LATA',
+  'L',
+  'JGO',
+]
 
 function formatDate(value?: string | null) {
   if (!value) return '-'
@@ -290,12 +309,13 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
       {
         requirement,
         quantity: formatNumber(requirement.total_required).replace(/,/g, ''),
+        requestedUnit: requirement.unit,
         notes: '',
       },
     ])
   }
 
-  function updateDraftItem(requirementId: number, field: 'quantity' | 'notes', value: string) {
+  function updateDraftItem(requirementId: number, field: 'quantity' | 'requestedUnit' | 'notes', value: string) {
     setDraftItems((items) =>
       items.map((item) =>
         item.requirement.id === requirementId ? { ...item, [field]: value } : item,
@@ -321,6 +341,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
           items: draftItems.map((item) => ({
             house_model_material_requirement_id: item.requirement.id,
             requested_quantity: item.quantity,
+            requested_unit: item.requestedUnit.trim() || item.requirement.unit,
             notes: item.notes || null,
           })),
         }),
@@ -571,13 +592,18 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                 <p className="text-xs text-acsm-muted">{draftItems.length} partidas seleccionadas</p>
               </div>
               <div className="max-h-[520px] space-y-3 overflow-y-auto p-4">
+                <datalist id="material-requisition-unit-options">
+                  {unitSuggestions.map((unit) => (
+                    <option key={unit} value={unit} />
+                  ))}
+                </datalist>
                 {draftItems.map((item) => (
                   <div key={item.requirement.id} className="rounded-2xl border border-sky-200 bg-white p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-sm font-bold text-acsm-ink">{item.requirement.description}</div>
                         <div className="text-xs text-acsm-muted">
-                          {item.requirement.source_code || 'Sin clave'} · {item.requirement.unit}
+                          {item.requirement.source_code || 'Sin clave'} · unidad base: {item.requirement.unit}
                         </div>
                       </div>
                       <button
@@ -593,7 +619,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </div>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
                       <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
                         Cantidad
                         <input
@@ -604,6 +630,22 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                           onChange={(event) =>
                             updateDraftItem(item.requirement.id, 'quantity', event.target.value)
                           }
+                          className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink"
+                        />
+                      </label>
+                      <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
+                        Unidad solicitada
+                        <input
+                          value={item.requestedUnit}
+                          onChange={(event) =>
+                            updateDraftItem(
+                              item.requirement.id,
+                              'requestedUnit',
+                              event.target.value.toUpperCase(),
+                            )
+                          }
+                          list="material-requisition-unit-options"
+                          placeholder="Ej. BULTO"
                           className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink"
                         />
                       </label>
@@ -761,7 +803,8 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                         <thead className="bg-sky-100 text-xs uppercase text-acsm-muted">
                           <tr>
                             <th className="px-4 py-3 text-left">Material</th>
-                            <th className="px-4 py-3 text-left">Unidad</th>
+                            <th className="px-4 py-3 text-left">Unidad base</th>
+                            <th className="px-4 py-3 text-left">Unidad solicitada</th>
                             <th className="px-4 py-3 text-left">Solicitado</th>
                             <th className="px-4 py-3 text-left">Aprobado</th>
                             <th className="px-4 py-3 text-left">Notas</th>
@@ -775,6 +818,9 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                                 <div className="text-xs text-acsm-muted">{item.source_code || 'Sin clave'}</div>
                               </td>
                               <td className="px-4 py-3 text-acsm-muted">{item.unit}</td>
+                              <td className="px-4 py-3 font-semibold text-acsm-ink">
+                                {item.requested_unit || item.unit}
+                              </td>
                               <td className="px-4 py-3 font-semibold text-acsm-ink">
                                 {formatNumber(item.requested_quantity)}
                               </td>

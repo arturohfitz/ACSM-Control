@@ -38,6 +38,7 @@ class AvailableRequirementRead(BaseModel):
 class MaterialRequisitionItemCreate(BaseModel):
     house_model_material_requirement_id: int
     requested_quantity: PositiveDecimal
+    requested_unit: str | None = Field(default=None, min_length=1, max_length=40)
     notes: str | None = None
 
 
@@ -50,6 +51,7 @@ class MaterialRequisitionItemRead(ORMModel):
     source_code: str | None = None
     description: str
     unit: str
+    requested_unit: str | None = None
     requested_quantity: Decimal
     approved_quantity: Decimal | None = None
     status: str

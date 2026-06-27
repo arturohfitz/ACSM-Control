@@ -62,6 +62,7 @@ class MaterialRequisitionItem(Base):
     source_code: Mapped[str | None] = mapped_column(String(80))
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     unit: Mapped[str] = mapped_column(String(40), nullable=False)
+    requested_unit: Mapped[str | None] = mapped_column(String(40))
     requested_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     approved_quantity: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
     status: Mapped[str] = mapped_column(String(40), default="pending", nullable=False, index=True)

@@ -260,6 +260,7 @@ def create_material_requisition(
             house_model_id=house_model.id,
             current_user=current_user,
         )
+        requested_unit = (item.requested_unit or "").strip() or requirement.unit
         db.add(
             MaterialRequisitionItem(
                 requisition_id=requisition.id,
@@ -268,6 +269,7 @@ def create_material_requisition(
                 source_code=requirement.source_code,
                 description=requirement.description,
                 unit=requirement.unit,
+                requested_unit=requested_unit,
                 requested_quantity=item.requested_quantity,
                 status="pending",
                 notes=item.notes,
@@ -422,6 +424,11 @@ def convert_material_requisition_to_rfq(
 
     for item in requisition.items:
         quantity = item.approved_quantity or item.requested_quantity
+        requested_unit = item.requested_unit or item.unit
+        item_notes = item.notes
+        if requested_unit != item.unit:
+            base_unit_note = f"Unidad base de explosion: {item.unit}"
+            item_notes = f"{item_notes}. {base_unit_note}" if item_notes else base_unit_note
         rfq_item = SupplierRFQItem(
             rfq_id=rfq.id,
             house_model_id=requisition.house_model_id,
@@ -429,9 +436,9 @@ def convert_material_requisition_to_rfq(
             material_id=item.material_id,
             source_code=item.source_code,
             description=item.description,
-            unit=item.unit,
+            unit=requested_unit,
             quantity=quantity,
-            notes=item.notes,
+            notes=item_notes,
         )
         db.add(rfq_item)
         db.flush()

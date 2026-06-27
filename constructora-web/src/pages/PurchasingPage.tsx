@@ -51,6 +51,7 @@ type MaterialRequisitionItem = {
   source_code?: string | null
   description: string
   unit: string
+  requested_unit?: string | null
   requested_quantity: string
   approved_quantity?: string | null
   status: string
@@ -1270,13 +1271,19 @@ export default function PurchasingPage() {
     setItems(
       requisition.items.map((item) => {
         const quantity = item.approved_quantity ?? item.requested_quantity ?? '0'
+        const requestedUnit = item.requested_unit || item.unit
+        const baseUnitNote =
+          requestedUnit !== item.unit ? `Unidad base: ${item.unit}` : ''
+        const notes = [item.notes, `Origen ${requisition.requisition_number}`, baseUnitNote]
+          .filter(Boolean)
+          .join('. ')
         return {
           material_id: item.material_id ? String(item.material_id) : '',
           material_search: item.description,
           description: item.description,
-          unit: item.unit,
+          unit: requestedUnit,
           quantity: String(Number(quantity) || quantity || '0'),
-          notes: item.notes ?? `Origen ${requisition.requisition_number}`,
+          notes,
         }
       }),
     )
