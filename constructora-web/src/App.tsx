@@ -63,6 +63,10 @@ export default function App() {
             element={<InventoryPage mode="material_receiving" />}
           />
           <Route
+            path="/inventory/model-progress"
+            element={<InventoryPage mode="model_control" />}
+          />
+          <Route
             path="/inventory/purchase-order-receiving"
             element={<InventoryReceivingRedirect type="oc" />}
           />

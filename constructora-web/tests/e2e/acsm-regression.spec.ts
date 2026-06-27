@@ -711,9 +711,11 @@ test('menu principal despliega y contrae submenus por modulo', async ({ page }) 
 
   await page.getByRole('link', { name: /^Inventario$/i }).click()
   await expect(page.getByRole('link', { name: /Recepcion de materiales/i })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Control de avance/i })).toBeVisible()
 
   await page.getByRole('link', { name: /^Inicio$/i }).click()
   await expect(page.getByRole('link', { name: /Recepcion de materiales/i })).toBeHidden()
+  await expect(page.getByRole('link', { name: /Control de avance/i })).toBeHidden()
 })
 
 test('menu oculta modulos sin permiso para usuarios operativos', async ({ page }) => {

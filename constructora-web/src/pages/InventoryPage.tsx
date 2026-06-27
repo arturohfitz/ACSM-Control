@@ -158,6 +158,7 @@ type ProjectModelMaterialControlItem = {
 
 type InventoryMode =
   | 'material_receiving'
+  | 'model_control'
   | 'purchase_order'
   | 'external_document'
   | 'document_validation'
@@ -486,6 +487,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const showExternalDocument =
     mode === 'document_validation' ||
     (showMaterialReceiving && receivingType === 'external_document')
+  const showModelControl = mode === 'model_control'
   const showDocuments = mode === 'documents'
   const showMissing = mode === 'missing'
   const showStock = mode === 'stock'
@@ -917,7 +919,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       </section>
       ) : null}
 
-      {!showPurchaseOrderReceiving ? (
+      {!showPurchaseOrderReceiving && !showModelControl ? (
       <section className="overflow-hidden rounded-md border border-acsm-line bg-white p-3 shadow-panel">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
           <label className="min-w-0 text-sm">
@@ -1222,7 +1224,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       </section>
       ) : null}
 
-      {showPurchaseOrderReceiving ? (
+      {showModelControl ? (
       <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
           <div className="flex min-w-0 items-center gap-3">

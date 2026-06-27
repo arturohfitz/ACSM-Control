@@ -136,6 +136,13 @@ const inventorySubItems = [
     indent: true,
   },
   {
+    to: '/inventory/model-progress',
+    label: 'Control de avance',
+    icon: Package,
+    permission: 'inventory:view',
+    indent: true,
+  },
+  {
     to: '/inventory/document-validation',
     label: 'Validar documentos',
     icon: ClipboardList,
@@ -182,6 +189,7 @@ const titles: Record<string, string> = {
   '/purchasing/orders': 'Ordenes de compra',
   '/inventory': 'Inventario',
   '/inventory/material-receiving': 'Recepcion de materiales',
+  '/inventory/model-progress': 'Control de avance por modelo',
   '/inventory/purchase-order-receiving': 'Recepcion por orden de compra',
   '/inventory/external-receiving': 'Recepcion sin orden de compra',
   '/inventory/document-validation': 'Validar documentos externos',
