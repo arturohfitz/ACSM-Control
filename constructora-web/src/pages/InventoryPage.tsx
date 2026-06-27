@@ -76,6 +76,31 @@ type ExpectedMaterialList = {
   items: ExpectedMaterialItem[]
 }
 
+type MaterialReceptionItem = {
+  id: number
+  expected_item_id: number
+  material_id?: number | null
+  description: string
+  unit: string
+  received_quantity: string
+  condition_status: string
+  notes?: string | null
+}
+
+type MaterialReception = {
+  id: number
+  project_id: number
+  warehouse_id: number
+  expected_list_id: number
+  received_at: string
+  delivery_reference?: string | null
+  delivered_by?: string | null
+  received_by?: string | null
+  notes?: string | null
+  status: string
+  items: MaterialReceptionItem[]
+}
+
 type PurchaseOrder = {
   id: number
   project_id: number
@@ -193,6 +218,17 @@ function formatPercent(value: string | number | null | undefined) {
   const parsed = Number(value)
   if (Number.isNaN(parsed)) return `${value}%`
   return `${parsed.toLocaleString('es-MX', { maximumFractionDigits: 2 })}%`
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return '-'
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number)
+  if (!year || !month || !day) return value
+  return new Date(year, month - 1, day).toLocaleDateString('es-MX', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
 function numberOrNull(value: string) {
@@ -313,6 +349,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const [warehouses, setWarehouses] = useState<ProjectWarehouse[]>([])
   const [warehouseId, setWarehouseId] = useState('')
   const [expectedLists, setExpectedLists] = useState<ExpectedMaterialList[]>([])
+  const [receptions, setReceptions] = useState<MaterialReception[]>([])
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([])
   const [selectedPurchaseOrderId, setSelectedPurchaseOrderId] = useState('')
   const [poReceiveRows, setPoReceiveRows] = useState<PurchaseOrderReceiveRow[]>([])
@@ -328,6 +365,11 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const [controlStatus, setControlStatus] = useState('')
   const [controlSort, setControlSort] = useState<ControlSortMode>('material')
   const [controlExpanded, setControlExpanded] = useState(false)
+  const [receptionSearch, setReceptionSearch] = useState('')
+  const [receptionDateFrom, setReceptionDateFrom] = useState('')
+  const [receptionDateTo, setReceptionDateTo] = useState('')
+  const [receptionTypeFilter, setReceptionTypeFilter] = useState('')
+  const [receptionHistoryExpanded, setReceptionHistoryExpanded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -454,6 +496,81 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
 
   const hiddenControlCount = Math.max(sortedControlItems.length - visibleControlItems.length, 0)
 
+  const receptionHistoryRows = useMemo(
+    () =>
+      receptions.map((reception) => {
+        const expectedList = expectedLists.find((list) => list.id === reception.expected_list_id)
+        const purchaseOrder = purchaseOrders.find(
+          (order) => order.id === expectedList?.purchase_order_id,
+        )
+        const type = expectedList?.purchase_order_id ? 'purchase_order' : 'external_document'
+        const provider =
+          purchaseOrder?.supplier?.name ||
+          expectedList?.supplier_name ||
+          reception.delivered_by ||
+          '-'
+        const documentReference =
+          reception.delivery_reference ||
+          purchaseOrder?.po_number ||
+          expectedList?.document_number ||
+          expectedList?.name ||
+          '-'
+        const materialNames = reception.items.map((item) => item.description).filter(Boolean)
+        const materialSummary =
+          materialNames.length > 3
+            ? `${materialNames.slice(0, 3).join(', ')} +${materialNames.length - 3}`
+            : materialNames.join(', ')
+        const totalQuantity = reception.items.reduce(
+          (sum, item) => sum + Number(item.received_quantity || 0),
+          0,
+        )
+        return {
+          ...reception,
+          type,
+          provider,
+          documentReference,
+          materialSummary: materialSummary || '-',
+          totalQuantity,
+          searchText: [
+            provider,
+            documentReference,
+            reception.received_by,
+            reception.delivered_by,
+            reception.notes,
+            ...materialNames,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase(),
+        }
+      }),
+    [expectedLists, purchaseOrders, receptions],
+  )
+
+  const filteredReceptionHistory = useMemo(() => {
+    const search = receptionSearch.trim().toLowerCase()
+    return receptionHistoryRows.filter((reception) => {
+      if (receptionTypeFilter && reception.type !== receptionTypeFilter) return false
+      if (receptionDateFrom && reception.received_at < receptionDateFrom) return false
+      if (receptionDateTo && reception.received_at > receptionDateTo) return false
+      if (!search) return true
+      return reception.searchText.includes(search)
+    })
+  }, [receptionDateFrom, receptionDateTo, receptionHistoryRows, receptionSearch, receptionTypeFilter])
+
+  const visibleReceptionHistory = useMemo(
+    () =>
+      receptionHistoryExpanded
+        ? filteredReceptionHistory
+        : filteredReceptionHistory.slice(0, 5),
+    [filteredReceptionHistory, receptionHistoryExpanded],
+  )
+
+  const hiddenReceptionCount = Math.max(
+    filteredReceptionHistory.length - visibleReceptionHistory.length,
+    0,
+  )
+
   const controlTotals = useMemo(
     () =>
       filteredControlItems.reduce(
@@ -514,6 +631,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
         missingData,
         orderData,
         modelControlData,
+        receptionData,
       ] =
         await Promise.all([
           apiRequest<ProjectWarehouse[]>(`/inventory/projects/${currentProjectId}/warehouses`),
@@ -528,6 +646,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           apiRequest<ProjectModelMaterialControlItem[]>(
             `/inventory/projects/${currentProjectId}/model-material-control`,
           ),
+          apiRequest<MaterialReception[]>(`/inventory/projects/${currentProjectId}/receptions`),
         ])
       setWarehouses(warehouseData)
       setExpectedLists(expectedData)
@@ -535,6 +654,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setMissingItems(missingData)
       setPurchaseOrders(orderData)
       setModelControlItems(modelControlData)
+      setReceptions(receptionData)
       setControlModelId((current) =>
         current && modelControlData.some((item) => String(item.house_model_id) === current)
           ? current
@@ -590,6 +710,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setControlStatus('')
       setControlSort('material')
       setControlExpanded(false)
+      setReceptionHistoryExpanded(false)
       setDocumentHouseModelId('')
       void loadProjectInventory(projectId)
     }
@@ -1691,6 +1812,173 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
         </div>
       </form>
       ) : null}
+
+      {showMaterialReceiving ? (
+      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
+              <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold">Recepciones procesadas</h2>
+              <p className="text-xs text-acsm-muted">
+                Consulta entradas registradas con OC o sin OC por fecha, proveedor y material.
+              </p>
+            </div>
+          </div>
+          <span className="rounded-full border border-acsm-line bg-acsm-paper px-3 py-1 text-xs font-semibold text-acsm-muted">
+            {filteredReceptionHistory.length} registros
+          </span>
+        </div>
+
+        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_160px_160px_180px_auto] xl:items-end">
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Buscar</span>
+            <input
+              value={receptionSearch}
+              onChange={(event) => {
+                setReceptionSearch(event.target.value)
+                setReceptionHistoryExpanded(false)
+              }}
+              placeholder="Proveedor, material, documento o recibe"
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            />
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Desde</span>
+            <input
+              type="date"
+              value={receptionDateFrom}
+              onChange={(event) => {
+                setReceptionDateFrom(event.target.value)
+                setReceptionHistoryExpanded(false)
+              }}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            />
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Hasta</span>
+            <input
+              type="date"
+              value={receptionDateTo}
+              onChange={(event) => {
+                setReceptionDateTo(event.target.value)
+                setReceptionHistoryExpanded(false)
+              }}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            />
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Tipo</span>
+            <select
+              value={receptionTypeFilter}
+              onChange={(event) => {
+                setReceptionTypeFilter(event.target.value)
+                setReceptionHistoryExpanded(false)
+              }}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="">Todas</option>
+              <option value="purchase_order">Con OC</option>
+              <option value="external_document">Sin OC</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              setReceptionSearch('')
+              setReceptionDateFrom('')
+              setReceptionDateTo('')
+              setReceptionTypeFilter('')
+              setReceptionHistoryExpanded(false)
+            }}
+            className="inline-flex h-10 w-full items-center justify-center rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper md:w-auto"
+          >
+            Limpiar
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1080px] text-sm">
+            <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
+              <tr>
+                <th className="px-4 py-3">Fecha</th>
+                <th className="px-4 py-3">Tipo</th>
+                <th className="px-4 py-3">Proveedor / entrega</th>
+                <th className="px-4 py-3">Documento</th>
+                <th className="px-4 py-3">Materiales</th>
+                <th className="px-4 py-3">Partidas</th>
+                <th className="px-4 py-3">Cantidad</th>
+                <th className="px-4 py-3">Recibio</th>
+                <th className="px-4 py-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleReceptionHistory.map((reception) => (
+                <tr key={reception.id} className="border-b border-acsm-line last:border-0">
+                  <td className="px-4 py-3 font-semibold text-acsm-ink">
+                    {formatDate(reception.received_at)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
+                      {reception.type === 'purchase_order' ? 'Con OC' : 'Sin OC'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-acsm-ink">{reception.provider}</div>
+                    <div className="text-xs text-acsm-muted">
+                      {reception.delivered_by || '-'}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-acsm-ink">
+                    {reception.documentReference}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="max-w-[360px] truncate" title={reception.materialSummary}>
+                      {reception.materialSummary}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">{reception.items.length}</td>
+                  <td className="px-4 py-3">{formatQuantity(reception.totalQuantity)}</td>
+                  <td className="px-4 py-3">{reception.received_by || '-'}</td>
+                  <td className="px-4 py-3">
+                    <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
+                      {reception.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {!filteredReceptionHistory.length ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-6 text-center text-acsm-muted">
+                    No hay recepciones registradas con los filtros seleccionados.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        {filteredReceptionHistory.length > 5 ? (
+          <div className="flex flex-col gap-3 border-t border-acsm-line bg-acsm-paper/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-acsm-muted">
+              {receptionHistoryExpanded
+                ? `Mostrando ${visibleReceptionHistory.length} recepciones filtradas`
+                : `Mostrando 5 de ${filteredReceptionHistory.length} recepciones. ${hiddenReceptionCount} ocultas.`}
+            </div>
+            <button
+              type="button"
+              onClick={() => setReceptionHistoryExpanded((current) => !current)}
+              className="inline-flex h-9 items-center justify-center rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
+            >
+              {receptionHistoryExpanded ? 'Ver menos' : 'Ver mas'}
+            </button>
+          </div>
+        ) : null}
+      </section>
+      ) : null}
+
       {showStock ? (
       <section className="rounded-md border border-acsm-line bg-white shadow-panel">
         <div className="flex h-14 items-center justify-between border-b border-acsm-line px-4">

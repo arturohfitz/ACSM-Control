@@ -827,6 +827,8 @@ test('inventario recibe parcialmente una orden de compra generada desde compras'
   await page.locator('tr', { hasText: 'Cemento gris 50kg' }).locator('input[type="number"]').fill('40')
   await page.getByRole('button', { name: 'Registrar recepcion' }).click()
   await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Recepciones procesadas' })).toBeVisible()
+  await expect(page.locator('section', { hasText: 'Recepciones procesadas' }).getByText('OC-202606-0001')).toBeVisible()
 
   await page.goto('/inventory/missing')
   await expect(page.getByRole('heading', { name: 'Faltantes' })).toBeVisible()
