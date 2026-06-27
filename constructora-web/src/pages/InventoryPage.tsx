@@ -118,14 +118,6 @@ type InventoryStatusItem = {
   notes?: string | null
 }
 
-type MaterialReception = {
-  id: number
-  received_at: string
-  delivery_reference?: string | null
-  received_by?: string | null
-  items: { id: number; description: string; received_quantity: string; unit: string }[]
-}
-
 type WarehouseStock = {
   id: number
   warehouse_id: number
@@ -161,8 +153,6 @@ type InventoryMode =
   | 'model_control'
   | 'purchase_order'
   | 'external_document'
-  | 'document_validation'
-  | 'documents'
   | 'missing'
   | 'stock'
 
@@ -331,7 +321,6 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const [poDeliveryReference, setPoDeliveryReference] = useState('')
   const [statusItems, setStatusItems] = useState<InventoryStatusItem[]>([])
   const [missingItems, setMissingItems] = useState<InventoryStatusItem[]>([])
-  const [receptions, setReceptions] = useState<MaterialReception[]>([])
   const [stockItems, setStockItems] = useState<WarehouseStock[]>([])
   const [modelControlItems, setModelControlItems] = useState<ProjectModelMaterialControlItem[]>([])
   const [controlModelId, setControlModelId] = useState('')
@@ -484,11 +473,8 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const showReceivingTypeSelector = mode === 'material_receiving'
   const showPurchaseOrderReceiving =
     showMaterialReceiving && receivingType === 'purchase_order'
-  const showExternalDocument =
-    mode === 'document_validation' ||
-    (showMaterialReceiving && receivingType === 'external_document')
+  const showExternalDocument = showMaterialReceiving && receivingType === 'external_document'
   const showModelControl = mode === 'model_control'
-  const showDocuments = mode === 'documents'
   const showMissing = mode === 'missing'
   const showStock = mode === 'stock'
 
@@ -526,7 +512,6 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
         expectedData,
         statusData,
         missingData,
-        receptionData,
         orderData,
         modelControlData,
       ] =
@@ -539,7 +524,6 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           apiRequest<InventoryStatusItem[]>(
             `/inventory/projects/${currentProjectId}/missing-materials`,
           ),
-          apiRequest<MaterialReception[]>(`/inventory/projects/${currentProjectId}/receptions`),
           apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders'),
           apiRequest<ProjectModelMaterialControlItem[]>(
             `/inventory/projects/${currentProjectId}/model-material-control`,
@@ -549,7 +533,6 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setExpectedLists(expectedData)
       setStatusItems(statusData)
       setMissingItems(missingData)
-      setReceptions(receptionData)
       setPurchaseOrders(orderData)
       setModelControlItems(modelControlData)
       setControlModelId((current) =>
@@ -1488,15 +1471,9 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               <FileUp className="h-4 w-4" aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <h2 className="text-base font-semibold">
-                {mode === 'document_validation'
-                  ? 'Validar documento externo'
-                  : 'Carga de material externo o sin OC'}
-              </h2>
+              <h2 className="text-base font-semibold">Carga de material externo o sin OC</h2>
               <p className="text-xs text-acsm-muted">
-                {mode === 'document_validation'
-                  ? 'Interpreta, revisa y corrige partidas antes de guardar el documento en inventario.'
-                  : 'Carga documentos que no nacieron desde Compras: inmobiliaria, PDF, foto o Excel.'}
+                Carga documentos que no nacieron desde Compras: inmobiliaria, PDF, foto o Excel.
               </p>
             </div>
           </div>
@@ -1757,68 +1734,33 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       </section>
       ) : null}
 
-      {showDocuments || showMissing ? (
-      <div className="grid gap-5 xl:grid-cols-2">
-        {showDocuments ? (
-        <section className="rounded-md border border-acsm-line bg-white shadow-panel">
-          <div className="flex h-14 items-center justify-between border-b border-acsm-line px-4">
-            <h2 className="text-base font-semibold">Documentos</h2>
-            <Warehouse className="h-4 w-4 text-acsm-green" aria-hidden="true" />
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
-                <tr>
-                  <th className="px-4 py-3">Documento</th>
-                  <th className="px-4 py-3">Proveedor</th>
-                  <th className="px-4 py-3">Partidas</th>
-                  <th className="px-4 py-3">Archivo</th>
+      {showMissing ? (
+      <section className="rounded-md border border-acsm-line bg-white shadow-panel">
+        <div className="flex h-14 items-center justify-between border-b border-acsm-line px-4">
+          <h2 className="text-base font-semibold">Faltantes</h2>
+          <ClipboardCheck className="h-4 w-4 text-acsm-green" aria-hidden="true" />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[620px] text-sm">
+            <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
+              <tr>
+                <th className="px-4 py-3">Material</th>
+                <th className="px-4 py-3">Pendiente</th>
+                <th className="px-4 py-3">Notas</th>
+              </tr>
+            </thead>
+            <tbody>
+              {missingItems.map((item) => (
+                <tr key={item.expected_item_id} className="border-b border-acsm-line last:border-0">
+                  <td className="px-4 py-3">{item.description}</td>
+                  <td className="px-4 py-3">{formatQuantity(item.pending_quantity)} {item.unit}</td>
+                  <td className="px-4 py-3">{item.notes}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {expectedLists.map((list) => (
-                  <tr key={list.id} className="border-b border-acsm-line last:border-0">
-                    <td className="px-4 py-3">{list.document_number || list.name}</td>
-                    <td className="px-4 py-3">{list.supplier_name}</td>
-                    <td className="px-4 py-3">{list.items.length}</td>
-                    <td className="px-4 py-3">{list.source_document_name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        ) : null}
-
-        {showMissing ? (
-        <section className="rounded-md border border-acsm-line bg-white shadow-panel">
-          <div className="flex h-14 items-center justify-between border-b border-acsm-line px-4">
-            <h2 className="text-base font-semibold">Faltantes</h2>
-            <ClipboardCheck className="h-4 w-4 text-acsm-green" aria-hidden="true" />
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[620px] text-sm">
-              <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
-                <tr>
-                  <th className="px-4 py-3">Material</th>
-                  <th className="px-4 py-3">Pendiente</th>
-                  <th className="px-4 py-3">Notas</th>
-                </tr>
-              </thead>
-              <tbody>
-                {missingItems.map((item) => (
-                  <tr key={item.expected_item_id} className="border-b border-acsm-line last:border-0">
-                    <td className="px-4 py-3">{item.description}</td>
-                    <td className="px-4 py-3">{formatQuantity(item.pending_quantity)} {item.unit}</td>
-                    <td className="px-4 py-3">{item.notes}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        ) : null}
-      </div>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
       ) : null}
 
       {showMissing ? (
@@ -1848,41 +1790,6 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                   <td className="px-4 py-3">{formatQuantity(item.received_quantity)} {item.unit}</td>
                   <td className="px-4 py-3">{formatQuantity(item.pending_quantity)} {item.unit}</td>
                   <td className="px-4 py-3">{item.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      ) : null}
-
-      {showDocuments ? (
-      <section className="rounded-md border border-acsm-line bg-white shadow-panel">
-        <div className="flex h-14 items-center justify-between border-b border-acsm-line px-4">
-          <h2 className="text-base font-semibold">Historial de recepciones</h2>
-          <PackageCheck className="h-4 w-4 text-acsm-green" aria-hidden="true" />
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
-              <tr>
-                <th className="px-4 py-3">Fecha</th>
-                <th className="px-4 py-3">Referencia</th>
-                <th className="px-4 py-3">Recibe</th>
-                <th className="px-4 py-3">Partidas</th>
-              </tr>
-            </thead>
-            <tbody>
-              {receptions.map((reception) => (
-                <tr key={reception.id} className="border-b border-acsm-line last:border-0">
-                  <td className="px-4 py-3">{reception.received_at}</td>
-                  <td className="px-4 py-3">{reception.delivery_reference}</td>
-                  <td className="px-4 py-3">{reception.received_by}</td>
-                  <td className="px-4 py-3">
-                    {reception.items
-                      .map((item) => `${item.description}: ${formatQuantity(item.received_quantity)} ${item.unit}`)
-                      .join(', ')}
-                  </td>
                 </tr>
               ))}
             </tbody>

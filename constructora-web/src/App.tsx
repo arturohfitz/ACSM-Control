@@ -74,11 +74,6 @@ export default function App() {
             path="/inventory/external-receiving"
             element={<InventoryReceivingRedirect type="sin-oc" />}
           />
-          <Route
-            path="/inventory/document-validation"
-            element={<InventoryPage mode="document_validation" />}
-          />
-          <Route path="/inventory/documents" element={<InventoryPage mode="documents" />} />
           <Route path="/inventory/missing" element={<InventoryPage mode="missing" />} />
           <Route path="/inventory/stock" element={<InventoryPage mode="stock" />} />
           <Route path="/supplier-payments" element={<SupplierPaymentsPage />} />
