@@ -163,6 +163,8 @@ type InventoryMode =
   | 'missing'
   | 'stock'
 
+type ControlSortMode = 'material' | 'progress_asc' | 'progress_desc' | 'pending_desc' | 'status'
+
 function newRow(overrides: Partial<InventoryRow> = {}): InventoryRow {
   return {
     local_id: crypto.randomUUID(),
@@ -316,6 +318,10 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const [stockItems, setStockItems] = useState<WarehouseStock[]>([])
   const [modelControlItems, setModelControlItems] = useState<ProjectModelMaterialControlItem[]>([])
   const [controlModelId, setControlModelId] = useState('')
+  const [controlSearch, setControlSearch] = useState('')
+  const [controlStatus, setControlStatus] = useState('')
+  const [controlSort, setControlSort] = useState<ControlSortMode>('material')
+  const [controlExpanded, setControlExpanded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -404,12 +410,43 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   }, [modelControlItems])
 
   const filteredControlItems = useMemo(
-    () =>
-      controlModelId
-        ? modelControlItems.filter((item) => String(item.house_model_id) === controlModelId)
-        : modelControlItems,
-    [controlModelId, modelControlItems],
+    () => {
+      const search = controlSearch.trim().toLowerCase()
+      return modelControlItems.filter((item) => {
+        if (controlModelId && String(item.house_model_id) !== controlModelId) return false
+        if (controlStatus && item.status !== controlStatus) return false
+        if (!search) return true
+        return [item.description, item.source_code, item.house_model_name]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(search))
+      })
+    },
+    [controlModelId, controlSearch, controlStatus, modelControlItems],
   )
+
+  const sortedControlItems = useMemo(() => {
+    const items = [...filteredControlItems]
+    switch (controlSort) {
+      case 'progress_asc':
+        return items.sort((a, b) => Number(a.received_percent) - Number(b.received_percent))
+      case 'progress_desc':
+        return items.sort((a, b) => Number(b.received_percent) - Number(a.received_percent))
+      case 'pending_desc':
+        return items.sort((a, b) => Number(b.pending_quantity) - Number(a.pending_quantity))
+      case 'status':
+        return items.sort((a, b) => a.status.localeCompare(b.status) || a.description.localeCompare(b.description))
+      case 'material':
+      default:
+        return items.sort((a, b) => a.description.localeCompare(b.description))
+    }
+  }, [controlSort, filteredControlItems])
+
+  const visibleControlItems = useMemo(
+    () => (controlExpanded ? sortedControlItems : sortedControlItems.slice(0, 10)),
+    [controlExpanded, sortedControlItems],
+  )
+
+  const hiddenControlCount = Math.max(sortedControlItems.length - visibleControlItems.length, 0)
 
   const controlTotals = useMemo(
     () =>
@@ -521,6 +558,10 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setSelectedPurchaseOrderId('')
       setPoReceiveRows([])
       setControlModelId('')
+      setControlSearch('')
+      setControlStatus('')
+      setControlSort('material')
+      setControlExpanded(false)
       setDocumentHouseModelId('')
       void loadProjectInventory(projectId)
     }
@@ -789,6 +830,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
 
   return (
     <div className="min-w-0 space-y-5">
+      {!showPurchaseOrderReceiving ? (
       <section className="overflow-hidden rounded-md border border-acsm-line bg-white p-3 shadow-panel">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
           <label className="min-w-0 text-sm">
@@ -841,148 +883,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           </div>
         ) : null}
       </section>
-
-      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
-              <PackageCheck className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <h2 className="text-base font-semibold">Control de avance por modelo</h2>
-              <p className="text-xs text-acsm-muted">
-                Compara la explosion aprobada contra lo recibido en inventario.
-              </p>
-            </div>
-          </div>
-          <select
-            value={controlModelId}
-            onChange={(event) => setControlModelId(event.target.value)}
-            className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm sm:w-72"
-          >
-            <option value="">Todos los modelos</option>
-            {controlModelOptions.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name} · {formatQuantity(model.assigned_houses)} viviendas
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-3 md:grid-cols-4">
-          <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Requerido</div>
-            <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.required)}
-            </div>
-          </div>
-          <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Recibido</div>
-            <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.received)}
-            </div>
-          </div>
-          <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Pendiente</div>
-            <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.pending)}
-            </div>
-          </div>
-          <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Avance</div>
-            <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatPercent(
-                controlTotals.required > 0
-                  ? (controlTotals.received / controlTotals.required) * 100
-                  : 0,
-              )}
-            </div>
-          </div>
-        </div>
-
-        {controlTotals.unassigned > 0 ? (
-          <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Hay {formatQuantity(controlTotals.unassigned)} unidades recibidas sin asignacion segura a
-            modelo. Selecciona el modelo en cargas sin OC o revisa partidas compartidas entre modelos.
-          </div>
-        ) : null}
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] text-sm">
-            <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
-              <tr>
-                <th className="px-4 py-3">Modelo</th>
-                <th className="px-4 py-3">Material</th>
-                <th className="px-4 py-3">Por vivienda</th>
-                <th className="px-4 py-3">Requerido</th>
-                <th className="px-4 py-3">Recibido</th>
-                <th className="px-4 py-3">Pendiente</th>
-                <th className="px-4 py-3">Avance</th>
-                <th className="px-4 py-3">Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredControlItems.map((item) => (
-                <tr
-                  key={item.house_model_material_requirement_id}
-                  className="border-b border-acsm-line last:border-0"
-                >
-                  <td className="px-4 py-3">
-                    <div className="font-semibold text-acsm-ink">{item.house_model_name}</div>
-                    <div className="text-xs text-acsm-muted">
-                      {formatQuantity(item.assigned_houses)} viviendas
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-semibold text-acsm-ink">{item.description}</div>
-                    <div className="text-xs text-acsm-muted">{item.source_code || '-'}</div>
-                    {Number(item.unassigned_received_quantity) > 0 ? (
-                      <div className="mt-1 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                        {formatQuantity(item.unassigned_received_quantity)} {item.unit} sin asignar
-                      </div>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-3">
-                    {formatQuantity(item.quantity_per_house)} {item.unit}
-                  </td>
-                  <td className="px-4 py-3">
-                    {formatQuantity(item.required_quantity)} {item.unit}
-                  </td>
-                  <td className="px-4 py-3">
-                    {formatQuantity(item.received_quantity)} {item.unit}
-                  </td>
-                  <td className="px-4 py-3">
-                    {formatQuantity(item.pending_quantity)} {item.unit}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="h-2 w-28 overflow-hidden rounded-full bg-acsm-paper">
-                      <div
-                        className="h-full rounded-full bg-acsm-green"
-                        style={{ width: `${Math.min(Number(item.received_percent), 100)}%` }}
-                      />
-                    </div>
-                    <div className="mt-1 text-xs font-semibold text-acsm-muted">
-                      {formatPercent(item.received_percent)}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
-                      {item.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {!filteredControlItems.length ? (
-                <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-acsm-muted">
-                    No hay explosion de materiales integrada para los modelos de este desarrollo.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      ) : null}
 
       {showPurchaseOrderReceiving ? (
       <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
@@ -1002,6 +903,58 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
             {receivablePurchaseOrders.length} pendientes
           </span>
         </div>
+
+        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Desarrollo</span>
+            <select
+              value={projectId}
+              onChange={(event) => setProjectId(event.target.value)}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="">Seleccionar</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Bodega</span>
+            <select
+              value={warehouseId}
+              onChange={(event) => setWarehouseId(event.target.value)}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="">Automatico</option>
+              {warehouses.map((warehouse) => (
+                <option key={warehouse.id} value={warehouse.id}>
+                  {warehouse.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => void loadProjectInventory()}
+            className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper md:w-auto"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            Actualizar
+          </button>
+        </div>
+
+        {error ? (
+          <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
+        {notice ? (
+          <div className="border-b border-zinc-300 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+            {notice}
+          </div>
+        ) : null}
 
         <div className="grid gap-4 p-4 xl:grid-cols-[420px_minmax(0,1fr)]">
           <div className="space-y-3">
@@ -1179,6 +1132,259 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
             </div>
           </div>
         </div>
+      </section>
+      ) : null}
+
+      {showPurchaseOrderReceiving ? (
+      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
+              <PackageCheck className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold">Control de avance por modelo</h2>
+              <p className="text-xs text-acsm-muted">
+                Compara la explosion aprobada contra lo recibido en inventario.
+              </p>
+            </div>
+          </div>
+          <span className="rounded-full border border-acsm-line bg-acsm-paper px-3 py-1 text-xs font-semibold text-acsm-muted">
+            {sortedControlItems.length} partidas
+          </span>
+        </div>
+
+        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-4 md:grid-cols-2 xl:grid-cols-4">
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Desarrollo</span>
+            <select
+              value={projectId}
+              onChange={(event) => setProjectId(event.target.value)}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="">Seleccionar</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Bodega</span>
+            <select
+              value={warehouseId}
+              onChange={(event) => setWarehouseId(event.target.value)}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="">Automatico</option>
+              {warehouses.map((warehouse) => (
+                <option key={warehouse.id} value={warehouse.id}>
+                  {warehouse.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Modelo</span>
+            <select
+              value={controlModelId}
+              onChange={(event) => {
+                setControlModelId(event.target.value)
+                setControlExpanded(false)
+              }}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="">Todos los modelos</option>
+              {controlModelOptions.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name} · {formatQuantity(model.assigned_houses)} viviendas
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Buscar material</span>
+            <input
+              value={controlSearch}
+              onChange={(event) => {
+                setControlSearch(event.target.value)
+                setControlExpanded(false)
+              }}
+              placeholder="Material, codigo o modelo"
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            />
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Estado</span>
+            <select
+              value={controlStatus}
+              onChange={(event) => {
+                setControlStatus(event.target.value)
+                setControlExpanded(false)
+              }}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="">Todos</option>
+              <option value="pending">Pendiente</option>
+              <option value="partial">Parcial</option>
+              <option value="complete">Completo</option>
+              <option value="over_received">Excedido</option>
+            </select>
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Ordenar por</span>
+            <select
+              value={controlSort}
+              onChange={(event) => setControlSort(event.target.value as ControlSortMode)}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="material">Material</option>
+              <option value="progress_asc">Menor avance</option>
+              <option value="progress_desc">Mayor avance</option>
+              <option value="pending_desc">Mayor pendiente</option>
+              <option value="status">Estado</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => void loadProjectInventory()}
+            className="inline-flex h-10 w-full items-center justify-center gap-2 self-end rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper md:w-auto"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            Actualizar
+          </button>
+        </div>
+
+        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-3 md:grid-cols-4">
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Requerido</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatQuantity(controlTotals.required)}
+            </div>
+          </div>
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Recibido</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatQuantity(controlTotals.received)}
+            </div>
+          </div>
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Pendiente</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatQuantity(controlTotals.pending)}
+            </div>
+          </div>
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Avance</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatPercent(
+                controlTotals.required > 0
+                  ? (controlTotals.received / controlTotals.required) * 100
+                  : 0,
+              )}
+            </div>
+          </div>
+        </div>
+
+        {controlTotals.unassigned > 0 ? (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Hay {formatQuantity(controlTotals.unassigned)} unidades recibidas sin asignacion segura a
+            modelo. Selecciona el modelo en cargas sin OC o revisa partidas compartidas entre modelos.
+          </div>
+        ) : null}
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1080px] text-sm">
+            <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
+              <tr>
+                <th className="px-4 py-3">Modelo</th>
+                <th className="px-4 py-3">Material</th>
+                <th className="px-4 py-3">Por vivienda</th>
+                <th className="px-4 py-3">Requerido</th>
+                <th className="px-4 py-3">Recibido</th>
+                <th className="px-4 py-3">Pendiente</th>
+                <th className="px-4 py-3">Avance</th>
+                <th className="px-4 py-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleControlItems.map((item) => (
+                <tr
+                  key={item.house_model_material_requirement_id}
+                  className="border-b border-acsm-line last:border-0"
+                >
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-acsm-ink">{item.house_model_name}</div>
+                    <div className="text-xs text-acsm-muted">
+                      {formatQuantity(item.assigned_houses)} viviendas
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-acsm-ink">{item.description}</div>
+                    <div className="text-xs text-acsm-muted">{item.source_code || '-'}</div>
+                    {Number(item.unassigned_received_quantity) > 0 ? (
+                      <div className="mt-1 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                        {formatQuantity(item.unassigned_received_quantity)} {item.unit} sin asignar
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="px-4 py-3">
+                    {formatQuantity(item.quantity_per_house)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    {formatQuantity(item.required_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    {formatQuantity(item.received_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    {formatQuantity(item.pending_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="h-2 w-28 overflow-hidden rounded-full bg-acsm-paper">
+                      <div
+                        className="h-full rounded-full bg-acsm-green"
+                        style={{ width: `${Math.min(Number(item.received_percent), 100)}%` }}
+                      />
+                    </div>
+                    <div className="mt-1 text-xs font-semibold text-acsm-muted">
+                      {formatPercent(item.received_percent)}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
+                      {item.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {!sortedControlItems.length ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-6 text-center text-acsm-muted">
+                    No hay explosion de materiales integrada para los modelos de este desarrollo.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+        {sortedControlItems.length > 10 ? (
+          <div className="flex flex-col gap-3 border-t border-acsm-line bg-acsm-paper/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-acsm-muted">
+              {controlExpanded
+                ? `Mostrando ${visibleControlItems.length} partidas filtradas`
+                : `Mostrando 10 de ${sortedControlItems.length} partidas. ${hiddenControlCount} ocultas.`}
+            </div>
+            <button
+              type="button"
+              onClick={() => setControlExpanded((current) => !current)}
+              className="inline-flex h-9 items-center justify-center rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
+            >
+              {controlExpanded ? 'Contraer listado' : 'Ver todas'}
+            </button>
+          </div>
+        ) : null}
       </section>
       ) : null}
 
