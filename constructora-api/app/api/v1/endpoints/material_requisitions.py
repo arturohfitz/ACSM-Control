@@ -38,7 +38,8 @@ from app.services.audit import record_event
 from app.services.crud import get_or_404
 from app.services.email_outbox import process_email_outbox_for_company
 from app.services.notifications import notify_permission, notify_user_id, resolve_notifications
-from app.services.tenancy import ensure_same_company, scoped_select
+from app.services.permissions import user_has_permission
+from app.services.tenancy import ensure_same_company, get_user_company_id, scoped_select
 
 
 router = APIRouter()
@@ -56,6 +57,19 @@ def _requisition_options():
     )
 
 
+def _can_manage_company_requisitions(user: User) -> bool:
+    return user_has_permission(user, "material_requisitions", "review") or user_has_permission(
+        user, "material_requisitions", "convert_to_rfq"
+    )
+
+
+def _ensure_same_requisition_company(current_user: User, requisition: MaterialRequisition) -> None:
+    if current_user.is_master_admin:
+        return
+    if requisition.company_id != get_user_company_id(current_user):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+
+
 def _get_requisition_for_user(
     db: Session,
     requisition_id: int,
@@ -68,13 +82,26 @@ def _get_requisition_for_user(
     )
     if requisition is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    ensure_same_company(current_user, requisition, db=db)
+    if _can_manage_company_requisitions(current_user):
+        _ensure_same_requisition_company(current_user, requisition)
+    else:
+        ensure_same_company(current_user, requisition, db=db)
     return requisition
 
 
-def _project_for_user(db: Session, project_id: int, current_user: User) -> Project:
+def _project_for_user(
+    db: Session,
+    project_id: int,
+    current_user: User,
+    *,
+    company_scope: bool = False,
+) -> Project:
     project = get_or_404(db, Project, project_id)
-    ensure_same_company(current_user, project, db=db)
+    if company_scope and _can_manage_company_requisitions(current_user):
+        if not current_user.is_master_admin and project.company_id != get_user_company_id(current_user):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    else:
+        ensure_same_company(current_user, project, db=db)
     return project
 
 
@@ -191,11 +218,11 @@ def list_material_requisitions(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("material_requisitions", "view")),
 ) -> list[MaterialRequisition]:
-    statement = scoped_select(
-        select(MaterialRequisition).options(*_requisition_options()),
-        MaterialRequisition,
-        current_user,
-    )
+    base_statement = select(MaterialRequisition).options(*_requisition_options())
+    if _can_manage_company_requisitions(current_user) and not current_user.is_master_admin:
+        statement = base_statement.where(MaterialRequisition.company_id == get_user_company_id(current_user))
+    else:
+        statement = scoped_select(base_statement, MaterialRequisition, current_user)
     if status_filter:
         statement = statement.where(MaterialRequisition.status == status_filter)
     if project_id is not None:
@@ -304,6 +331,7 @@ def create_material_requisition(
         entity_label=requisition.requisition_number,
         action_url="/purchasing",
         project_id=project.id,
+        enforce_client_access=False,
     )
     db.commit()
     return _get_requisition_for_user(db, requisition.id, current_user)
@@ -399,7 +427,7 @@ def convert_material_requisition_to_rfq(
             detail="Solo puedes convertir requerimientos pendientes o aprobados por Compras",
         )
     _ensure_unique_supplier_ids(payload.supplier_ids)
-    project = _project_for_user(db, requisition.project_id, current_user)
+    project = _project_for_user(db, requisition.project_id, current_user, company_scope=True)
     warehouse = _warehouse_for_project(db, None, project)
     suppliers = [_supplier_for_user(db, supplier_id, current_user) for supplier_id in payload.supplier_ids]
     if len(suppliers) < 3:

@@ -16,6 +16,11 @@ from app.services.notifications import sync_operational_notifications
 router = APIRouter()
 
 
+COMPANY_SCOPE_NOTIFICATION_TYPES = {
+    "material_requisition_submitted",
+}
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -32,6 +37,7 @@ def _scope_notification_statement(statement, current_user: User):
         or_(
             Notification.client_id.in_(allowed_clients),
             Notification.project_id.in_(allowed_projects),
+            Notification.notification_type.in_(COMPANY_SCOPE_NOTIFICATION_TYPES),
             and_(Notification.client_id.is_(None), Notification.project_id.is_(None)),
         )
     )

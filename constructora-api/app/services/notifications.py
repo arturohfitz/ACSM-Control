@@ -156,6 +156,8 @@ def create_notification(
 def notify_users(
     db: Session,
     users: Iterable[User],
+    *,
+    enforce_client_access: bool = True,
     **kwargs,
 ) -> int:
     count = 0
@@ -165,7 +167,7 @@ def notify_users(
         client_id = db.scalar(select(Project.client_id).where(Project.id == project_id))
         kwargs["client_id"] = client_id
     for user in users:
-        if not user_can_access_client_id(user, client_id):
+        if enforce_client_access and not user_can_access_client_id(user, client_id):
             continue
         if create_notification(db, user_id=user.id, **kwargs) is not None:
             count += 1
@@ -179,6 +181,7 @@ def notify_permission(
     module: str,
     action: str,
     include_master_admin: bool = False,
+    enforce_client_access: bool = True,
     **kwargs,
 ) -> int:
     return notify_users(
@@ -190,6 +193,7 @@ def notify_permission(
             action=action,
             include_master_admin=include_master_admin,
         ),
+        enforce_client_access=enforce_client_access,
         company_id=company_id,
         **kwargs,
     )
