@@ -2046,17 +2046,13 @@ def list_supplier_quote_approvals(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[SupplierQuoteApproval]:
-    if not (
-        user_has_permission(current_user, "purchase_approvals", "view")
-        or user_has_permission(current_user, "supplier_quotes", "approve")
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permiso requerido: purchase_approvals:view o supplier_quotes:approve",
-        )
+    can_view_approvals = user_has_permission(current_user, "purchase_approvals", "view")
+    can_approve = user_has_permission(current_user, "supplier_quotes", "approve")
     statement = scoped_select(select(SupplierQuoteApproval), SupplierQuoteApproval, current_user)
     if approval_status != "all":
         statement = statement.where(SupplierQuoteApproval.status == approval_status)
+    if not can_view_approvals and not can_approve:
+        statement = statement.where(SupplierQuoteApproval.requested_by == current_user.id)
     return list(
         db.scalars(
             statement.options(*_approval_options())
