@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import type { ReactNode } from 'react'
 
 import AppLayout from './components/AppLayout'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -33,6 +34,10 @@ function InventoryReceivingRedirect({ type }: { type: 'oc' | 'sin-oc' }) {
   return <Navigate to={`/inventory/material-receiving?${params.toString()}`} replace />
 }
 
+function protect(element: ReactNode, permission: string | string[]) {
+  return <ProtectedRoute permission={permission}>{element}</ProtectedRoute>
+}
+
 export default function App() {
   return (
     <Routes>
@@ -41,46 +46,73 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route index element={<DashboardPage />} />
-          <Route path="/companies" element={<CompaniesPage />} />
-          <Route path="/clients" element={<ClientsPage />} />
-          <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/house-models" element={<HouseModelsPage />} />
-          <Route path="/materials" element={<MaterialsPage />} />
-          <Route path="/suppliers" element={<SuppliersPage />} />
-          <Route path="/supplier-agreements" element={<SupplierAgreementsPage />} />
-          <Route path="/field-requisitions" element={<MaterialRequisitionsPage mode="field" />} />
-          <Route path="/construction-concepts" element={<ConstructionConceptsPage />} />
-          <Route path="/purchasing" element={<PurchasingPage />} />
+          <Route path="/companies" element={protect(<CompaniesPage />, 'companies:view')} />
+          <Route path="/clients" element={protect(<ClientsPage />, 'clients:view')} />
+          <Route path="/projects" element={protect(<ProjectsPage />, 'projects:view')} />
+          <Route path="/house-models" element={protect(<HouseModelsPage />, 'house_models:view')} />
+          <Route path="/materials" element={protect(<MaterialsPage />, 'materials:view')} />
+          <Route path="/suppliers" element={protect(<SuppliersPage />, 'suppliers:view')} />
+          <Route
+            path="/supplier-agreements"
+            element={protect(<SupplierAgreementsPage />, 'supplier_agreements:view')}
+          />
+          <Route
+            path="/field-requisitions"
+            element={protect(<MaterialRequisitionsPage mode="field" />, 'material_requisitions:create')}
+          />
+          <Route
+            path="/construction-concepts"
+            element={protect(<ConstructionConceptsPage />, 'construction_concepts:view')}
+          />
+          <Route path="/purchasing" element={protect(<PurchasingPage />, 'supplier_rfq:view')} />
           <Route
             path="/purchasing/material-requisitions"
-            element={<MaterialRequisitionsPage mode="purchasing" />}
+            element={protect(<MaterialRequisitionsPage mode="purchasing" />, 'material_requisitions:review')}
           />
-          <Route path="/purchasing/approvals" element={<PurchasingApprovalsPage />} />
-          <Route path="/purchasing/orders" element={<PurchasingOrdersPage />} />
-          <Route path="/inventory" element={<InventoryReceivingRedirect type="oc" />} />
+          <Route
+            path="/purchasing/approvals"
+            element={protect(<PurchasingApprovalsPage />, 'purchase_approvals:view')}
+          />
+          <Route
+            path="/purchasing/orders"
+            element={protect(<PurchasingOrdersPage />, 'purchase_orders:view')}
+          />
+          <Route
+            path="/inventory"
+            element={protect(<InventoryReceivingRedirect type="oc" />, 'inventory_receiving:view')}
+          />
           <Route
             path="/inventory/material-receiving"
-            element={<InventoryPage mode="material_receiving" />}
+            element={protect(<InventoryPage mode="material_receiving" />, 'inventory_receiving:view')}
           />
           <Route
             path="/inventory/model-progress"
-            element={<InventoryPage mode="model_control" />}
+            element={protect(<InventoryPage mode="model_control" />, 'inventory_progress:view')}
           />
           <Route
             path="/inventory/purchase-order-receiving"
-            element={<InventoryReceivingRedirect type="oc" />}
+            element={protect(<InventoryReceivingRedirect type="oc" />, 'inventory_receiving:view')}
           />
           <Route
             path="/inventory/external-receiving"
-            element={<InventoryReceivingRedirect type="sin-oc" />}
+            element={protect(<InventoryReceivingRedirect type="sin-oc" />, 'inventory_receiving:view')}
           />
-          <Route path="/inventory/missing" element={<InventoryPage mode="missing" />} />
-          <Route path="/inventory/stock" element={<InventoryPage mode="stock" />} />
-          <Route path="/supplier-payments" element={<SupplierPaymentsPage />} />
-          <Route path="/users" element={<UsersPage />} />
-          <Route path="/roles" element={<RolesPage />} />
-          <Route path="/events" element={<EventsPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route
+            path="/inventory/missing"
+            element={protect(<InventoryPage mode="missing" />, 'inventory_missing:view')}
+          />
+          <Route
+            path="/inventory/stock"
+            element={protect(<InventoryPage mode="stock" />, 'inventory_stock:view')}
+          />
+          <Route
+            path="/supplier-payments"
+            element={protect(<SupplierPaymentsPage />, 'supplier_payments:view')}
+          />
+          <Route path="/users" element={protect(<UsersPage />, 'users:view')} />
+          <Route path="/roles" element={protect(<RolesPage />, 'roles:view')} />
+          <Route path="/events" element={protect(<EventsPage />, 'events:view')} />
+          <Route path="/settings" element={protect(<SettingsPage />, 'settings:view')} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

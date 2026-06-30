@@ -34,11 +34,14 @@ class SecurityHelpersTest(unittest.TestCase):
         self.assertIn("purchase_orders:send", compras)
         self.assertIn("material_requisitions:convert_to_rfq", compras)
         self.assertNotIn("supplier_quotes:approve", compras)
-        self.assertNotIn("purchase_orders:approve", compras)
+        self.assertNotIn("purchase_approvals:view", compras)
         self.assertNotIn("supplier_payments:pay", compras)
         self.assertNotIn("settings:edit", compras)
 
-        self.assertIn("inventory:receive", inventarios)
+        self.assertIn("inventory_receiving:receive", inventarios)
+        self.assertIn("inventory_progress:view", inventarios)
+        self.assertIn("inventory_missing:view", inventarios)
+        self.assertIn("inventory_stock:view", inventarios)
         self.assertIn("purchase_orders:view", inventarios)
         self.assertIn("supplier_invoices:validate", inventarios)
         self.assertNotIn("purchase_orders:send", inventarios)
@@ -46,11 +49,10 @@ class SecurityHelpersTest(unittest.TestCase):
         self.assertNotIn("supplier_payments:pay", inventarios)
 
         self.assertIn("material_requisitions:create", obra)
-        self.assertIn("material_requisitions:edit", obra)
         self.assertIn("materials:view", obra)
         self.assertNotIn("suppliers:create", obra)
         self.assertNotIn("purchase_orders:send", obra)
-        self.assertNotIn("inventory:receive", obra)
+        self.assertNotIn("inventory_receiving:receive", obra)
 
     def test_secret_encryption_roundtrip(self) -> None:
         from app.core.config import settings

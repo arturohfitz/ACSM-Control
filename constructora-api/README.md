@@ -202,19 +202,13 @@ CRUD:
 - `/api/v1/house-models`
 - `/api/v1/materials`
 - `/api/v1/purchasing/suppliers`
-- `/api/v1/project-material-prices`
-- `/api/v1/labor-rates`
 - `/api/v1/construction-concepts`
-- `/api/v1/quotes`
 
 Especiales:
 - `POST /api/v1/companies/onboard`
 - `POST /api/v1/projects/{project_id}/house-models`
 - `GET /api/v1/projects/{project_id}/summary`
-- `GET /api/v1/project-material-prices?project_id={project_id}`
 - `POST /api/v1/house-models/{house_model_id}/concepts`
-- `POST /api/v1/quotes/calculate/project/{project_id}`
-- `POST /api/v1/quotes/{quote_id}/approve`
 - `POST /api/v1/inventory/projects/{project_id}/quick-documents/parse-pdf`
 - `POST /api/v1/inventory/projects/{project_id}/quick-documents/parse-text`
 - `POST /api/v1/inventory/projects/{project_id}/quick-documents`

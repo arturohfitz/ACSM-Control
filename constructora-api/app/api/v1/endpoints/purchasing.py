@@ -768,15 +768,16 @@ def list_supplier_agreement_approvals(
 ) -> list[SupplierAgreement]:
     can_create = user_has_permission(current_user, "supplier_agreements", "create")
     can_approve = user_has_permission(current_user, "supplier_agreements", "approve")
-    if not can_create and not can_approve:
+    can_view_approvals = user_has_permission(current_user, "purchase_approvals", "view")
+    if not can_create and not can_approve and not can_view_approvals:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permiso requerido: supplier_agreements:create o supplier_agreements:approve",
+            detail="Permiso requerido: supplier_agreements:create, supplier_agreements:approve o purchase_approvals:view",
         )
     statement = scoped_select(select(SupplierAgreement), SupplierAgreement, current_user)
     if approval_status != "all":
         statement = statement.where(SupplierAgreement.approval_status == approval_status)
-    if not can_approve:
+    if not can_approve and not can_view_approvals:
         statement = statement.where(SupplierAgreement.created_by == current_user.id)
     return list(
         db.scalars(
@@ -1068,15 +1069,16 @@ def list_supplier_rfq_exceptions(
 ) -> list[SupplierRFQExceptionRequest]:
     can_create = user_has_permission(current_user, "supplier_rfq", "create")
     can_approve = user_has_permission(current_user, "supplier_quotes", "approve")
-    if not can_create and not can_approve:
+    can_view_approvals = user_has_permission(current_user, "purchase_approvals", "view")
+    if not can_create and not can_approve and not can_view_approvals:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permiso requerido: supplier_rfq:create o supplier_quotes:approve",
+            detail="Permiso requerido: supplier_rfq:create, supplier_quotes:approve o purchase_approvals:view",
         )
     statement = scoped_select(select(SupplierRFQExceptionRequest), SupplierRFQExceptionRequest, current_user)
     if approval_status != "all":
         statement = statement.where(SupplierRFQExceptionRequest.status == approval_status)
-    if not can_approve:
+    if not can_approve and not can_view_approvals:
         statement = statement.where(SupplierRFQExceptionRequest.requested_by == current_user.id)
     return list(
         db.scalars(
@@ -2042,8 +2044,16 @@ def list_supplier_quote_approvals(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("supplier_quotes", "approve")),
+    current_user: User = Depends(get_current_user),
 ) -> list[SupplierQuoteApproval]:
+    if not (
+        user_has_permission(current_user, "purchase_approvals", "view")
+        or user_has_permission(current_user, "supplier_quotes", "approve")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permiso requerido: purchase_approvals:view o supplier_quotes:approve",
+        )
     statement = scoped_select(select(SupplierQuoteApproval), SupplierQuoteApproval, current_user)
     if approval_status != "all":
         statement = statement.where(SupplierQuoteApproval.status == approval_status)
@@ -2359,7 +2369,7 @@ def approve_supplier_quote(
     notify_permission(
         db,
         company_id=quote.company_id,
-        module="inventory",
+        module="inventory_receiving",
         action="receive",
         notification_type="purchase_order_ready_to_receive",
         title="OC lista para recibir",

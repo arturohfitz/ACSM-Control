@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Check, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
+import { useAuth } from '../auth/AuthContext'
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
 import FormDrawer from './FormDrawer'
@@ -102,6 +103,8 @@ const permissionModuleLabels: Record<string, string> = {
   settings: 'Ajustes',
   users: 'Usuarios',
   roles: 'Roles',
+  events: 'Eventos del sistema',
+  notifications: 'Notificaciones',
   clients: 'Inmobiliarias',
   projects: 'Desarrollos',
   house_models: 'Modelos',
@@ -109,10 +112,15 @@ const permissionModuleLabels: Record<string, string> = {
   material_requisitions: 'Requerimientos de obra',
   construction_concepts: 'Conceptos',
   inventory: 'Inventario',
+  inventory_receiving: 'Recepcion de materiales',
+  inventory_progress: 'Control de avance',
+  inventory_missing: 'Faltantes de material',
+  inventory_stock: 'Existencias',
   suppliers: 'Proveedores',
   supplier_agreements: 'Convenios de proveedores',
   supplier_rfq: 'Solicitudes de cotizacion',
   supplier_quotes: 'Cotizaciones de proveedores',
+  purchase_approvals: 'Aprobaciones de compras',
   purchase_orders: 'Ordenes de compra',
   supplier_invoices: 'Facturas de proveedores',
   supplier_payments: 'Pagos a proveedores',
@@ -158,7 +166,6 @@ function PermissionChecklist({
     return options.reduce<Record<string, { label: string; value: string }[]>>((current, option) => {
       const code = option.label.match(/\(([^)]+)\)$/)?.[1] ?? ''
       const moduleName = code.split(':')[0] || 'otros'
-      if (moduleName === 'quotes') return current
       current[moduleName] = [...(current[moduleName] ?? []), option]
       return current
     }, {})
@@ -260,6 +267,7 @@ function payloadFromValues(fields: FieldConfig[], values: Record<string, FieldVa
 }
 
 export default function ResourcePage({ config }: { config: ResourceConfig }) {
+  const { hasPermission } = useAuth()
   const [editing, setEditing] = useState<ResourceItem | null>(null)
   const editableFields = useMemo(
     () => config.fields.filter((field) => !field.readOnly),
@@ -454,19 +462,25 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
   const drawerDescription = editing
     ? config.editModuleLabel ?? config.moduleLabel ?? config.title
     : config.createModuleLabel ?? config.moduleLabel ?? config.title
+  const canCreate = hasPermission(`${config.permissionName}:create`)
+  const canEdit = hasPermission(`${config.permissionName}:edit`)
+  const canDelete = hasPermission(`${config.permissionName}:delete`)
+  const canMutate = canEdit || canDelete
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={startCreate}
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover"
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          {config.createLabel ?? `Nuevo ${config.title}`}
-        </button>
-      </div>
+      {canCreate ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={startCreate}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover"
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            {config.createLabel ?? `Nuevo ${config.title}`}
+          </button>
+        </div>
+      ) : null}
 
       <section className="min-w-0 overflow-hidden rounded-[24px] border border-acsm-line bg-white shadow-panel">
         <div className="flex h-14 items-center justify-between gap-3 border-b border-acsm-line px-4">
@@ -490,21 +504,29 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
                     {columnLabel(column)}
                   </th>
                 ))}
-                <th className="border-b border-acsm-line px-4 py-3 text-right font-semibold">
-                  Acciones
-                </th>
+                {canMutate ? (
+                  <th className="border-b border-acsm-line px-4 py-3 text-right font-semibold">
+                    Acciones
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={config.columns.length + 1} className="px-4 py-8 text-center text-acsm-muted">
+                  <td
+                    colSpan={config.columns.length + (canMutate ? 1 : 0)}
+                    className="px-4 py-8 text-center text-acsm-muted"
+                  >
                     Cargando...
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={config.columns.length + 1} className="px-4 py-8 text-center text-acsm-muted">
+                  <td
+                    colSpan={config.columns.length + (canMutate ? 1 : 0)}
+                    className="px-4 py-8 text-center text-acsm-muted"
+                  >
                     Sin registros
                   </td>
                 </tr>
@@ -516,26 +538,32 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
                         {columnValue(column, item[column])}
                       </td>
                     ))}
-                    <td className="px-4 py-3">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => startEdit(item)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-acsm-line text-acsm-muted hover:bg-acsm-paper"
-                          title="Editar"
-                        >
-                          <Pencil className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDelete(item)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                      </div>
-                    </td>
+                    {canMutate ? (
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-2">
+                          {canEdit ? (
+                            <button
+                              type="button"
+                              onClick={() => startEdit(item)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-acsm-line text-acsm-muted hover:bg-acsm-paper"
+                              title="Editar"
+                            >
+                              <Pencil className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                          ) : null}
+                          {canDelete ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleDelete(item)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50"
+                              title="Eliminar"
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 ))
               )}

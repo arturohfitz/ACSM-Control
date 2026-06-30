@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_master_admin, require_permission
 from app.db.session import get_db
 from app.models import Permission
 from app.schemas.user import PermissionCreate, PermissionRead, PermissionUpdate
-from app.services.crud import create_item, delete_item, get_or_404, list_items, update_item
+from app.services.crud import create_item, delete_item, get_or_404, update_item
 
 
 router = APIRouter()
@@ -18,7 +19,14 @@ def list_permissions(
     db: Session = Depends(get_db),
     _=Depends(require_permission("roles", "view")),
 ) -> list[Permission]:
-    return list_items(db, Permission, skip, limit)
+    return list(
+        db.scalars(
+            select(Permission)
+            .order_by(Permission.module.asc(), Permission.action.asc())
+            .offset(skip)
+            .limit(limit)
+        ).all()
+    )
 
 
 @router.post("", response_model=PermissionRead, status_code=status.HTTP_201_CREATED)

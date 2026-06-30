@@ -8,15 +8,12 @@ from app.api.v1.endpoints import (
     construction_concepts,
     house_models,
     inventory,
-    labor_rates,
     materials,
     material_requisitions,
     notifications,
     permissions,
-    project_material_prices,
     projects,
     purchasing,
-    quotes,
     roles,
     settings,
     supplier_portal,
@@ -42,17 +39,10 @@ api_router.include_router(
 )
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(
-    project_material_prices.router,
-    prefix="/project-material-prices",
-    tags=["project-material-prices"],
-)
-api_router.include_router(labor_rates.router, prefix="/labor-rates", tags=["labor-rates"])
-api_router.include_router(
     construction_concepts.router,
     prefix="/construction-concepts",
     tags=["construction-concepts"],
 )
-api_router.include_router(quotes.router, prefix="/quotes", tags=["quotes"])
 api_router.include_router(inventory.router, prefix="/inventory", tags=["inventory"])
 api_router.include_router(purchasing.router, prefix="/purchasing", tags=["purchasing"])
 api_router.include_router(supplier_portal.router, prefix="/supplier-portal", tags=["supplier-portal"])

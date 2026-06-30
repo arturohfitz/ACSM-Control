@@ -33,6 +33,17 @@ import { buildInfo } from '../config/buildInfo'
 import { apiRequest } from '../lib/api'
 import { ACTION_NOTICE_EVENT, type ActionNoticePayload } from '../lib/actionNotice'
 
+type PermissionRequirement = string | string[] | null
+
+function canUsePermission(
+  requirement: PermissionRequirement,
+  hasPermission: (permission: string) => boolean,
+) {
+  if (!requirement) return true
+  const permissions = Array.isArray(requirement) ? requirement : [requirement]
+  return permissions.some((permission) => hasPermission(permission))
+}
+
 const navItems = [
   { to: '/', label: 'Inicio', icon: Home, permission: null },
   { to: '/companies', label: 'Constructoras', icon: Building2, permission: 'companies:view' },
@@ -96,7 +107,7 @@ const purchasingSubItems = [
     to: '/purchasing/approvals',
     label: 'Aprobaciones',
     icon: ClipboardList,
-    permission: 'supplier_quotes:approve',
+    permission: 'purchase_approvals:view',
   },
   {
     to: '/purchasing/orders',
@@ -132,28 +143,28 @@ const inventorySubItems = [
     to: '/inventory/material-receiving',
     label: 'Recepcion de materiales',
     icon: Warehouse,
-    permission: 'inventory:view',
+    permission: 'inventory_receiving:view',
     indent: true,
   },
   {
     to: '/inventory/model-progress',
     label: 'Control de avance',
     icon: Package,
-    permission: 'inventory:view',
+    permission: 'inventory_progress:view',
     indent: true,
   },
   {
     to: '/inventory/missing',
     label: 'Faltantes',
     icon: ClipboardList,
-    permission: 'inventory:view',
+    permission: 'inventory_missing:view',
     indent: true,
   },
   {
     to: '/inventory/stock',
     label: 'Existencias',
     icon: Package,
-    permission: 'inventory:view',
+    permission: 'inventory_stock:view',
     indent: true,
   },
 ]
@@ -319,19 +330,19 @@ export default function AppLayout() {
   const lastNotificationAlertAtRef = useRef(0)
   const audioContextRef = useRef<AudioContext | null>(null)
   const visibleRealEstateSubItems = useMemo(
-    () => realEstateSubItems.filter((item) => hasPermission(item.permission)),
+    () => realEstateSubItems.filter((item) => canUsePermission(item.permission, hasPermission)),
     [hasPermission],
   )
   const visibleWorkSubItems = useMemo(
-    () => workSubItems.filter((item) => hasPermission(item.permission)),
+    () => workSubItems.filter((item) => canUsePermission(item.permission, hasPermission)),
     [hasPermission],
   )
   const visiblePurchasingSubItems = useMemo(
-    () => purchasingSubItems.filter((item) => hasPermission(item.permission)),
+    () => purchasingSubItems.filter((item) => canUsePermission(item.permission, hasPermission)),
     [hasPermission],
   )
   const visibleInventorySubItems = useMemo(
-    () => inventorySubItems.filter((item) => hasPermission(item.permission)),
+    () => inventorySubItems.filter((item) => canUsePermission(item.permission, hasPermission)),
     [hasPermission],
   )
   const visibleNavItems = useMemo(
@@ -340,12 +351,14 @@ export default function AppLayout() {
         if (item.to === '/clients') return visibleRealEstateSubItems.length > 0
         if (item.to === '/field-requisitions') return visibleWorkSubItems.length > 0
         if (item.to === '/purchasing') return visiblePurchasingSubItems.length > 0
-        return !item.permission || hasPermission(item.permission)
+        if (item.to === '/inventory') return visibleInventorySubItems.length > 0
+        return canUsePermission(item.permission, hasPermission)
       }),
     [
       hasPermission,
       visiblePurchasingSubItems.length,
       visibleRealEstateSubItems.length,
+      visibleInventorySubItems.length,
       visibleWorkSubItems.length,
     ],
   )

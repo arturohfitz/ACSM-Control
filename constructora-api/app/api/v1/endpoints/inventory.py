@@ -1514,7 +1514,7 @@ def create_reception(
     project_id: int,
     payload: MaterialReceptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory", "receive")),
+    current_user: User = Depends(require_permission("inventory_receiving", "receive")),
 ) -> MaterialReception:
     project = _project_for_user(db, project_id, current_user)
     warehouse = _warehouse_for_project(db, payload.warehouse_id, project, current_user)

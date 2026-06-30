@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import require_permission
 from app.db.session import get_db
 from app.models import Notification, Project, User, UserClientAccess
 from app.schemas.notification import NotificationBulkRead, NotificationCountRead, NotificationRead
@@ -62,7 +62,7 @@ def list_notifications(
     status_filter: str = "open",
     limit: int = 30,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("notifications", "view")),
 ) -> list[Notification]:
     if current_user.company_id is not None:
         sync_operational_notifications(db, company_id=current_user.company_id)
@@ -94,7 +94,7 @@ def list_notifications(
 @router.get("/counts", response_model=NotificationCountRead)
 def notification_counts(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("notifications", "view")),
 ) -> NotificationCountRead:
     if current_user.company_id is not None:
         sync_operational_notifications(db, company_id=current_user.company_id)
@@ -123,7 +123,7 @@ def notification_counts(
 def mark_notification_read(
     notification_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("notifications", "view")),
 ) -> Notification:
     notification = _notification_for_user(db, notification_id, current_user)
     if notification.status == "unread":
@@ -138,7 +138,7 @@ def mark_notification_read(
 def resolve_notification(
     notification_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("notifications", "view")),
 ) -> Notification:
     notification = _notification_for_user(db, notification_id, current_user)
     notification.status = "resolved"
@@ -153,7 +153,7 @@ def resolve_notification(
 @router.post("/mark-all-read", response_model=NotificationBulkRead)
 def mark_all_notifications_read(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("notifications", "view")),
 ) -> NotificationBulkRead:
     now = _now()
     updated = 0
