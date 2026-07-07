@@ -637,16 +637,22 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                   ))}
                 </datalist>
                 {draftItems.map((item) => (
-                  <div key={item.requirement.id} className="rounded-2xl border border-sky-200 bg-white p-3">
-                    <div className="flex items-start justify-between gap-3">
+                  <div
+                    key={item.requirement.id}
+                    className="overflow-hidden rounded-2xl border border-sky-200 bg-white shadow-[0_14px_34px_rgba(15,82,120,0.10)]"
+                  >
+                    <div className="flex items-start justify-between gap-3 border-b border-sky-100 bg-[linear-gradient(180deg,#ffffff_0%,#f3f9ff_100%)] px-4 py-3">
                       <div className="min-w-0">
-                        <div className="text-sm font-bold text-acsm-ink">{item.requirement.description}</div>
-                        <div className="text-xs text-acsm-muted">
-                          {item.requirement.source_code || 'Sin clave'} · unidad base: {item.requirement.unit}
+                        <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-acsm-muted">
+                          Material seleccionado
                         </div>
-                        <div className="mt-1 text-xs text-acsm-muted">
-                          {formatNumber(item.requirement.quantity_per_house)} {item.requirement.unit} por vivienda ·{' '}
-                          {formatNumber(item.requirement.assigned_houses)} viviendas asignadas
+                        <div className="mt-1 text-sm font-bold leading-tight text-acsm-ink">
+                          {item.requirement.description}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-2 text-[11px] font-semibold text-acsm-muted">
+                          <span>{item.requirement.source_code || 'Sin clave'}</span>
+                          <span>Unidad base: {item.requirement.unit}</span>
+                          <span>{item.requirement.house_model_name}</span>
                         </div>
                       </div>
                       <button
@@ -656,93 +662,136 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                             items.filter((draft) => draft.requirement.id !== item.requirement.id),
                           )
                         }
-                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-rose-200 bg-rose-50 text-rose-600"
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
                         aria-label="Quitar partida"
                       >
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </div>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
-                        Viviendas a cubrir
-                        <input
-                          type="number"
-                          min="0"
-                          max={item.requirement.assigned_houses}
-                          step="1"
-                          value={item.housesToCover}
-                          onChange={(event) =>
-                            updateDraftItem(
-                              item.requirement.id,
-                              'housesToCover',
-                              event.target.value,
-                            )
-                          }
-                          className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink"
-                        />
-                      </label>
-                      <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
-                        Cantidad
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.0001"
-                          value={item.quantity}
-                          onChange={(event) =>
-                            updateDraftItem(item.requirement.id, 'quantity', event.target.value)
-                          }
-                          className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink"
-                        />
-                      </label>
-                      <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
-                        Unidad solicitada
-                        <input
-                          value={item.requestedUnit}
-                          onChange={(event) =>
-                            updateDraftItem(
-                              item.requirement.id,
-                              'requestedUnit',
-                              event.target.value.toUpperCase(),
-                            )
-                          }
-                          list="material-requisition-unit-options"
-                          placeholder="Ej. BULTO"
-                          className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink"
-                        />
-                      </label>
-                      <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
-                        Nota
+
+                    <div className="grid gap-2 border-b border-sky-100 bg-[#f8fbff] px-4 py-3 sm:grid-cols-3">
+                      <div className="rounded-xl border border-sky-100 bg-white px-3 py-2">
+                        <div className="text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                          Por vivienda
+                        </div>
+                        <div className="mt-0.5 text-sm font-bold text-acsm-ink">
+                          {formatNumber(item.requirement.quantity_per_house)} {item.requirement.unit}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-sky-100 bg-white px-3 py-2">
+                        <div className="text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                          Proyecto
+                        </div>
+                        <div className="mt-0.5 text-sm font-bold text-acsm-ink">
+                          {formatNumber(item.requirement.assigned_houses)} viviendas
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+                        <div className="text-[10px] font-bold uppercase tracking-wide text-sky-800">
+                          Cantidad calculada
+                        </div>
+                        <div className="mt-0.5 text-sm font-bold text-sky-950">
+                          {formatNumber(item.quantity)} {item.requestedUnit || item.requirement.unit}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 px-4 py-3">
+                      <div className="grid gap-3 md:grid-cols-[minmax(130px,0.8fr)_minmax(130px,0.9fr)_minmax(130px,0.8fr)]">
+                        <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
+                          Viviendas a cubrir
+                          <input
+                            type="number"
+                            min="0"
+                            max={item.requirement.assigned_houses}
+                            step="1"
+                            value={item.housesToCover}
+                            onChange={(event) =>
+                              updateDraftItem(
+                                item.requirement.id,
+                                'housesToCover',
+                                event.target.value,
+                              )
+                            }
+                            className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm font-semibold text-acsm-ink shadow-inner"
+                          />
+                        </label>
+                        <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
+                          Cantidad solicitada
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.0001"
+                            value={item.quantity}
+                            onChange={(event) =>
+                              updateDraftItem(item.requirement.id, 'quantity', event.target.value)
+                            }
+                            className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm font-semibold text-acsm-ink shadow-inner"
+                          />
+                        </label>
+                        <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
+                          Unidad solicitada
+                          <input
+                            value={item.requestedUnit}
+                            onChange={(event) =>
+                              updateDraftItem(
+                                item.requirement.id,
+                                'requestedUnit',
+                                event.target.value.toUpperCase(),
+                              )
+                            }
+                            list="material-requisition-unit-options"
+                            placeholder="Ej. BULTO"
+                            className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm font-semibold text-acsm-ink shadow-inner"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="mr-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
+                          Calcular para
+                        </span>
+                        {[1, 5, Number(item.requirement.assigned_houses)]
+                          .filter(
+                            (value, index, values) =>
+                              Number.isFinite(value) && value > 0 && values.indexOf(value) === index,
+                          )
+                          .map((value) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() =>
+                                updateDraftItem(
+                                  item.requirement.id,
+                                  'housesToCover',
+                                  formatQuantityInput(value),
+                                )
+                              }
+                              className={[
+                                'rounded-full border px-3 py-1.5 text-xs font-bold transition',
+                                value === Number(item.housesToCover)
+                                  ? 'border-sky-500 bg-sky-600 text-white shadow-sm'
+                                  : 'border-sky-200 bg-white text-sky-800 hover:bg-sky-50',
+                              ].join(' ')}
+                            >
+                              {value === Number(item.requirement.assigned_houses)
+                                ? `Total (${formatNumber(value)})`
+                                : `${formatNumber(value)} vivienda${value === 1 ? '' : 's'}`}
+                            </button>
+                          ))}
+                      </div>
+
+                      <label className="block space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
+                        Nota para compras
                         <input
                           value={item.notes}
                           onChange={(event) =>
                             updateDraftItem(item.requirement.id, 'notes', event.target.value)
                           }
-                          placeholder="Opcional"
-                          className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink"
+                          placeholder="Ubicacion, frente, etapa o aclaracion del material"
+                          className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink shadow-inner"
                         />
                       </label>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {[1, 5, Number(item.requirement.assigned_houses)]
-                        .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index)
-                        .map((value) => (
-                          <button
-                            key={value}
-                            type="button"
-                            onClick={() =>
-                              updateDraftItem(
-                                item.requirement.id,
-                                'housesToCover',
-                                formatQuantityInput(value),
-                              )
-                            }
-                            className="rounded-full border border-sky-300 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-800 hover:bg-sky-100"
-                          >
-                            {value === Number(item.requirement.assigned_houses)
-                              ? `Total (${formatNumber(value)})`
-                              : `${formatNumber(value)} vivienda${value === 1 ? '' : 's'}`}
-                          </button>
-                        ))}
                     </div>
                   </div>
                 ))}
