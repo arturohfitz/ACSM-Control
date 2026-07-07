@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Check,
+  ChevronDown,
   ClipboardList,
   FileText,
   Plus,
@@ -194,6 +195,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
   const [materialSearch, setMaterialSearch] = useState('')
   const [availableMaterials, setAvailableMaterials] = useState<AvailableRequirement[]>([])
   const [draftItems, setDraftItems] = useState<DraftItem[]>([])
+  const [expandedDraftItemId, setExpandedDraftItemId] = useState<number | null>(null)
   const [title, setTitle] = useState('')
   const [priority, setPriority] = useState('normal')
   const [requiredDate, setRequiredDate] = useState('')
@@ -224,6 +226,22 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
     () => requisitions.find((item) => item.id === selectedRequisitionId) ?? requisitions[0] ?? null,
     [requisitions, selectedRequisitionId],
   )
+
+  const draftSummary = useMemo(() => {
+    const invalidItems = draftItems.filter(
+      (item) => Number(item.quantity) <= 0 || !item.requestedUnit.trim(),
+    ).length
+    const units = new Set(draftItems.map((item) => item.requestedUnit.trim()).filter(Boolean))
+    const totalQuantity =
+      units.size === 1
+        ? draftItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+        : null
+    return {
+      invalidItems,
+      totalQuantity,
+      unitLabel: units.size === 1 ? [...units][0] : '',
+    }
+  }, [draftItems])
 
   const filteredAvailableMaterials = useMemo(() => {
     const normalized = materialSearch.trim().toLowerCase()
@@ -625,145 +643,249 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-sky-300 bg-white/80">
-              <div className="border-b border-sky-300 bg-sky-50 px-4 py-3">
-                <h3 className="font-bold text-acsm-ink">Requerimiento en captura</h3>
-                <p className="text-xs text-acsm-muted">{draftItems.length} partidas seleccionadas</p>
+            <div className="overflow-hidden rounded-2xl border border-sky-300 bg-white shadow-[0_18px_44px_rgba(15,82,120,0.14)]">
+              <div className="border-b border-sky-300 bg-[linear-gradient(180deg,#ffffff_0%,#e9f5ff_100%)] px-4 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-acsm-muted">
+                      Carrito de obra
+                    </div>
+                    <h3 className="mt-0.5 font-bold text-acsm-ink">Requerimiento en captura</h3>
+                  </div>
+                  {draftItems.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftItems([])
+                        setExpandedDraftItemId(null)
+                      }}
+                      className="rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-bold text-acsm-muted hover:bg-sky-50"
+                    >
+                      Limpiar
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <div className="rounded-xl border border-sky-200 bg-white px-3 py-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                      Partidas
+                    </div>
+                    <div className="text-base font-bold text-acsm-ink">{draftItems.length}</div>
+                  </div>
+                  <div className="rounded-xl border border-sky-200 bg-white px-3 py-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                      Total
+                    </div>
+                    <div className="truncate text-base font-bold text-acsm-ink">
+                      {draftSummary.totalQuantity === null
+                        ? '-'
+                        : `${formatNumber(draftSummary.totalQuantity)} ${draftSummary.unitLabel}`}
+                    </div>
+                  </div>
+                  <div
+                    className={[
+                      'rounded-xl border px-3 py-2',
+                      draftSummary.invalidItems
+                        ? 'border-amber-200 bg-amber-50'
+                        : 'border-emerald-200 bg-emerald-50',
+                    ].join(' ')}
+                  >
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                      Revision
+                    </div>
+                    <div
+                      className={[
+                        'text-base font-bold',
+                        draftSummary.invalidItems ? 'text-amber-800' : 'text-emerald-800',
+                      ].join(' ')}
+                    >
+                      {draftSummary.invalidItems ? `${draftSummary.invalidItems} pendientes` : 'Listo'}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="max-h-[520px] space-y-2 overflow-y-auto p-3">
+              <div className="max-h-[520px] space-y-2 overflow-y-auto bg-[#f7fbff] p-3">
                 <datalist id="material-requisition-unit-options">
                   {unitSuggestions.map((unit) => (
                     <option key={unit} value={unit} />
                   ))}
                 </datalist>
-                {draftItems.map((item) => (
-                  <div
-                    key={item.requirement.id}
-                    className="rounded-xl border border-sky-200 bg-white px-3 py-2 shadow-[0_8px_18px_rgba(15,82,120,0.08)]"
-                  >
-                    <div className="grid gap-2 xl:grid-cols-[minmax(0,1.35fr)_92px_108px_118px_92px_80px_32px] xl:items-end">
-                      <div className="min-w-0 self-center">
-                        <div className="truncate text-sm font-bold leading-tight text-acsm-ink">
-                          {item.requirement.description}
+                {draftItems.map((item, index) => {
+                  const isExpanded = expandedDraftItemId === item.requirement.id
+                  return (
+                    <div
+                      key={item.requirement.id}
+                      className="overflow-hidden rounded-xl border border-sky-200 bg-white shadow-[0_10px_22px_rgba(15,82,120,0.08)]"
+                    >
+                      <div className="px-3 py-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-sky-100 px-1.5 text-[11px] font-bold text-sky-800">
+                                {index + 1}
+                              </span>
+                              <div className="truncate text-sm font-bold leading-tight text-acsm-ink">
+                                {item.requirement.description}
+                              </div>
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] font-semibold text-acsm-muted">
+                              <span>{item.requirement.source_code || 'Sin clave'}</span>
+                              <span>{item.requirement.house_model_name}</span>
+                              <span>
+                                {formatNumber(item.requirement.quantity_per_house)} {item.requirement.unit}/viv.
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDraftItems((items) =>
+                                items.filter((draft) => draft.requirement.id !== item.requirement.id),
+                              )
+                            }
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
+                            aria-label="Quitar partida"
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
+                          </button>
                         </div>
-                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] font-semibold text-acsm-muted">
-                          <span>{item.requirement.source_code || 'Sin clave'}</span>
-                          <span>{item.requirement.house_model_name}</span>
-                          <span>
-                            {formatNumber(item.requirement.quantity_per_house)} {item.requirement.unit}/viv.
-                          </span>
-                          <span>{formatNumber(item.requirement.assigned_houses)} viv. proyecto</span>
-                        </div>
-                        <input
-                          value={item.notes}
-                          onChange={(event) =>
-                            updateDraftItem(item.requirement.id, 'notes', event.target.value)
-                          }
-                          placeholder="Nota para compras"
-                          className="mt-2 h-8 w-full rounded-lg border border-sky-200 bg-sky-50/40 px-2 text-xs text-acsm-ink"
-                        />
-                      </div>
-                      <label className="space-y-1 text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
-                        Viviendas
-                        <input
-                          type="number"
-                          min="0"
-                          max={item.requirement.assigned_houses}
-                          step="1"
-                          value={item.housesToCover}
-                          onChange={(event) =>
-                            updateDraftItem(
-                              item.requirement.id,
-                              'housesToCover',
-                              event.target.value,
-                            )
-                          }
-                          className="h-9 w-full rounded-lg border border-sky-300 bg-white px-2 text-sm font-semibold text-acsm-ink"
-                        />
-                      </label>
-                      <label className="space-y-1 text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
-                        Cantidad
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.0001"
-                          value={item.quantity}
-                          onChange={(event) =>
-                            updateDraftItem(item.requirement.id, 'quantity', event.target.value)
-                          }
-                          className="h-9 w-full rounded-lg border border-sky-300 bg-white px-2 text-sm font-semibold text-acsm-ink"
-                        />
-                      </label>
-                      <label className="space-y-1 text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
-                        Unidad
-                        <input
-                          value={item.requestedUnit}
-                          onChange={(event) =>
-                            updateDraftItem(
-                              item.requirement.id,
-                              'requestedUnit',
-                              event.target.value.toUpperCase(),
-                            )
-                          }
-                          list="material-requisition-unit-options"
-                          placeholder="Ej. BULTO"
-                          className="h-9 w-full rounded-lg border border-sky-300 bg-white px-2 text-sm font-semibold text-acsm-ink"
-                        />
-                      </label>
-                      <div className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-1.5">
-                        <div className="text-[10px] font-bold uppercase tracking-wide text-sky-800">
-                          Calculado
-                        </div>
-                        <div className="truncate text-sm font-bold text-sky-950">
-                          {formatNumber(item.quantity)}
-                        </div>
-                      </div>
 
-                      <div className="grid grid-cols-3 gap-1">
-                        {[1, 5, Number(item.requirement.assigned_houses)]
-                          .filter(
-                            (value, index, values) =>
-                              Number.isFinite(value) && value > 0 && values.indexOf(value) === index,
-                          )
-                          .map((value) => (
-                            <button
-                              key={value}
-                              type="button"
-                              onClick={() =>
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <label className="space-y-1 text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                            Viviendas
+                            <input
+                              type="number"
+                              min="0"
+                              max={item.requirement.assigned_houses}
+                              step="1"
+                              value={item.housesToCover}
+                              onChange={(event) =>
                                 updateDraftItem(
                                   item.requirement.id,
                                   'housesToCover',
-                                  formatQuantityInput(value),
-                              )
-                            }
+                                  event.target.value,
+                                )
+                              }
+                              className="h-9 w-full rounded-lg border border-sky-300 bg-white px-2 text-sm font-semibold text-acsm-ink"
+                            />
+                          </label>
+                          <label className="space-y-1 text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                            Cantidad
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.0001"
+                              value={item.quantity}
+                              onChange={(event) =>
+                                updateDraftItem(item.requirement.id, 'quantity', event.target.value)
+                              }
+                              className="h-9 w-full rounded-lg border border-sky-300 bg-white px-2 text-sm font-semibold text-acsm-ink"
+                            />
+                          </label>
+                          <label className="space-y-1 text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                            Unidad
+                            <input
+                              value={item.requestedUnit}
+                              onChange={(event) =>
+                                updateDraftItem(
+                                  item.requirement.id,
+                                  'requestedUnit',
+                                  event.target.value.toUpperCase(),
+                                )
+                              }
+                              list="material-requisition-unit-options"
+                              placeholder="Ej. BULTO"
+                              className="h-9 w-full rounded-lg border border-sky-300 bg-white px-2 text-sm font-semibold text-acsm-ink"
+                            />
+                          </label>
+                          <div className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-1.5">
+                            <div className="text-[10px] font-bold uppercase tracking-wide text-sky-800">
+                              Total
+                            </div>
+                            <div className="truncate text-sm font-bold text-sky-950">
+                              {formatNumber(item.quantity)} {item.requestedUnit || item.requirement.unit}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedDraftItemId((current) =>
+                              current === item.requirement.id ? null : item.requirement.id,
+                            )
+                          }
+                          className="mt-2 inline-flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-sky-200 bg-white text-xs font-bold text-sky-800 hover:bg-sky-50"
+                        >
+                          Ajustar partida
+                          <ChevronDown
                             className={[
-                                'h-9 rounded-lg border px-1.5 text-[11px] font-bold transition',
-                                value === Number(item.housesToCover)
-                                  ? 'border-sky-500 bg-sky-600 text-white shadow-sm'
-                                  : 'border-sky-200 bg-white text-sky-800 hover:bg-sky-50',
-                              ].join(' ')}
-                            >
-                              {value === Number(item.requirement.assigned_houses)
-                                ? 'Total'
-                                : `${formatNumber(value)}v`}
-                            </button>
-                          ))}
+                              'h-4 w-4 transition-transform',
+                              isExpanded ? 'rotate-180' : '',
+                            ].join(' ')}
+                            aria-hidden="true"
+                          />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDraftItems((items) =>
-                            items.filter((draft) => draft.requirement.id !== item.requirement.id),
-                          )
-                        }
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
-                        aria-label="Quitar partida"
-                      >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      </button>
+
+                      {isExpanded ? (
+                        <div className="border-t border-sky-100 bg-[#f8fbff] px-3 py-3">
+                          <div className="mb-3 rounded-lg border border-sky-100 bg-white px-3 py-2 text-xs text-acsm-muted">
+                            <span className="font-bold text-acsm-ink">Calculo: </span>
+                            {formatNumber(item.requirement.quantity_per_house)} {item.requirement.unit} x{' '}
+                            {formatNumber(item.housesToCover)} viviendas ={' '}
+                            <span className="font-bold text-acsm-ink">
+                              {formatNumber(item.quantity)} {item.requestedUnit || item.requirement.unit}
+                            </span>
+                          </div>
+                          <div className="mb-3 flex flex-wrap gap-2">
+                            {[1, 5, Number(item.requirement.assigned_houses)]
+                              .filter(
+                                (value, valueIndex, values) =>
+                                  Number.isFinite(value) &&
+                                  value > 0 &&
+                                  values.indexOf(value) === valueIndex,
+                              )
+                              .map((value) => (
+                                <button
+                                  key={value}
+                                  type="button"
+                                  onClick={() =>
+                                    updateDraftItem(
+                                      item.requirement.id,
+                                      'housesToCover',
+                                      formatQuantityInput(value),
+                                    )
+                                  }
+                                  className={[
+                                    'rounded-lg border px-3 py-1.5 text-xs font-bold transition',
+                                    value === Number(item.housesToCover)
+                                      ? 'border-sky-500 bg-sky-600 text-white shadow-sm'
+                                      : 'border-sky-200 bg-white text-sky-800 hover:bg-sky-50',
+                                  ].join(' ')}
+                                >
+                                  {value === Number(item.requirement.assigned_houses)
+                                    ? `Total (${formatNumber(value)})`
+                                    : `${formatNumber(value)} vivienda${value === 1 ? '' : 's'}`}
+                                </button>
+                              ))}
+                          </div>
+                          <label className="block space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
+                            Nota para compras
+                            <input
+                              value={item.notes}
+                              onChange={(event) =>
+                                updateDraftItem(item.requirement.id, 'notes', event.target.value)
+                              }
+                              placeholder="Ubicacion, frente, etapa o aclaracion"
+                              className="h-9 w-full rounded-lg border border-sky-300 bg-white px-3 text-sm text-acsm-ink"
+                            />
+                          </label>
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
                 {draftItems.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-4 py-10 text-center text-sm text-acsm-muted">
                     Agrega materiales desde la lista de la izquierda.
