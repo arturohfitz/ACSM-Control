@@ -359,6 +359,13 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
     setDraftItems((items) => items.filter((draft) => draft.requirement.id !== requirementId))
   }
 
+  function scrollToDraftEditor() {
+    document.getElementById('material-requisition-draft-editor')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    })
+  }
+
   function updateDraftItem(
     requirementId: number,
     field: 'quantity' | 'requestedUnit' | 'notes' | 'housesToCover',
@@ -751,18 +758,21 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
               <div className="border-t border-sky-300 p-4">
                 <button
                   type="button"
-                  onClick={createRequisition}
+                  onClick={scrollToDraftEditor}
                   disabled={loading || draftItems.length === 0}
-                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(180deg,#0d8bd3,#07578d)] px-4 text-sm font-bold text-white shadow-[0_14px_28px_rgba(0,91,160,0.26)] disabled:cursor-not-allowed disabled:opacity-55"
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-sky-300 bg-white px-4 text-sm font-bold text-sky-800 shadow-[0_12px_24px_rgba(14,116,144,0.12)] transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-55"
                 >
-                  <Send className="h-4 w-4" aria-hidden="true" />
-                  Enviar requerimiento a Compras
+                  <FileText className="h-4 w-4" aria-hidden="true" />
+                  Revisar lista editable
                 </button>
               </div>
             </div>
           </div>
           {draftItems.length > 0 ? (
-            <div className="border-t border-sky-300 bg-[linear-gradient(180deg,#eef8ff_0%,#f8fcff_100%)] p-5">
+            <div
+              id="material-requisition-draft-editor"
+              className="scroll-mt-24 border-t border-sky-300 bg-[linear-gradient(180deg,#eef8ff_0%,#f8fcff_100%)] p-5"
+            >
               <div className="overflow-hidden rounded-3xl border border-sky-300 bg-white shadow-[0_22px_54px_rgba(8,47,73,0.16)]">
                 <div className="flex flex-wrap items-center justify-between gap-4 border-b border-sky-200 bg-[linear-gradient(180deg,#ffffff_0%,#e8f6ff_100%)] px-5 py-4">
                   <div>
@@ -776,17 +786,28 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                       Ajusta viviendas, cantidad, unidad y notas en cada renglon antes de enviar a Compras.
                     </p>
                   </div>
-                  <div
-                    className={[
-                      'rounded-2xl border px-4 py-3 text-sm font-bold',
-                      draftSummary.invalidItems
-                        ? 'border-amber-200 bg-amber-50 text-amber-800'
-                        : 'border-emerald-200 bg-emerald-50 text-emerald-800',
-                    ].join(' ')}
-                  >
-                    {draftSummary.invalidItems
-                      ? `${draftSummary.invalidItems} partidas por revisar`
-                      : `${draftItems.length} partidas listas`}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div
+                      className={[
+                        'rounded-2xl border px-4 py-3 text-sm font-bold',
+                        draftSummary.invalidItems
+                          ? 'border-amber-200 bg-amber-50 text-amber-800'
+                          : 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                      ].join(' ')}
+                    >
+                      {draftSummary.invalidItems
+                        ? `${draftSummary.invalidItems} partidas por revisar`
+                        : `${draftItems.length} partidas listas`}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={createRequisition}
+                      disabled={loading || draftItems.length === 0}
+                      className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[linear-gradient(180deg,#0d8bd3,#07578d)] px-5 text-sm font-bold text-white shadow-[0_14px_28px_rgba(0,91,160,0.26)] disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      <Send className="h-4 w-4" aria-hidden="true" />
+                      Solicitar material a Compras
+                    </button>
                   </div>
                 </div>
 
