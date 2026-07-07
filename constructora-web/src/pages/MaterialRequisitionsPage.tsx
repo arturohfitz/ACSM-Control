@@ -630,7 +630,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                 <h3 className="font-bold text-acsm-ink">Requerimiento en captura</h3>
                 <p className="text-xs text-acsm-muted">{draftItems.length} partidas seleccionadas</p>
               </div>
-              <div className="max-h-[520px] space-y-3 overflow-y-auto p-4">
+              <div className="max-h-[520px] space-y-2 overflow-y-auto p-3">
                 <datalist id="material-requisition-unit-options">
                   {unitSuggestions.map((unit) => (
                     <option key={unit} value={unit} />
@@ -639,118 +639,87 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                 {draftItems.map((item) => (
                   <div
                     key={item.requirement.id}
-                    className="overflow-hidden rounded-2xl border border-sky-200 bg-white shadow-[0_14px_34px_rgba(15,82,120,0.10)]"
+                    className="rounded-xl border border-sky-200 bg-white px-3 py-2 shadow-[0_8px_18px_rgba(15,82,120,0.08)]"
                   >
-                    <div className="flex items-start justify-between gap-3 border-b border-sky-100 bg-[linear-gradient(180deg,#ffffff_0%,#f3f9ff_100%)] px-4 py-3">
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-acsm-muted">
-                          Material seleccionado
-                        </div>
-                        <div className="mt-1 text-sm font-bold leading-tight text-acsm-ink">
+                    <div className="grid gap-2 xl:grid-cols-[minmax(0,1.35fr)_92px_108px_118px_92px_80px_32px] xl:items-end">
+                      <div className="min-w-0 self-center">
+                        <div className="truncate text-sm font-bold leading-tight text-acsm-ink">
                           {item.requirement.description}
                         </div>
-                        <div className="mt-1 flex flex-wrap gap-2 text-[11px] font-semibold text-acsm-muted">
+                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] font-semibold text-acsm-muted">
                           <span>{item.requirement.source_code || 'Sin clave'}</span>
-                          <span>Unidad base: {item.requirement.unit}</span>
                           <span>{item.requirement.house_model_name}</span>
+                          <span>
+                            {formatNumber(item.requirement.quantity_per_house)} {item.requirement.unit}/viv.
+                          </span>
+                          <span>{formatNumber(item.requirement.assigned_houses)} viv. proyecto</span>
                         </div>
+                        <input
+                          value={item.notes}
+                          onChange={(event) =>
+                            updateDraftItem(item.requirement.id, 'notes', event.target.value)
+                          }
+                          placeholder="Nota para compras"
+                          className="mt-2 h-8 w-full rounded-lg border border-sky-200 bg-sky-50/40 px-2 text-xs text-acsm-ink"
+                        />
                       </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDraftItems((items) =>
-                            items.filter((draft) => draft.requirement.id !== item.requirement.id),
-                          )
-                        }
-                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
-                        aria-label="Quitar partida"
-                      >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      </button>
-                    </div>
-
-                    <div className="grid gap-2 border-b border-sky-100 bg-[#f8fbff] px-4 py-3 sm:grid-cols-3">
-                      <div className="rounded-xl border border-sky-100 bg-white px-3 py-2">
-                        <div className="text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
-                          Por vivienda
-                        </div>
-                        <div className="mt-0.5 text-sm font-bold text-acsm-ink">
-                          {formatNumber(item.requirement.quantity_per_house)} {item.requirement.unit}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-sky-100 bg-white px-3 py-2">
-                        <div className="text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
-                          Proyecto
-                        </div>
-                        <div className="mt-0.5 text-sm font-bold text-acsm-ink">
-                          {formatNumber(item.requirement.assigned_houses)} viviendas
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2">
+                      <label className="space-y-1 text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                        Viviendas
+                        <input
+                          type="number"
+                          min="0"
+                          max={item.requirement.assigned_houses}
+                          step="1"
+                          value={item.housesToCover}
+                          onChange={(event) =>
+                            updateDraftItem(
+                              item.requirement.id,
+                              'housesToCover',
+                              event.target.value,
+                            )
+                          }
+                          className="h-9 w-full rounded-lg border border-sky-300 bg-white px-2 text-sm font-semibold text-acsm-ink"
+                        />
+                      </label>
+                      <label className="space-y-1 text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                        Cantidad
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.0001"
+                          value={item.quantity}
+                          onChange={(event) =>
+                            updateDraftItem(item.requirement.id, 'quantity', event.target.value)
+                          }
+                          className="h-9 w-full rounded-lg border border-sky-300 bg-white px-2 text-sm font-semibold text-acsm-ink"
+                        />
+                      </label>
+                      <label className="space-y-1 text-[10px] font-bold uppercase tracking-wide text-acsm-muted">
+                        Unidad
+                        <input
+                          value={item.requestedUnit}
+                          onChange={(event) =>
+                            updateDraftItem(
+                              item.requirement.id,
+                              'requestedUnit',
+                              event.target.value.toUpperCase(),
+                            )
+                          }
+                          list="material-requisition-unit-options"
+                          placeholder="Ej. BULTO"
+                          className="h-9 w-full rounded-lg border border-sky-300 bg-white px-2 text-sm font-semibold text-acsm-ink"
+                        />
+                      </label>
+                      <div className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-1.5">
                         <div className="text-[10px] font-bold uppercase tracking-wide text-sky-800">
-                          Cantidad calculada
+                          Calculado
                         </div>
-                        <div className="mt-0.5 text-sm font-bold text-sky-950">
-                          {formatNumber(item.quantity)} {item.requestedUnit || item.requirement.unit}
+                        <div className="truncate text-sm font-bold text-sky-950">
+                          {formatNumber(item.quantity)}
                         </div>
                       </div>
-                    </div>
 
-                    <div className="space-y-3 px-4 py-3">
-                      <div className="grid gap-3 md:grid-cols-[minmax(130px,0.8fr)_minmax(130px,0.9fr)_minmax(130px,0.8fr)]">
-                        <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
-                          Viviendas a cubrir
-                          <input
-                            type="number"
-                            min="0"
-                            max={item.requirement.assigned_houses}
-                            step="1"
-                            value={item.housesToCover}
-                            onChange={(event) =>
-                              updateDraftItem(
-                                item.requirement.id,
-                                'housesToCover',
-                                event.target.value,
-                              )
-                            }
-                            className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm font-semibold text-acsm-ink shadow-inner"
-                          />
-                        </label>
-                        <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
-                          Cantidad solicitada
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.0001"
-                            value={item.quantity}
-                            onChange={(event) =>
-                              updateDraftItem(item.requirement.id, 'quantity', event.target.value)
-                            }
-                            className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm font-semibold text-acsm-ink shadow-inner"
-                          />
-                        </label>
-                        <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
-                          Unidad solicitada
-                          <input
-                            value={item.requestedUnit}
-                            onChange={(event) =>
-                              updateDraftItem(
-                                item.requirement.id,
-                                'requestedUnit',
-                                event.target.value.toUpperCase(),
-                              )
-                            }
-                            list="material-requisition-unit-options"
-                            placeholder="Ej. BULTO"
-                            className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm font-semibold text-acsm-ink shadow-inner"
-                          />
-                        </label>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="mr-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
-                          Calcular para
-                        </span>
+                      <div className="grid grid-cols-3 gap-1">
                         {[1, 5, Number(item.requirement.assigned_houses)]
                           .filter(
                             (value, index, values) =>
@@ -765,33 +734,33 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                                   item.requirement.id,
                                   'housesToCover',
                                   formatQuantityInput(value),
-                                )
-                              }
-                              className={[
-                                'rounded-full border px-3 py-1.5 text-xs font-bold transition',
+                              )
+                            }
+                            className={[
+                                'h-9 rounded-lg border px-1.5 text-[11px] font-bold transition',
                                 value === Number(item.housesToCover)
                                   ? 'border-sky-500 bg-sky-600 text-white shadow-sm'
                                   : 'border-sky-200 bg-white text-sky-800 hover:bg-sky-50',
                               ].join(' ')}
                             >
                               {value === Number(item.requirement.assigned_houses)
-                                ? `Total (${formatNumber(value)})`
-                                : `${formatNumber(value)} vivienda${value === 1 ? '' : 's'}`}
+                                ? 'Total'
+                                : `${formatNumber(value)}v`}
                             </button>
                           ))}
                       </div>
-
-                      <label className="block space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
-                        Nota para compras
-                        <input
-                          value={item.notes}
-                          onChange={(event) =>
-                            updateDraftItem(item.requirement.id, 'notes', event.target.value)
-                          }
-                          placeholder="Ubicacion, frente, etapa o aclaracion del material"
-                          className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink shadow-inner"
-                        />
-                      </label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDraftItems((items) =>
+                            items.filter((draft) => draft.requirement.id !== item.requirement.id),
+                          )
+                        }
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-600 transition hover:bg-rose-100"
+                        aria-label="Quitar partida"
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </button>
                     </div>
                   </div>
                 ))}
