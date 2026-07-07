@@ -92,6 +92,7 @@ type MaterialRequisition = {
 
 type DraftItem = {
   requirement: AvailableRequirement
+  housesToCover: string
   quantity: string
   requestedUnit: string
   notes: string
@@ -147,6 +148,28 @@ function formatNumber(value?: string | number | null) {
   const numberValue = Number(value)
   if (Number.isNaN(numberValue)) return String(value)
   return new Intl.NumberFormat('es-MX', { maximumFractionDigits: 2 }).format(numberValue)
+}
+
+function formatQuantityInput(value: number) {
+  if (!Number.isFinite(value)) return ''
+  return Number(value.toFixed(6)).toString()
+}
+
+function calculateQuantityForHouses(requirement: AvailableRequirement, housesToCover: string) {
+  const houses = Number(housesToCover)
+  const quantityPerHouse = Number(requirement.quantity_per_house)
+  if (!Number.isFinite(houses) || !Number.isFinite(quantityPerHouse)) return ''
+  return formatQuantityInput(houses * quantityPerHouse)
+}
+
+function clampHousesToCover(value: string, maxHouses: string) {
+  if (value === '') return ''
+  const numeric = Number(value)
+  const max = Number(maxHouses)
+  if (!Number.isFinite(numeric)) return ''
+  if (numeric < 0) return '0'
+  if (Number.isFinite(max) && max > 0 && numeric > max) return formatQuantityInput(max)
+  return value
 }
 
 function statusClass(status: string) {
@@ -308,17 +331,33 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
       ...items,
       {
         requirement,
-        quantity: formatNumber(requirement.total_required).replace(/,/g, ''),
+        housesToCover: formatQuantityInput(Number(requirement.assigned_houses)),
+        quantity: formatQuantityInput(Number(requirement.total_required)),
         requestedUnit: requirement.unit,
         notes: '',
       },
     ])
   }
 
-  function updateDraftItem(requirementId: number, field: 'quantity' | 'requestedUnit' | 'notes', value: string) {
+  function updateDraftItem(
+    requirementId: number,
+    field: 'quantity' | 'requestedUnit' | 'notes' | 'housesToCover',
+    value: string,
+  ) {
     setDraftItems((items) =>
       items.map((item) =>
-        item.requirement.id === requirementId ? { ...item, [field]: value } : item,
+        item.requirement.id === requirementId
+          ? field === 'housesToCover'
+            ? {
+                ...item,
+                housesToCover: clampHousesToCover(value, item.requirement.assigned_houses),
+                quantity: calculateQuantityForHouses(
+                  item.requirement,
+                  clampHousesToCover(value, item.requirement.assigned_houses),
+                ),
+              }
+            : { ...item, [field]: value }
+          : item,
       ),
     )
   }
@@ -605,6 +644,10 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                         <div className="text-xs text-acsm-muted">
                           {item.requirement.source_code || 'Sin clave'} · unidad base: {item.requirement.unit}
                         </div>
+                        <div className="mt-1 text-xs text-acsm-muted">
+                          {formatNumber(item.requirement.quantity_per_house)} {item.requirement.unit} por vivienda ·{' '}
+                          {formatNumber(item.requirement.assigned_houses)} viviendas asignadas
+                        </div>
                       </div>
                       <button
                         type="button"
@@ -619,7 +662,25 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </div>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
+                        Viviendas a cubrir
+                        <input
+                          type="number"
+                          min="0"
+                          max={item.requirement.assigned_houses}
+                          step="1"
+                          value={item.housesToCover}
+                          onChange={(event) =>
+                            updateDraftItem(
+                              item.requirement.id,
+                              'housesToCover',
+                              event.target.value,
+                            )
+                          }
+                          className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink"
+                        />
+                      </label>
                       <label className="space-y-1 text-xs font-bold uppercase tracking-wide text-acsm-muted">
                         Cantidad
                         <input
@@ -660,6 +721,28 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                           className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm text-acsm-ink"
                         />
                       </label>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {[1, 5, Number(item.requirement.assigned_houses)]
+                        .filter((value, index, values) => Number.isFinite(value) && value > 0 && values.indexOf(value) === index)
+                        .map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() =>
+                              updateDraftItem(
+                                item.requirement.id,
+                                'housesToCover',
+                                formatQuantityInput(value),
+                              )
+                            }
+                            className="rounded-full border border-sky-300 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-800 hover:bg-sky-100"
+                          >
+                            {value === Number(item.requirement.assigned_houses)
+                              ? `Total (${formatNumber(value)})`
+                              : `${formatNumber(value)} vivienda${value === 1 ? '' : 's'}`}
+                          </button>
+                        ))}
                     </div>
                   </div>
                 ))}
