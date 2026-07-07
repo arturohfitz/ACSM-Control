@@ -189,7 +189,7 @@ def _parse_explosion_items(
                 unit_cost_reference=_decimal_from_text(match.group("unit_cost")),
                 total_cost_reference=_decimal_from_text(match.group("total")),
                 family=match.group("family"),
-                validation_status="validated" if material_id is not None else "pending",
+                validation_status="pending",
                 sort_order=len(items) + 1,
             )
         )
@@ -239,7 +239,7 @@ def _parse_budget_activities(
                 quantity_per_house=_decimal_from_text(match.group("quantity")) or Decimal("0"),
                 unit_price_reference=_decimal_from_text(match.group("unit_price")),
                 total_price_reference=_decimal_from_text(match.group("total")),
-                validation_status="validated" if concept_id is not None else "pending",
+                validation_status="pending",
                 sort_order=len(activities) + 1,
             )
         )
@@ -693,7 +693,7 @@ def integrate_document_materials(
             .where(
                 HouseModelMaterialRequirement.document_id == document_id,
                 HouseModelMaterialRequirement.validation_status != "ignored",
-                HouseModelMaterialRequirement.material_id.is_(None),
+                HouseModelMaterialRequirement.validation_status != "validated",
             )
             .order_by(HouseModelMaterialRequirement.sort_order)
         ).all()
@@ -701,7 +701,9 @@ def integrate_document_materials(
     created = 0
     linked = 0
     for item in pending_items:
-        existing_id = _material_id_for_description(db, item.company_id, item.description)
+        existing_id = item.material_id or _material_id_for_description(
+            db, item.company_id, item.description
+        )
         if existing_id is not None:
             item.material_id = existing_id
             linked += 1
@@ -907,7 +909,7 @@ def integrate_document_concepts(
             .where(
                 HouseModelBudgetActivity.document_id == document_id,
                 HouseModelBudgetActivity.validation_status != "ignored",
-                HouseModelBudgetActivity.construction_concept_id.is_(None),
+                HouseModelBudgetActivity.validation_status != "validated",
             )
             .order_by(HouseModelBudgetActivity.sort_order)
         ).all()
@@ -915,7 +917,9 @@ def integrate_document_concepts(
     created = 0
     linked = 0
     for activity in pending_activities:
-        existing_id = _concept_id_for_code(db, activity.company_id, activity.source_code)
+        existing_id = activity.construction_concept_id or _concept_id_for_code(
+            db, activity.company_id, activity.source_code
+        )
         if existing_id is not None:
             activity.construction_concept_id = existing_id
             linked += 1

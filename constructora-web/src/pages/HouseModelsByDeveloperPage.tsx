@@ -222,19 +222,21 @@ function formatCurrency(value: string | number | null | undefined) {
 
 function integrationLabel(row: Pick<SummaryRow, 'status' | 'linkedId'>) {
   if (row.status === 'ignored') return 'Ignorada'
-  if (row.linkedId) return 'Integrada'
+  if (row.status === 'validated' && row.linkedId) return 'Integrada'
+  if (row.linkedId) return 'Sugerida'
   return 'Pendiente de integrar'
 }
 
 function integrationPillClass(row: Pick<SummaryRow, 'status' | 'linkedId'>) {
   if (row.status === 'ignored') return 'border-slate-300 bg-slate-100 text-slate-600'
-  if (row.linkedId) return 'border-emerald-200 bg-emerald-50 text-emerald-800'
+  if (row.status === 'validated' && row.linkedId) return 'border-emerald-200 bg-emerald-50 text-emerald-800'
+  if (row.linkedId) return 'border-blue-200 bg-blue-50 text-blue-800'
   return 'border-amber-200 bg-amber-50 text-amber-800'
 }
 
 function integrationStatus(row: Pick<SummaryRow, 'status' | 'linkedId'>): Exclude<IntegrationFilter, 'all'> {
   if (row.status === 'ignored') return 'ignored'
-  if (row.linkedId) return 'integrated'
+  if (row.status === 'validated' && row.linkedId) return 'integrated'
   return 'pending'
 }
 
@@ -632,6 +634,25 @@ function DocumentSummary({
                     >
                       Reactivar
                     </button>
+                  ) : row.linkedId && row.status !== 'validated' ? (
+                    <div className="grid gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onLink(row.id, row.linkedId ?? null)}
+                        disabled={actionBusyKey === `${document.document_type}:${row.id}`}
+                        className="h-8 w-full min-w-0 rounded-md border border-blue-200 bg-blue-50 px-1.5 text-[11px] font-semibold text-blue-800 hover:bg-blue-100 disabled:opacity-50"
+                      >
+                        Validar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onLink(row.id, null)}
+                        disabled={actionBusyKey === `${document.document_type}:${row.id}`}
+                        className="h-8 w-full min-w-0 rounded-md border border-slate-300 bg-white px-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Cambiar
+                      </button>
+                    </div>
                   ) : row.linkedId ? (
                     <button
                       type="button"
