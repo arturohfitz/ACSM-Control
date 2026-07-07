@@ -235,6 +235,7 @@ class Material(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"), index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     unit: Mapped[str] = mapped_column(String(40), nullable=False)
     current_unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
@@ -246,6 +247,7 @@ class Material(TimestampMixin, Base):
         back_populates="material", cascade="all, delete-orphan"
     )
     project_prices: Mapped[list[ProjectMaterialPrice]] = relationship(back_populates="material")
+    supplier: Mapped["Supplier | None"] = relationship()
 
 
 class LaborRate(TimestampMixin, Base):

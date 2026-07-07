@@ -43,6 +43,12 @@ type ProjectSummary = {
   assigned_models: ProjectHouseModel[]
 }
 
+type Supplier = {
+  id: number
+  name: string
+  status: string
+}
+
 type MaterialModelCatalogItem = {
   id: number
   project_id: number
@@ -71,8 +77,12 @@ type MaterialForm = {
   name: string
   unit: string
   current_unit_price: string
-  supplier_name: string
+  supplier_id: string
+  quantity_per_house: string
+  source_code: string
+  family: string
   last_price_update: string
+  notes: string
   is_active: boolean
 }
 
@@ -80,8 +90,12 @@ const emptyMaterialForm: MaterialForm = {
   name: '',
   unit: '',
   current_unit_price: '',
-  supplier_name: '',
+  supplier_id: '',
+  quantity_per_house: '',
+  source_code: '',
+  family: '',
   last_price_update: '',
+  notes: '',
   is_active: true,
 }
 
@@ -99,15 +113,11 @@ function formatCurrency(value: string | number | null | undefined) {
   }).format(Number(value))
 }
 
-function nullableText(value: string) {
-  const trimmed = value.trim()
-  return trimmed ? trimmed : null
-}
-
 export default function MaterialsPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [models, setModels] = useState<HouseModel[]>([])
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [summary, setSummary] = useState<ProjectSummary | null>(null)
   const [items, setItems] = useState<MaterialModelCatalogItem[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
@@ -147,19 +157,29 @@ export default function MaterialsPage() {
   )
   const selectedModel = selectedModelId ? modelById.get(selectedModelId) ?? null : null
   const linkedCount = useMemo(() => items.filter((item) => item.is_linked).length, [items])
+  const activeSuppliers = useMemo(
+    () =>
+      suppliers
+        .filter((supplier) => supplier.status === 'active')
+        .sort((left, right) => left.name.localeCompare(right.name, 'es', { sensitivity: 'base' })),
+    [suppliers],
+  )
+  const canCreateMaterial = Boolean(selectedProjectId && selectedModelId && activeSuppliers.length > 0)
 
   async function loadBaseData(nextProjectId = selectedProjectId) {
     setLoading(true)
     setError('')
     try {
-      const [clientData, projectData, modelData] = await Promise.all([
+      const [clientData, projectData, modelData, supplierData] = await Promise.all([
         apiRequest<Client[]>('/clients'),
         apiRequest<Project[]>('/projects'),
         apiRequest<HouseModel[]>('/house-models'),
+        apiRequest<Supplier[]>('/purchasing/suppliers?limit=1000'),
       ])
       setClients(clientData)
       setProjects(projectData)
       setModels(modelData)
+      setSuppliers(supplierData)
       setSelectedProjectId(nextProjectId ?? projectData[0]?.id ?? null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar el catalogo')
@@ -226,6 +246,14 @@ export default function MaterialsPage() {
   }, [selectedProjectId, selectedModelId])
 
   function startCreate() {
+    if (!selectedProjectId || !selectedModelId) {
+      showActionNotice('Selecciona un desarrollo y modelo antes de crear el material.', 'warning')
+      return
+    }
+    if (activeSuppliers.length === 0) {
+      showActionNotice('Registra primero un proveedor activo en Compras > Proveedores.', 'warning')
+      return
+    }
     setForm(emptyMaterialForm)
     setDrawerOpen(true)
   }
@@ -241,18 +269,30 @@ export default function MaterialsPage() {
     setSaving(true)
     setError('')
     try {
-      await apiRequest('/materials', {
+      if (!selectedProjectId || !selectedModelId) {
+        throw new Error('Selecciona desarrollo y modelo de casa.')
+      }
+      if (!form.supplier_id) {
+        throw new Error('Selecciona un proveedor registrado.')
+      }
+      await apiRequest('/materials/model-catalog', {
         method: 'POST',
         body: JSON.stringify({
+          project_id: selectedProjectId,
+          house_model_id: selectedModelId,
+          supplier_id: Number(form.supplier_id),
           name: form.name.trim(),
           unit: form.unit.trim(),
           current_unit_price: Number(form.current_unit_price || 0),
-          supplier_name: nullableText(form.supplier_name),
+          quantity_per_house: Number(form.quantity_per_house || 0),
+          source_code: form.source_code.trim() || null,
+          family: form.family.trim() || null,
           last_price_update: form.last_price_update || null,
+          notes: form.notes.trim() || null,
           is_active: form.is_active,
         }),
       })
-      showActionNotice('Material guardado correctamente')
+      showActionNotice('Material ligado al modelo correctamente')
       closeDrawer()
       await loadCatalog(selectedProjectId, selectedModelId)
     } catch (err) {
@@ -268,7 +308,8 @@ export default function MaterialsPage() {
         <button
           type="button"
           onClick={startCreate}
-          className="inline-flex h-11 items-center gap-2 rounded-xl bg-[linear-gradient(180deg,#1f7fc4_0%,#0f609c_100%)] px-4 text-sm font-bold text-white shadow-[0_12px_26px_rgba(10,96,160,0.28)] hover:brightness-105"
+          disabled={!canCreateMaterial}
+          className="inline-flex h-11 items-center gap-2 rounded-xl bg-[linear-gradient(180deg,#1f7fc4_0%,#0f609c_100%)] px-4 text-sm font-bold text-white shadow-[0_12px_26px_rgba(10,96,160,0.28)] hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
           Nuevo material
@@ -517,7 +558,7 @@ export default function MaterialsPage() {
       <FormDrawer
         open={drawerOpen}
         title="Nuevo material"
-        description="Alta en el catalogo global de materiales."
+        description="Alta ligada al desarrollo, modelo y proveedor registrado."
         onClose={closeDrawer}
         footer={
           <button
@@ -532,6 +573,26 @@ export default function MaterialsPage() {
         }
       >
         <form id="material-form" onSubmit={submitMaterial} className="space-y-4">
+          <div className="grid gap-3 rounded-2xl border border-sky-200 bg-sky-50/70 p-3 sm:grid-cols-2">
+            <div>
+              <div className="text-[11px] font-bold uppercase text-acsm-muted">Desarrollo</div>
+              <div className="mt-1 truncate text-sm font-bold text-acsm-ink">
+                {selectedProject?.name ?? '-'}
+              </div>
+              <div className="truncate text-xs font-semibold text-acsm-muted">
+                {selectedClient?.name ?? 'Sin inmobiliaria'}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] font-bold uppercase text-acsm-muted">Modelo</div>
+              <div className="mt-1 truncate text-sm font-bold text-acsm-ink">
+                {selectedModel?.name ?? '-'}
+              </div>
+              <div className="truncate text-xs font-semibold text-acsm-muted">
+                {formatNumber(selectedAssignment?.quantity, 0)} viviendas
+              </div>
+            </div>
+          </div>
           <label className="block">
             <span className="mb-2 block text-sm font-bold text-acsm-ink">Nombre</span>
             <input
@@ -543,6 +604,30 @@ export default function MaterialsPage() {
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
+              <span className="mb-2 block text-sm font-bold text-acsm-ink">Codigo</span>
+              <input
+                value={form.source_code}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, source_code: event.target.value }))
+                }
+                className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                placeholder="Opcional"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-acsm-ink">Familia</span>
+              <input
+                value={form.family}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, family: event.target.value }))
+                }
+                className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                placeholder="Opcional"
+              />
+            </label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
               <span className="mb-2 block text-sm font-bold text-acsm-ink">Unidad</span>
               <input
                 value={form.unit}
@@ -551,6 +636,22 @@ export default function MaterialsPage() {
                 required
               />
             </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-acsm-ink">Cantidad por vivienda</span>
+              <input
+                type="number"
+                step="0.0001"
+                min="0.0001"
+                value={form.quantity_per_house}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, quantity_per_house: event.target.value }))
+                }
+                className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                required
+              />
+            </label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-2 block text-sm font-bold text-acsm-ink">Precio unitario</span>
               <input
@@ -564,26 +665,45 @@ export default function MaterialsPage() {
                 required
               />
             </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-acsm-ink">Fecha precio</span>
+              <input
+                type="date"
+                value={form.last_price_update}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, last_price_update: event.target.value }))
+                }
+                className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+              />
+            </label>
           </div>
           <label className="block">
             <span className="mb-2 block text-sm font-bold text-acsm-ink">Proveedor</span>
-            <input
-              value={form.supplier_name}
+            <select
+              value={form.supplier_id}
               onChange={(event) =>
-                setForm((current) => ({ ...current, supplier_name: event.target.value }))
+                setForm((current) => ({ ...current, supplier_id: event.target.value }))
               }
               className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
-            />
+              required
+            >
+              <option value="">Seleccionar proveedor registrado</option>
+              {activeSuppliers.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {supplier.name}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="block">
-            <span className="mb-2 block text-sm font-bold text-acsm-ink">Fecha precio</span>
-            <input
-              type="date"
-              value={form.last_price_update}
+            <span className="mb-2 block text-sm font-bold text-acsm-ink">Notas</span>
+            <textarea
+              value={form.notes}
               onChange={(event) =>
-                setForm((current) => ({ ...current, last_price_update: event.target.value }))
+                setForm((current) => ({ ...current, notes: event.target.value }))
               }
-              className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+              className="min-h-24 w-full rounded-xl border border-sky-200 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+              placeholder="Opcional"
             />
           </label>
           <label className="flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-3 text-sm font-bold text-acsm-ink">

@@ -258,6 +258,7 @@ class ProjectMaterialPriceRead(ProjectMaterialPriceBase, TimestampRead):
 
 class MaterialBase(BaseModel):
     company_id: int | None = None
+    supplier_id: int | None = None
     name: str = Field(min_length=1, max_length=200)
     unit: str = Field(min_length=1, max_length=40)
     current_unit_price: NonNegativeDecimal
@@ -272,6 +273,7 @@ class MaterialCreate(MaterialBase):
 
 class MaterialUpdate(BaseModel):
     company_id: int | None = None
+    supplier_id: int | None = None
     name: str | None = Field(default=None, min_length=1, max_length=200)
     unit: str | None = Field(default=None, min_length=1, max_length=40)
     current_unit_price: NonNegativeDecimal | None = None
@@ -282,6 +284,21 @@ class MaterialUpdate(BaseModel):
 
 class MaterialRead(MaterialBase, TimestampRead):
     id: int
+
+
+class MaterialModelCatalogCreate(BaseModel):
+    project_id: int
+    house_model_id: int
+    supplier_id: int
+    name: str = Field(min_length=1, max_length=200)
+    unit: str = Field(min_length=1, max_length=40)
+    current_unit_price: NonNegativeDecimal
+    quantity_per_house: PositiveDecimal
+    source_code: str | None = Field(default=None, max_length=80)
+    family: str | None = Field(default=None, max_length=120)
+    last_price_update: date | None = None
+    notes: str | None = None
+    is_active: bool = True
 
 
 class MaterialModelCatalogRead(BaseModel):
