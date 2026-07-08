@@ -165,11 +165,18 @@ function calculateQuantityForHouses(requirement: AvailableRequirement, housesToC
 function clampHousesToCover(value: string, maxHouses: string) {
   if (value === '') return ''
   const numeric = Number(value)
-  const max = Number(maxHouses)
+  const max = Math.floor(Number(maxHouses))
   if (!Number.isFinite(numeric)) return ''
-  if (numeric < 0) return '0'
-  if (Number.isFinite(max) && max > 0 && numeric > max) return formatQuantityInput(max)
-  return value
+  const wholeHouses = Math.floor(numeric)
+  if (wholeHouses < 1) return '1'
+  if (Number.isFinite(max) && max > 0 && wholeHouses > max) return formatQuantityInput(max)
+  return formatQuantityInput(wholeHouses)
+}
+
+function getHouseOptions(maxHouses: string) {
+  const max = Math.floor(Number(maxHouses))
+  if (!Number.isFinite(max) || max < 1) return []
+  return Array.from({ length: max }, (_, index) => index + 1)
 }
 
 function statusClass(status: string) {
@@ -819,7 +826,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                         <th className="px-4 py-3 text-left">Material</th>
                         <th className="w-28 px-4 py-3 text-left">Por viv.</th>
                         <th className="w-36 px-4 py-3 text-left">Viviendas</th>
-                        <th className="w-44 px-4 py-3 text-left">Acceso rapido</th>
+                        <th className="w-48 px-4 py-3 text-left">Viviendas rapidas</th>
                         <th className="w-40 px-4 py-3 text-left">Cantidad</th>
                         <th className="w-36 px-4 py-3 text-left">Unidad</th>
                         <th className="min-w-64 px-4 py-3 text-left">Nota</th>
@@ -850,7 +857,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                           <td className="px-4 py-4">
                             <input
                               type="number"
-                              min="0"
+                              min="1"
                               max={item.requirement.assigned_houses}
                               step="1"
                               value={item.housesToCover}
@@ -865,37 +872,43 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                             />
                           </td>
                           <td className="px-4 py-4">
-                            <div className="flex flex-wrap gap-1.5">
-                              {[1, 5, Number(item.requirement.assigned_houses)]
-                                .filter(
-                                  (value, valueIndex, values) =>
-                                    Number.isFinite(value) &&
-                                    value > 0 &&
-                                    values.indexOf(value) === valueIndex,
-                                )
-                                .map((value) => (
-                                  <button
-                                    key={value}
-                                    type="button"
-                                    onClick={() =>
-                                      updateDraftItem(
-                                        item.requirement.id,
-                                        'housesToCover',
-                                        formatQuantityInput(value),
-                                      )
-                                    }
-                                    className={[
-                                      'rounded-lg border px-2.5 py-1.5 text-xs font-bold transition',
-                                      value === Number(item.housesToCover)
-                                        ? 'border-sky-500 bg-sky-600 text-white shadow-sm'
-                                        : 'border-sky-200 bg-white text-sky-800 hover:bg-sky-50',
-                                    ].join(' ')}
-                                  >
-                                    {value === Number(item.requirement.assigned_houses)
-                                      ? `Total`
-                                      : `${formatNumber(value)}v`}
-                                  </button>
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={item.housesToCover}
+                                onChange={(event) =>
+                                  updateDraftItem(
+                                    item.requirement.id,
+                                    'housesToCover',
+                                    event.target.value,
+                                  )
+                                }
+                                className="h-10 min-w-20 rounded-xl border border-sky-300 bg-white px-3 text-sm font-bold text-acsm-ink"
+                                aria-label="Seleccionar viviendas a cubrir"
+                              >
+                                {getHouseOptions(item.requirement.assigned_houses).map((value) => (
+                                  <option key={value} value={value}>
+                                    {value}
+                                  </option>
                                 ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateDraftItem(
+                                    item.requirement.id,
+                                    'housesToCover',
+                                    formatQuantityInput(Number(item.requirement.assigned_houses)),
+                                  )
+                                }
+                                className={[
+                                  'h-10 rounded-xl border px-3 text-xs font-bold transition',
+                                  Number(item.housesToCover) === Number(item.requirement.assigned_houses)
+                                    ? 'border-sky-500 bg-sky-600 text-white shadow-sm'
+                                    : 'border-sky-200 bg-white text-sky-800 hover:bg-sky-50',
+                                ].join(' ')}
+                              >
+                                Total
+                              </button>
                             </div>
                           </td>
                           <td className="px-4 py-4">
