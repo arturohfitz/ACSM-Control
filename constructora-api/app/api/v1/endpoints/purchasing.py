@@ -1160,6 +1160,7 @@ def request_supplier_rfq_exception(
         company_id=exception_request.company_id,
         module="supplier_quotes",
         action="approve",
+        include_master_admin=True,
         notification_type="rfq_exception_requested",
         title="Excepcion de proveedores pendiente",
         body=(

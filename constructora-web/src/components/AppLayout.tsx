@@ -869,7 +869,7 @@ export default function AppLayout() {
         </header>
 
         {actionNotice ? (
-          <div className="fixed left-4 right-4 top-24 z-50 sm:left-auto sm:right-6 sm:w-[390px]">
+          <div className="fixed left-4 right-4 top-24 z-[70] sm:left-auto sm:right-6 sm:w-[390px]">
             <div
               key={actionNotice.id}
               role="status"

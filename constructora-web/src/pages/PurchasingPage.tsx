@@ -661,6 +661,8 @@ export default function PurchasingPage() {
   const [exceptionNotes, setExceptionNotes] = useState('')
   const [rfqExceptionOpen, setRfqExceptionOpen] = useState(false)
   const [rfqExceptionNotes, setRfqExceptionNotes] = useState('')
+  const [rfqExceptionError, setRfqExceptionError] = useState('')
+  const [rfqExceptionSubmitting, setRfqExceptionSubmitting] = useState(false)
   const [focusedPanel, setFocusedPanel] = useState<NotificationFocusTarget | null>(null)
   const materialRequisitionRef = useRef<HTMLElement | null>(null)
   const rfqFormRef = useRef<HTMLElement | null>(null)
@@ -1451,10 +1453,32 @@ export default function PurchasingPage() {
   async function requestCreateRfqException() {
     setError('')
     setMessage('')
-    if (!rfqExceptionNotes.trim()) {
-      setError('Captura el motivo para solicitar la excepcion.')
+    setRfqExceptionError('')
+    if (!projectId) {
+      setRfqExceptionError('Selecciona el desarrollo antes de solicitar la excepcion.')
       return
     }
+    if (!title.trim()) {
+      setRfqExceptionError('Captura el nombre de la solicitud antes de solicitar la excepcion.')
+      return
+    }
+    if (supplierIds.length === 0) {
+      setRfqExceptionError('Selecciona al menos un proveedor para solicitar la excepcion.')
+      return
+    }
+    if (supplierIds.length >= 3) {
+      setRfqExceptionError('La excepcion solo aplica cuando hay menos de 3 proveedores.')
+      return
+    }
+    if (validRfqItems.length === 0) {
+      setRfqExceptionError('Agrega al menos una partida de material antes de solicitar la excepcion.')
+      return
+    }
+    if (!rfqExceptionNotes.trim()) {
+      setRfqExceptionError('Captura el motivo para solicitar la excepcion.')
+      return
+    }
+    setRfqExceptionSubmitting(true)
     try {
       await apiRequest<SupplierRFQException>('/purchasing/supplier-rfq-exceptions', {
         method: 'POST',
@@ -1474,12 +1498,17 @@ export default function PurchasingPage() {
           request_notes: rfqExceptionNotes.trim(),
         }),
       })
-      notifySuccess('Solicitud de excepcion enviada a aprobacion.', 'info')
       setRfqExceptionOpen(false)
       setRfqExceptionNotes('')
+      setRfqExceptionError('')
+      notifySuccess('Solicitud de excepcion enviada a aprobacion.', 'info')
       await loadData(selectedRfq?.id)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible enviar la excepcion')
+      const message = err instanceof Error ? err.message : 'No fue posible enviar la excepcion'
+      setRfqExceptionError(message)
+      showActionNotice(message, 'error')
+    } finally {
+      setRfqExceptionSubmitting(false)
     }
   }
 
@@ -1953,7 +1982,10 @@ export default function PurchasingPage() {
                 {!approvedRfqException && !pendingRfqException ? (
                   <button
                     type="button"
-                    onClick={() => setRfqExceptionOpen(true)}
+                    onClick={() => {
+                      setRfqExceptionError('')
+                      setRfqExceptionOpen(true)
+                    }}
                     disabled={!projectId || !title.trim() || validRfqItems.length === 0}
                     className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-amber-300 bg-white px-3 text-sm font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-60"
                   >
@@ -2602,15 +2634,22 @@ export default function PurchasingPage() {
                 <textarea
                   value={rfqExceptionNotes}
                   onChange={(event) => setRfqExceptionNotes(event.target.value)}
+                  disabled={rfqExceptionSubmitting}
                   rows={5}
                   className="mt-2 w-full rounded-xl border border-acsm-line px-3 py-2 text-sm"
                   placeholder="Ej. Solo existe un proveedor autorizado para este material, no hay tres proveedores activos, entrega urgente..."
                 />
               </label>
+              {rfqExceptionError ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+                  {rfqExceptionError}
+                </div>
+              ) : null}
               <div className="flex flex-wrap justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setRfqExceptionOpen(false)}
+                  disabled={rfqExceptionSubmitting}
                   className="inline-flex h-10 items-center rounded-xl border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-ink hover:bg-acsm-paper"
                 >
                   Cancelar
@@ -2618,11 +2657,15 @@ export default function PurchasingPage() {
                 <button
                   type="button"
                   onClick={() => void requestCreateRfqException()}
-                  disabled={!rfqExceptionNotes.trim()}
+                  disabled={rfqExceptionSubmitting || !rfqExceptionNotes.trim()}
                   className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover disabled:opacity-60"
                 >
-                  <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-                  Enviar excepcion a aprobacion
+                  {rfqExceptionSubmitting ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {rfqExceptionSubmitting ? 'Enviando...' : 'Enviar excepcion a aprobacion'}
                 </button>
               </div>
             </div>
