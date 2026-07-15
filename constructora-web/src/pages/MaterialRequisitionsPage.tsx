@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Check,
   ClipboardList,
+  Eye,
   FileText,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -95,6 +97,16 @@ type DraftItem = {
   housesToCover: string
   quantity: string
   requestedUnit: string
+  notes: string
+}
+
+type RequisitionEditItem = {
+  id: number
+  description: string
+  sourceCode?: string | null
+  unit: string
+  requestedUnit: string
+  quantity: string
   notes: string
 }
 
@@ -213,6 +225,12 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
   const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([])
   const [rfqDeadline, setRfqDeadline] = useState('')
   const [loading, setLoading] = useState(false)
+  const [editingRequisitionId, setEditingRequisitionId] = useState<number | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editPriority, setEditPriority] = useState('normal')
+  const [editRequiredDate, setEditRequiredDate] = useState('')
+  const [editNotes, setEditNotes] = useState('')
+  const [editItems, setEditItems] = useState<RequisitionEditItem[]>([])
 
   const selectedProject = useMemo(
     () => projects.find((project) => String(project.id) === projectId) ?? null,
@@ -228,8 +246,11 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
   }, [availableMaterials])
 
   const selectedRequisition = useMemo(
-    () => requisitions.find((item) => item.id === selectedRequisitionId) ?? requisitions[0] ?? null,
-    [requisitions, selectedRequisitionId],
+    () => {
+      const selected = requisitions.find((item) => item.id === selectedRequisitionId) ?? null
+      return isPurchasing ? selected ?? requisitions[0] ?? null : selected
+    },
+    [isPurchasing, requisitions, selectedRequisitionId],
   )
 
   const draftSummary = useMemo(() => {
@@ -296,7 +317,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
           ? apiRows.filter((item) => purchasingActiveStatuses.has(item.status))
           : apiRows
       setRequisitions(rows)
-      if (rows.length > 0 && !rows.some((item) => item.id === selectedRequisitionId)) {
+      if (isPurchasing && rows.length > 0 && !rows.some((item) => item.id === selectedRequisitionId)) {
         setSelectedRequisitionId(rows[0].id)
       }
       if (rows.length === 0) {
@@ -344,6 +365,83 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
     loadRequisitions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter])
+
+  function canEditRequisition(requisition: MaterialRequisition | null) {
+    return Boolean(requisition && requisition.status === 'submitted' && !requisition.converted_rfq_id)
+  }
+
+  function startRequisitionEdit(requisition: MaterialRequisition) {
+    setSelectedRequisitionId(requisition.id)
+    setEditingRequisitionId(requisition.id)
+    setEditTitle(requisition.title)
+    setEditPriority(requisition.priority)
+    setEditRequiredDate(requisition.required_date?.slice(0, 10) ?? '')
+    setEditNotes(requisition.notes ?? '')
+    setEditItems(
+      requisition.items.map((item) => ({
+        id: item.id,
+        description: item.description,
+        sourceCode: item.source_code,
+        unit: item.unit,
+        requestedUnit: item.requested_unit || item.unit,
+        quantity: String(item.requested_quantity ?? ''),
+        notes: item.notes ?? '',
+      })),
+    )
+    window.setTimeout(() => {
+      document.getElementById('sent-requisition-detail')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    }, 50)
+  }
+
+  function updateEditItem(itemId: number, field: 'quantity' | 'requestedUnit' | 'notes', value: string) {
+    setEditItems((items) =>
+      items.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              [field]: field === 'requestedUnit' ? value.toUpperCase() : value,
+            }
+          : item,
+      ),
+    )
+  }
+
+  async function saveRequisitionEdits() {
+    if (!selectedRequisition || !canEditRequisition(selectedRequisition)) return
+    if (!editTitle.trim() || editItems.some((item) => Number(item.quantity) <= 0 || !item.requestedUnit.trim())) {
+      showActionNotice('Revisa nombre, cantidades y unidades antes de guardar.', 'warning')
+      return
+    }
+    try {
+      const updated = await apiRequest<MaterialRequisition>(
+        `/material-requisitions/${selectedRequisition.id}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            title: editTitle.trim(),
+            priority: editPriority,
+            required_date: editRequiredDate || null,
+            notes: editNotes || null,
+            items: editItems.map((item) => ({
+              id: item.id,
+              requested_quantity: item.quantity,
+              requested_unit: item.requestedUnit.trim(),
+              notes: item.notes || null,
+            })),
+          }),
+        },
+      )
+      setEditingRequisitionId(null)
+      setSelectedRequisitionId(updated.id)
+      showActionNotice(`Requerimiento ${updated.requisition_number} actualizado.`)
+      await loadRequisitions()
+    } catch (error) {
+      showActionNotice(error instanceof Error ? error.message : 'No fue posible actualizar el requerimiento', 'error')
+    }
+  }
 
   function addDraftItem(requirement: AvailableRequirement) {
     if (draftItems.some((item) => item.requirement.id === requirement.id)) {
@@ -1231,7 +1329,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
             <p className="text-sm text-acsm-muted">Seguimiento de solicitudes enviadas a Compras.</p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-sm">
+            <table className="w-full min-w-[980px] text-sm">
               <thead className="bg-sky-100 text-xs uppercase text-acsm-muted">
                 <tr>
                   <th className="px-5 py-3 text-left">Folio</th>
@@ -1240,11 +1338,18 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                   <th className="px-5 py-3 text-left">Partidas</th>
                   <th className="px-5 py-3 text-left">Fecha requerida</th>
                   <th className="px-5 py-3 text-left">Revision</th>
+                  <th className="px-5 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {requisitions.map((item) => (
-                  <tr key={item.id} className="border-t border-sky-100">
+                  <tr
+                    key={item.id}
+                    className={[
+                      'border-t border-sky-100 transition',
+                      selectedRequisitionId === item.id ? 'bg-sky-50/80' : 'hover:bg-sky-50/40',
+                    ].join(' ')}
+                  >
                     <td className="px-5 py-4 font-bold text-sky-700">{item.requisition_number}</td>
                     <td className="px-5 py-4 font-bold text-acsm-ink">{item.title}</td>
                     <td className="px-5 py-4">
@@ -1255,6 +1360,37 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                     <td className="px-5 py-4 text-acsm-muted">{item.items.length}</td>
                     <td className="px-5 py-4 text-acsm-muted">{formatDate(item.required_date)}</td>
                     <td className="px-5 py-4 text-acsm-muted">{item.review_notes || '-'}</td>
+                    <td className="px-5 py-4">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedRequisitionId(item.id)
+                            setEditingRequisitionId(null)
+                            window.setTimeout(() => {
+                              document.getElementById('sent-requisition-detail')?.scrollIntoView({
+                                behavior: 'smooth',
+                                block: 'start',
+                              })
+                            }, 50)
+                          }}
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-sky-300 bg-white px-3 text-xs font-bold text-sky-800 transition hover:bg-sky-50"
+                        >
+                          <Eye className="h-4 w-4" aria-hidden="true" />
+                          Ver
+                        </button>
+                        {canEditRequisition(item) ? (
+                          <button
+                            type="button"
+                            onClick={() => startRequisitionEdit(item)}
+                            className="inline-flex h-9 items-center gap-2 rounded-xl bg-[linear-gradient(180deg,#0d8bd3,#07578d)] px-3 text-xs font-bold text-white shadow-sm"
+                          >
+                            <Pencil className="h-4 w-4" aria-hidden="true" />
+                            Editar
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1265,6 +1401,183 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
               </div>
             ) : null}
           </div>
+          {selectedRequisition ? (
+            <div
+              id="sent-requisition-detail"
+              className="scroll-mt-24 border-t border-sky-300 bg-[linear-gradient(180deg,#eef8ff_0%,#f8fcff_100%)] p-5"
+            >
+              <div className="overflow-hidden rounded-3xl border border-sky-300 bg-white shadow-[0_18px_44px_rgba(8,47,73,0.14)]">
+                <div className="flex flex-wrap items-start justify-between gap-4 border-b border-sky-200 bg-[linear-gradient(180deg,#ffffff_0%,#e8f6ff_100%)] px-5 py-4">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-acsm-muted">
+                      Detalle del requerimiento
+                    </div>
+                    <h3 className="mt-1 text-xl font-bold text-acsm-ink">
+                      {selectedRequisition.requisition_number} · {selectedRequisition.title}
+                    </h3>
+                    <p className="text-sm text-acsm-muted">
+                      {selectedRequisition.items.length} partidas ·{' '}
+                      {statusLabels[selectedRequisition.status] ?? selectedRequisition.status}
+                    </p>
+                  </div>
+                  {canEditRequisition(selectedRequisition) && editingRequisitionId !== selectedRequisition.id ? (
+                    <button
+                      type="button"
+                      onClick={() => startRequisitionEdit(selectedRequisition)}
+                      className="inline-flex h-11 items-center gap-2 rounded-xl bg-[linear-gradient(180deg,#0d8bd3,#07578d)] px-4 text-sm font-bold text-white shadow-[0_12px_24px_rgba(0,91,160,0.22)]"
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden="true" />
+                      Editar requerimiento
+                    </button>
+                  ) : null}
+                </div>
+
+                {editingRequisitionId === selectedRequisition.id ? (
+                  <div className="space-y-4 p-5">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px_200px]">
+                      <label className="space-y-1.5 text-sm font-bold text-acsm-ink">
+                        Nombre del requerimiento
+                        <input
+                          value={editTitle}
+                          onChange={(event) => setEditTitle(event.target.value)}
+                          className="h-11 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm"
+                        />
+                      </label>
+                      <label className="space-y-1.5 text-sm font-bold text-acsm-ink">
+                        Prioridad
+                        <select
+                          value={editPriority}
+                          onChange={(event) => setEditPriority(event.target.value)}
+                          className="h-11 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm"
+                        >
+                          <option value="low">Baja</option>
+                          <option value="normal">Normal</option>
+                          <option value="high">Alta</option>
+                          <option value="urgent">Urgente</option>
+                        </select>
+                      </label>
+                      <label className="space-y-1.5 text-sm font-bold text-acsm-ink">
+                        Fecha requerida
+                        <input
+                          type="date"
+                          value={editRequiredDate}
+                          onChange={(event) => setEditRequiredDate(event.target.value)}
+                          className="h-11 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm"
+                        />
+                      </label>
+                    </div>
+                    <label className="space-y-1.5 text-sm font-bold text-acsm-ink">
+                      Notas para Compras
+                      <textarea
+                        value={editNotes}
+                        onChange={(event) => setEditNotes(event.target.value)}
+                        className="min-h-20 w-full rounded-xl border border-sky-300 bg-white px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <div className="overflow-x-auto rounded-2xl border border-sky-300">
+                      <table className="w-full min-w-[920px] text-sm">
+                        <thead className="bg-sky-100 text-xs uppercase text-acsm-muted">
+                          <tr>
+                            <th className="px-4 py-3 text-left">Material</th>
+                            <th className="w-36 px-4 py-3 text-left">Cantidad</th>
+                            <th className="w-36 px-4 py-3 text-left">Unidad</th>
+                            <th className="px-4 py-3 text-left">Nota</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {editItems.map((item) => (
+                            <tr key={item.id} className="border-t border-sky-100">
+                              <td className="px-4 py-3">
+                                <div className="font-bold text-acsm-ink">{item.description}</div>
+                                <div className="text-xs text-acsm-muted">
+                                  {item.sourceCode || 'Sin clave'} · unidad base: {item.unit}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.0001"
+                                  value={item.quantity}
+                                  onChange={(event) => updateEditItem(item.id, 'quantity', event.target.value)}
+                                  className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm font-bold"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                  value={item.requestedUnit}
+                                  onChange={(event) => updateEditItem(item.id, 'requestedUnit', event.target.value)}
+                                  className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm font-bold"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                  value={item.notes}
+                                  onChange={(event) => updateEditItem(item.id, 'notes', event.target.value)}
+                                  placeholder="Ubicacion, frente, etapa o aclaracion"
+                                  className="h-10 w-full rounded-xl border border-sky-300 bg-white px-3 text-sm"
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setEditingRequisitionId(null)}
+                        className="inline-flex h-11 items-center rounded-xl border border-sky-300 bg-white px-4 text-sm font-bold text-acsm-ink hover:bg-sky-50"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveRequisitionEdits}
+                        disabled={loading}
+                        className="inline-flex h-11 items-center gap-2 rounded-xl bg-[linear-gradient(180deg,#0d8bd3,#07578d)] px-4 text-sm font-bold text-white disabled:opacity-55"
+                      >
+                        <Check className="h-4 w-4" aria-hidden="true" />
+                        Guardar cambios
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[860px] text-sm">
+                      <thead className="bg-sky-100 text-xs uppercase text-acsm-muted">
+                        <tr>
+                          <th className="px-4 py-3 text-left">Material</th>
+                          <th className="px-4 py-3 text-left">Unidad base</th>
+                          <th className="px-4 py-3 text-left">Unidad solicitada</th>
+                          <th className="px-4 py-3 text-left">Cantidad</th>
+                          <th className="px-4 py-3 text-left">Notas</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedRequisition.items.map((item) => (
+                          <tr key={item.id} className="border-t border-sky-100">
+                            <td className="px-4 py-3">
+                              <div className="font-bold text-acsm-ink">{item.description}</div>
+                              <div className="text-xs text-acsm-muted">{item.source_code || 'Sin clave'}</div>
+                            </td>
+                            <td className="px-4 py-3 text-acsm-muted">{item.unit}</td>
+                            <td className="px-4 py-3 font-semibold text-acsm-ink">
+                              {item.requested_unit || item.unit}
+                            </td>
+                            <td className="px-4 py-3 font-semibold text-acsm-ink">
+                              {formatNumber(item.requested_quantity)}
+                            </td>
+                            <td className="px-4 py-3 text-acsm-muted">{item.notes || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
     </div>

@@ -797,13 +797,43 @@ export default function PurchasingPage() {
     [eligibleAgreements],
   )
   const selectedProject = useMemo(
-    () => projects.find((project) => project.id === Number(projectId)) ?? null,
-    [projectId, projects],
+    () => {
+      const matchedProject = projects.find((project) => project.id === Number(projectId))
+      if (matchedProject) return matchedProject
+      const requisitionProject = materialRequisitions.find(
+        (entry) => entry.project_id === Number(projectId),
+      )
+      return requisitionProject
+        ? {
+            id: requisitionProject.project_id,
+            client_id: requisitionProject.client_id,
+            name: `Desarrollo ${requisitionProject.project_id}`,
+          }
+        : null
+    },
+    [materialRequisitions, projectId, projects],
   )
   const projectNameById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects],
   )
+  const rfqProjectOptions = useMemo(() => {
+    if (!projectId || projects.some((project) => project.id === Number(projectId))) return projects
+    const requisitionProject = materialRequisitions.find(
+      (entry) => entry.project_id === Number(projectId),
+    )
+    if (!requisitionProject) return projects
+    return [
+      ...projects,
+      {
+        id: requisitionProject.project_id,
+        client_id: requisitionProject.client_id,
+        name:
+          projectNameById.get(requisitionProject.project_id) ??
+          `Desarrollo ${requisitionProject.project_id}`,
+      },
+    ]
+  }, [materialRequisitions, projectId, projectNameById, projects])
   const pendingMaterialRequisitions = useMemo(
     () =>
       materialRequisitions.filter(
@@ -1683,7 +1713,7 @@ export default function PurchasingPage() {
                   onChange={(event) => setProjectId(event.target.value)}
                   className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
                 >
-                  {projects.map((project) => (
+                  {rfqProjectOptions.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.name}
                     </option>

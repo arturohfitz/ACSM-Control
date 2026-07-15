@@ -42,6 +42,13 @@ class MaterialRequisitionItemCreate(BaseModel):
     notes: str | None = None
 
 
+class MaterialRequisitionItemUpdate(BaseModel):
+    id: int
+    requested_quantity: PositiveDecimal
+    requested_unit: str | None = Field(default=None, min_length=1, max_length=40)
+    notes: str | None = None
+
+
 class MaterialRequisitionItemRead(ORMModel):
     id: int
     requisition_id: int
@@ -66,6 +73,14 @@ class MaterialRequisitionCreate(BaseModel):
     required_date: date | None = None
     notes: str | None = None
     items: list[MaterialRequisitionItemCreate] = Field(min_length=1)
+
+
+class MaterialRequisitionUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    priority: MaterialRequisitionPriority | None = None
+    required_date: date | None = None
+    notes: str | None = None
+    items: list[MaterialRequisitionItemUpdate] | None = None
 
 
 class MaterialRequisitionReview(BaseModel):

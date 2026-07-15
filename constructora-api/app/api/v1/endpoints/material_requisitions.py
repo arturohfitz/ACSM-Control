@@ -33,6 +33,7 @@ from app.schemas.material_requisition import (
     MaterialRequisitionCreate,
     MaterialRequisitionRead,
     MaterialRequisitionReview,
+    MaterialRequisitionUpdate,
 )
 from app.services.audit import record_event
 from app.services.crud import get_or_404
@@ -344,6 +345,63 @@ def get_material_requisition(
     current_user: User = Depends(require_permission("material_requisitions", "view")),
 ) -> MaterialRequisition:
     return _get_requisition_for_user(db, requisition_id, current_user)
+
+
+@router.patch("/{requisition_id}", response_model=MaterialRequisitionRead)
+def update_material_requisition(
+    requisition_id: int,
+    payload: MaterialRequisitionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("material_requisitions", "create")),
+) -> MaterialRequisition:
+    requisition = _get_requisition_for_user(db, requisition_id, current_user)
+    if requisition.status != "submitted" or requisition.converted_rfq_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo puedes editar requerimientos pendientes que aun no han sido tomados por Compras",
+        )
+    if not current_user.is_master_admin and requisition.requested_by_user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo el usuario que genero el requerimiento puede editarlo mientras esta pendiente",
+        )
+
+    if payload.title is not None:
+        requisition.title = payload.title
+    if payload.priority is not None:
+        requisition.priority = payload.priority
+    if "required_date" in payload.model_fields_set:
+        requisition.required_date = payload.required_date
+    if "notes" in payload.model_fields_set:
+        requisition.notes = payload.notes
+
+    if payload.items is not None:
+        items_by_id = {item.id: item for item in requisition.items}
+        for item_payload in payload.items:
+            item = items_by_id.get(item_payload.id)
+            if item is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Una partida no pertenece al requerimiento seleccionado",
+                )
+            item.requested_quantity = item_payload.requested_quantity
+            item.requested_unit = (item_payload.requested_unit or "").strip() or item.unit
+            item.notes = item_payload.notes
+
+    record_event(
+        db,
+        current_user,
+        module="obra",
+        action="update",
+        entity_type="MaterialRequisition",
+        entity_id=requisition.id,
+        company_id=requisition.company_id,
+        label=requisition.requisition_number,
+        description=f"{current_user.full_name} actualizo el requerimiento {requisition.requisition_number}",
+        metadata={"partidas": len(requisition.items), "project_id": requisition.project_id},
+    )
+    db.commit()
+    return _get_requisition_for_user(db, requisition.id, current_user)
 
 
 @router.post("/{requisition_id}/review", response_model=MaterialRequisitionRead)

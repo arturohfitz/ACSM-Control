@@ -87,7 +87,7 @@ from app.services.email_outbox import (
 from app.services.emailer import purchase_order_email_content, rfq_email_content
 from app.services.notifications import notify_permission, notify_user_id, resolve_notifications
 from app.services.permissions import user_has_permission
-from app.services.tenancy import company_id_for_write, ensure_same_company, scoped_select
+from app.services.tenancy import company_id_for_write, ensure_same_company, get_user_company_id, scoped_select
 
 
 router = APIRouter()
@@ -97,8 +97,18 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _project_for_user(db: Session, project_id: int, current_user: User) -> Project:
+def _project_for_user(
+    db: Session,
+    project_id: int,
+    current_user: User,
+    *,
+    company_scope: bool = False,
+) -> Project:
     project = get_or_404(db, Project, project_id)
+    if company_scope:
+        if not current_user.is_master_admin and project.company_id != get_user_company_id(current_user):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+        return project
     ensure_same_company(current_user, project, db=db)
     return project
 
@@ -1296,13 +1306,6 @@ def create_supplier_rfq(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("supplier_rfq", "create")),
 ) -> SupplierRFQ:
-    project = _project_for_user(db, payload.project_id, current_user)
-    warehouse = _warehouse_for_project(db, payload.warehouse_id, project)
-    _ensure_unique_supplier_ids(payload.supplier_ids)
-    suppliers = [_supplier_for_user(db, supplier_id, current_user) for supplier_id in payload.supplier_ids]
-    supplier_count = len({supplier.id for supplier in suppliers})
-    approved_exception: SupplierRFQExceptionRequest | None = None
-    supplier_agreement: SupplierAgreement | None = None
     material_requisition: MaterialRequisition | None = None
     if payload.material_requisition_id is not None:
         material_requisition = db.scalar(
@@ -1312,7 +1315,8 @@ def create_supplier_rfq(
         )
         if material_requisition is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requerimiento no encontrado")
-        ensure_same_company(current_user, material_requisition, db=db)
+        if not current_user.is_master_admin and material_requisition.company_id != get_user_company_id(current_user):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requerimiento no encontrado")
         if material_requisition.status not in {"submitted", "in_review", "approved"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1323,6 +1327,20 @@ def create_supplier_rfq(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El requerimiento de obra ya fue convertido a solicitud de cotizacion",
             )
+    project = _project_for_user(
+        db,
+        payload.project_id,
+        current_user,
+        company_scope=material_requisition is not None
+        and user_has_permission(current_user, "material_requisitions", "convert_to_rfq"),
+    )
+    warehouse = _warehouse_for_project(db, payload.warehouse_id, project)
+    _ensure_unique_supplier_ids(payload.supplier_ids)
+    suppliers = [_supplier_for_user(db, supplier_id, current_user) for supplier_id in payload.supplier_ids]
+    supplier_count = len({supplier.id for supplier in suppliers})
+    approved_exception: SupplierRFQExceptionRequest | None = None
+    supplier_agreement: SupplierAgreement | None = None
+    if material_requisition is not None:
         if material_requisition.project_id != project.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
