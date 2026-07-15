@@ -168,6 +168,7 @@ type SupplierRFQException = {
   request_notes: string
   decision_notes?: string | null
   requested_at: string
+  decided_at?: string | null
   requester?: UserSummary | null
 }
 
@@ -562,6 +563,105 @@ function buildPurchaseJourney({
     headline: `${rfq.title} · ${statusLabel(rfq.status)}`,
     nextAction,
     steps: normalizeJourneySteps(steps),
+  }
+}
+
+function buildDraftPurchaseJourney({
+  title,
+  activeMaterialRequisition,
+  supplierCount,
+  itemCount,
+  needsException,
+  pendingException,
+  approvedException,
+}: {
+  title: string
+  activeMaterialRequisition: MaterialRequisition | null
+  supplierCount: number
+  itemCount: number
+  needsException: boolean
+  pendingException: SupplierRFQException | null
+  approvedException: SupplierRFQException | null
+}): PurchaseJourney {
+  const hasSource = Boolean(activeMaterialRequisition)
+  const exceptionState: JourneyStepState = approvedException
+    ? 'done'
+    : pendingException
+      ? 'current'
+      : needsException
+        ? 'attention'
+        : 'skipped'
+  const canCreateRequest = itemCount > 0 && supplierCount > 0 && (!needsException || Boolean(approvedException))
+
+  return {
+    headline: `${title || activeMaterialRequisition?.title || 'Solicitud'} · Preparacion`,
+    nextAction: approvedException
+      ? 'Excepcion aprobada; crea la solicitud de cotizacion para iniciar el flujo operativo.'
+      : pendingException
+        ? 'Esperando autorizacion de gerencia para poder crear la solicitud con menos de 3 proveedores.'
+        : needsException
+          ? 'Solicita excepcion o selecciona minimo 3 proveedores para continuar.'
+          : canCreateRequest
+            ? 'Crea la solicitud de cotizacion para iniciar el flujo con proveedores.'
+            : 'Completa desarrollo, materiales y proveedores para iniciar el proceso.',
+    steps: normalizeJourneySteps([
+      {
+        key: 'obra',
+        label: 'Origen',
+        detail: hasSource
+          ? `Obra ${activeMaterialRequisition?.requisition_number}`
+          : 'Captura directa en Compras',
+        state: hasSource ? 'done' : 'skipped',
+      },
+      {
+        key: 'preparacion',
+        label: 'Preparacion',
+        detail: `${itemCount} partida(s) · ${supplierCount} proveedor(es)`,
+        state: itemCount > 0 && supplierCount > 0 ? 'done' : 'current',
+      },
+      {
+        key: 'excepcion',
+        label: 'Excepcion',
+        detail: approvedException
+          ? 'Autorizada por gerencia'
+          : pendingException
+            ? 'En revision por gerencia'
+            : needsException
+              ? 'Requiere autorizacion'
+              : 'No requerida',
+        state: exceptionState,
+      },
+      {
+        key: 'solicitud',
+        label: 'Solicitud',
+        detail: canCreateRequest ? 'Lista para crear RFQ' : 'Pendiente de completar',
+        state: canCreateRequest ? 'current' : 'pending',
+      },
+      {
+        key: 'envio',
+        label: 'Envio',
+        detail: 'Pendiente de crear solicitud',
+        state: 'pending',
+      },
+      {
+        key: 'cotizaciones',
+        label: 'Cotizaciones',
+        detail: 'Pendiente',
+        state: 'pending',
+      },
+      {
+        key: 'aprobacion',
+        label: 'Aprobacion',
+        detail: 'Pendiente',
+        state: 'pending',
+      },
+      {
+        key: 'orden',
+        label: 'Orden de compra',
+        detail: 'Pendiente',
+        state: 'pending',
+      },
+    ]),
   }
 }
 
@@ -1069,11 +1169,49 @@ export default function PurchasingPage() {
     [rfqDraftSnapshot, rfqExceptions],
   )
   const needsRfqException = supplierIds.length > 0 && supplierIds.length < 3 && !selectedAgreement
+  const approvedUnusedRfqExceptions = useMemo(
+    () => rfqExceptions.filter((entry) => entry.status === 'approved' && !entry.rfq_id),
+    [rfqExceptions],
+  )
+  const pendingUnusedRfqExceptions = useMemo(
+    () => rfqExceptions.filter((entry) => entry.status === 'requested' && !entry.rfq_id),
+    [rfqExceptions],
+  )
   const canCreateRfq =
     Boolean(projectId) &&
     Boolean(title.trim()) &&
     validRfqItems.length > 0 &&
     (supplierIds.length >= 3 || Boolean(approvedRfqException) || Boolean(selectedAgreement))
+  const draftPurchaseJourney = useMemo(() => {
+    if (selectedRfq) return null
+    const hasDraftContext =
+      Boolean(activeMaterialRequisition) ||
+      Boolean(title.trim()) ||
+      validRfqItems.length > 0 ||
+      supplierIds.length > 0 ||
+      Boolean(pendingRfqException) ||
+      Boolean(approvedRfqException)
+    if (!hasDraftContext) return null
+    return buildDraftPurchaseJourney({
+      title,
+      activeMaterialRequisition,
+      supplierCount: supplierIds.length,
+      itemCount: validRfqItems.length,
+      needsException: needsRfqException,
+      pendingException: pendingRfqException,
+      approvedException: approvedRfqException,
+    })
+  }, [
+    activeMaterialRequisition,
+    approvedRfqException,
+    needsRfqException,
+    pendingRfqException,
+    selectedRfq,
+    supplierIds.length,
+    title,
+    validRfqItems.length,
+  ])
+  const activePurchaseJourney = purchaseJourney ?? draftPurchaseJourney
 
   async function loadData(nextSelectedRfqId = selectedRfq?.id) {
     setLoading(true)
@@ -1320,6 +1458,41 @@ export default function PurchasingPage() {
       }),
     )
     notifySuccess(`Requerimiento ${requisition.requisition_number} cargado para cotizar.`, 'info')
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 80)
+  }
+
+  function loadExceptionIntoRfq(exceptionRequest: SupplierRFQException) {
+    const snapshot = exceptionRequest.payload_snapshot
+    const originRequisitionNumber =
+      snapshot.items
+        .map((item) => item.notes?.match(/RO-\d{6}-\d{4}/)?.[0])
+        .find(Boolean) ?? null
+    const originRequisition = originRequisitionNumber
+      ? materialRequisitions.find((entry) => entry.requisition_number === originRequisitionNumber) ?? null
+      : null
+    setProjectId(String(snapshot.project_id))
+    setTitle(snapshot.title)
+    setRequiredBy(snapshot.required_by?.slice(0, 10) ?? '')
+    setResponseDeadline(snapshot.response_deadline?.slice(0, 10) ?? '')
+    setSupplierIds(snapshot.supplier_ids.map(String))
+    setSelectedAgreementId('')
+    setSelectedMaterialRequisitionId(originRequisition?.id ?? null)
+    setItems(
+      snapshot.items.map((item) => ({
+        material_id: item.material_id ? String(item.material_id) : '',
+        material_search: item.description,
+        description: item.description,
+        unit: item.unit,
+        quantity: String(Number(item.quantity) || item.quantity || '0'),
+        notes: item.notes ?? '',
+      })),
+    )
+    notifySuccess(
+      originRequisition
+        ? `Excepcion aprobada cargada desde ${originRequisition.requisition_number}.`
+        : `Excepcion aprobada cargada: ${exceptionRequest.title}.`,
+      'info',
+    )
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 80)
   }
 
@@ -2009,6 +2182,82 @@ export default function PurchasingPage() {
       </section>
 
       <section className="space-y-5">
+        {(approvedUnusedRfqExceptions.length || pendingUnusedRfqExceptions.length) ? (
+          <div className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-gradient-to-r from-white to-amber-50 px-5 py-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-amber-700">
+                  Control de excepciones
+                </p>
+                <h2 className="text-lg font-bold text-acsm-ink">
+                  Excepciones para crear solicitudes
+                </h2>
+                <p className="text-sm text-acsm-muted">
+                  Cuando gerencia aprueba una excepcion, cargala aqui para crear la solicitud con los datos autorizados.
+                </p>
+              </div>
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">
+                {approvedUnusedRfqExceptions.length} aprobada(s)
+              </span>
+            </div>
+            <div className="divide-y divide-acsm-line">
+              {approvedUnusedRfqExceptions.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="grid gap-4 px-5 py-4 lg:grid-cols-[minmax(220px,0.9fr)_minmax(320px,1fr)_220px]"
+                >
+                  <div>
+                    <div className="font-bold text-acsm-ink">{entry.title}</div>
+                    <div className="mt-1 text-xs font-semibold text-acsm-muted">
+                      {entry.supplier_count} proveedor(es) · {entry.item_count} partida(s)
+                    </div>
+                  </div>
+                  <div className="text-sm text-acsm-muted">
+                    <span className="font-semibold text-acsm-ink">
+                      Desarrollo:
+                    </span>{' '}
+                    {projectNameById.get(entry.project_id) ?? `Desarrollo ${entry.project_id}`}
+                    <span className="mx-2 text-acsm-muted/60">·</span>
+                    <span className="font-semibold text-acsm-ink">Aprobada:</span>{' '}
+                    {formatDateTime(entry.decided_at ?? entry.requested_at)}
+                  </div>
+                  <div className="flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => loadExceptionIntoRfq(entry)}
+                      className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover"
+                    >
+                      <Check className="h-4 w-4" aria-hidden="true" />
+                      Continuar solicitud
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {pendingUnusedRfqExceptions.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="grid gap-4 bg-amber-50/50 px-5 py-4 lg:grid-cols-[minmax(220px,0.9fr)_minmax(320px,1fr)_220px]"
+                >
+                  <div>
+                    <div className="font-bold text-acsm-ink">{entry.title}</div>
+                    <div className="mt-1 text-xs font-semibold text-amber-800">
+                      En revision · {entry.supplier_count} proveedor(es) · {entry.item_count} partida(s)
+                    </div>
+                  </div>
+                  <div className="text-sm text-acsm-muted">
+                    Gerencia debe aprobar esta excepcion antes de poder crear la solicitud.
+                  </div>
+                  <div className="flex items-center justify-end">
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
+                      Pendiente de aprobacion
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div
           ref={rfqListRef}
           className={[
@@ -2190,9 +2439,67 @@ export default function PurchasingPage() {
           </div>
         </div>
 
-        <div className={purchaseJourney ? 'purchase-workflow-shell' : 'purchase-workflow-shell without-journey'}>
-          {purchaseJourney && <PurchaseJourneyBar journey={purchaseJourney} />}
+        <div className={activePurchaseJourney ? 'purchase-workflow-shell' : 'purchase-workflow-shell without-journey'}>
+          {activePurchaseJourney && <PurchaseJourneyBar journey={activePurchaseJourney} />}
           <div className="purchase-workflow-content">
+        {!selectedRfq && draftPurchaseJourney ? (
+          <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
+            <div className="border-b border-acsm-line bg-gradient-to-r from-white to-blue-50 px-5 py-4">
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-700">
+                Proceso de compras
+              </p>
+              <h2 className="text-lg font-bold text-acsm-ink">Solicitud pendiente de crear</h2>
+              <p className="mt-1 text-sm text-acsm-muted">
+                La ruta ya muestra el avance de preparacion. Al crear la solicitud se activan envio a proveedor,
+                captura de cotizaciones, comparativo, aprobacion y orden de compra.
+              </p>
+            </div>
+            <div className="grid gap-3 p-5 md:grid-cols-3">
+              <div className="rounded-2xl border border-acsm-line bg-white px-4 py-3">
+                <p className="text-xs font-bold uppercase text-acsm-muted">Materiales</p>
+                <p className="mt-1 text-2xl font-bold text-acsm-ink">{validRfqItems.length}</p>
+              </div>
+              <div className="rounded-2xl border border-acsm-line bg-white px-4 py-3">
+                <p className="text-xs font-bold uppercase text-acsm-muted">Proveedores</p>
+                <p className="mt-1 text-2xl font-bold text-acsm-ink">{supplierIds.length}</p>
+              </div>
+              <div
+                className={[
+                  'rounded-2xl border px-4 py-3',
+                  approvedRfqException
+                    ? 'border-emerald-200 bg-emerald-50'
+                    : pendingRfqException
+                      ? 'border-amber-200 bg-amber-50'
+                      : needsRfqException
+                        ? 'border-amber-200 bg-amber-50'
+                        : 'border-acsm-line bg-white',
+                ].join(' ')}
+              >
+                <p className="text-xs font-bold uppercase text-acsm-muted">Autorizacion</p>
+                <p className="mt-1 text-base font-bold text-acsm-ink">
+                  {approvedRfqException
+                    ? 'Excepcion aprobada'
+                    : pendingRfqException
+                      ? 'Excepcion en revision'
+                      : needsRfqException
+                        ? 'Requiere excepcion'
+                        : 'Regla normal'}
+                </p>
+              </div>
+            </div>
+            <div className="border-t border-acsm-line px-5 py-4">
+              <button
+                type="button"
+                onClick={() => void createRfq()}
+                disabled={loading || !canCreateRfq}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
+              >
+                <Send className="h-4 w-4" aria-hidden="true" />
+                Crear solicitud de cotizacion
+              </button>
+            </div>
+          </section>
+        ) : null}
         {selectedRfq && (
           <section
             ref={quoteCaptureRef}
