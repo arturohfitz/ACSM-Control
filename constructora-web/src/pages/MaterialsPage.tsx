@@ -79,6 +79,9 @@ type MaterialForm = {
   current_unit_price: string
   supplier_id: string
   quantity_per_house: string
+  conversion_unit: string
+  conversion_factor: string
+  conversion_notes: string
   source_code: string
   family: string
   last_price_update: string
@@ -92,6 +95,9 @@ const emptyMaterialForm: MaterialForm = {
   current_unit_price: '',
   supplier_id: '',
   quantity_per_house: '',
+  conversion_unit: '',
+  conversion_factor: '',
+  conversion_notes: '',
   source_code: '',
   family: '',
   last_price_update: '',
@@ -275,7 +281,10 @@ export default function MaterialsPage() {
       if (!form.supplier_id) {
         throw new Error('Selecciona un proveedor registrado.')
       }
-      await apiRequest('/materials/model-catalog', {
+      if ((form.conversion_unit.trim() && !form.conversion_factor) || (!form.conversion_unit.trim() && form.conversion_factor)) {
+        throw new Error('Captura unidad de compra y factor para registrar la equivalencia.')
+      }
+      const created = await apiRequest<MaterialModelCatalogItem>('/materials/model-catalog', {
         method: 'POST',
         body: JSON.stringify({
           project_id: selectedProjectId,
@@ -292,6 +301,18 @@ export default function MaterialsPage() {
           is_active: form.is_active,
         }),
       })
+      if (created.material_id && form.conversion_unit.trim() && form.conversion_factor) {
+        await apiRequest(`/materials/${created.material_id}/unit-conversions`, {
+          method: 'POST',
+          body: JSON.stringify({
+            from_unit: form.conversion_unit.trim(),
+            to_unit: form.unit.trim(),
+            factor_to_base: Number(form.conversion_factor),
+            notes: form.conversion_notes.trim() || null,
+            is_active: true,
+          }),
+        })
+      }
       showActionNotice('Material ligado al modelo correctamente')
       closeDrawer()
       await loadCatalog(selectedProjectId, selectedModelId)
@@ -648,6 +669,54 @@ export default function MaterialsPage() {
                 }
                 className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
                 required
+              />
+            </label>
+          </div>
+          <div className="rounded-2xl border border-sky-200 bg-sky-50/60 p-3">
+            <div className="mb-3">
+              <div className="text-sm font-bold text-acsm-ink">Equivalencia de compra opcional</div>
+              <p className="mt-1 text-xs font-semibold text-acsm-muted">
+                Usala cuando el proveedor venda en otra unidad. Ejemplo: 1 BULTO equivale a 0.05 TON.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold text-acsm-ink">Unidad de compra</span>
+                <input
+                  value={form.conversion_unit}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, conversion_unit: event.target.value }))
+                  }
+                  className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold uppercase outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                  placeholder="BULTO, ROLLO, CAJA"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold text-acsm-ink">
+                  Factor a unidad base
+                </span>
+                <input
+                  type="number"
+                  step="0.00000001"
+                  min="0.00000001"
+                  value={form.conversion_factor}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, conversion_factor: event.target.value }))
+                  }
+                  className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                  placeholder="0.05"
+                />
+              </label>
+            </div>
+            <label className="mt-3 block">
+              <span className="mb-2 block text-sm font-bold text-acsm-ink">Notas de equivalencia</span>
+              <input
+                value={form.conversion_notes}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, conversion_notes: event.target.value }))
+                }
+                className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                placeholder="Ej. bulto de 50 kg"
               />
             </label>
           </div>

@@ -16,6 +16,7 @@ from app.models import (
     ExpectedMaterialList,
     HouseModelMaterialRequirement,
     Material,
+    MaterialUnitConversion,
     MaterialRequisition,
     MaterialRequisitionItem,
     MaterialReception,
@@ -814,6 +815,40 @@ def _percent(received: Decimal, required: Decimal) -> Decimal:
     return ((received / required) * Decimal("100")).quantize(Decimal("0.01"))
 
 
+def _unit_key(value: str | None) -> str:
+    return re.sub(r"\s+", " ", value or "").strip().upper()
+
+
+def _quantity_as_base_unit(
+    db: Session,
+    *,
+    company_id: int,
+    material_id: int | None,
+    quantity: Decimal | None,
+    from_unit: str | None,
+    to_unit: str | None,
+) -> tuple[Decimal, Decimal]:
+    value = quantity or Decimal("0")
+    source_unit = _unit_key(from_unit)
+    target_unit = _unit_key(to_unit)
+    if value == 0 or source_unit == target_unit:
+        return value, Decimal("0")
+    if material_id is None:
+        return Decimal("0"), value
+    conversion = db.scalar(
+        select(MaterialUnitConversion).where(
+            MaterialUnitConversion.company_id == company_id,
+            MaterialUnitConversion.material_id == material_id,
+            MaterialUnitConversion.from_unit == source_unit,
+            MaterialUnitConversion.to_unit == target_unit,
+            MaterialUnitConversion.is_active.is_(True),
+        )
+    )
+    if conversion is None:
+        return Decimal("0"), value
+    return value * conversion.factor_to_base, Decimal("0")
+
+
 def _project_model_material_control(db: Session, project: Project) -> list[dict]:
     assignments = list(
         db.scalars(
@@ -844,6 +879,7 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
         ).all()
     )
 
+    requirement_by_id = {item.id: item for item in requirements}
     material_index: dict[int, list[int]] = {}
     model_material_index: dict[tuple[int, int], list[int]] = {}
     text_index: dict[tuple[str, str, str], list[int]] = {}
@@ -864,6 +900,9 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
         model_text_index.setdefault((requirement.house_model_id, *key), []).append(requirement.id)
 
     requested_by_requirement: dict[int, Decimal] = {item.id: Decimal("0") for item in requirements}
+    conversion_missing_by_requirement: dict[int, Decimal] = {
+        item.id: Decimal("0") for item in requirements
+    }
     requested_rows = db.execute(
         select(MaterialRequisitionItem, MaterialRequisition)
         .join(MaterialRequisition, MaterialRequisition.id == MaterialRequisitionItem.requisition_id)
@@ -878,11 +917,21 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
         requirement_id = requisition_item.house_model_material_requirement_id
         if requirement_id is None:
             continue
-        requested_by_requirement[requirement_id] += (
-            requisition_item.approved_quantity
-            or requisition_item.requested_quantity
-            or Decimal("0")
+        requirement = requirement_by_id[requirement_id]
+        converted, missing = _quantity_as_base_unit(
+            db,
+            company_id=project.company_id,
+            material_id=requisition_item.material_id or requirement.material_id,
+            quantity=(
+                requisition_item.approved_quantity
+                or requisition_item.requested_quantity
+                or Decimal("0")
+            ),
+            from_unit=requisition_item.requested_unit or requisition_item.unit,
+            to_unit=requirement.unit,
         )
+        requested_by_requirement[requirement_id] += converted
+        conversion_missing_by_requirement[requirement_id] += missing
 
     ordered_by_requirement: dict[int, Decimal] = {item.id: Decimal("0") for item in requirements}
     ordered_rows = db.execute(
@@ -898,7 +947,17 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
         requirement_id = order_item.house_model_material_requirement_id
         if requirement_id is None:
             continue
-        ordered_by_requirement[requirement_id] += order_item.quantity_ordered or Decimal("0")
+        requirement = requirement_by_id[requirement_id]
+        converted, missing = _quantity_as_base_unit(
+            db,
+            company_id=project.company_id,
+            material_id=order_item.material_id or requirement.material_id,
+            quantity=order_item.quantity_ordered or Decimal("0"),
+            from_unit=order_item.unit,
+            to_unit=requirement.unit,
+        )
+        ordered_by_requirement[requirement_id] += converted
+        conversion_missing_by_requirement[requirement_id] += missing
 
     received_by_requirement: dict[int, Decimal] = {item.id: Decimal("0") for item in requirements}
     unassigned_by_signature: dict[tuple[int | None, str, str, str], Decimal] = {}
@@ -938,7 +997,19 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
             if len(candidates) == 1:
                 resolved_id = candidates[0]
         if resolved_id is not None:
-            received_by_requirement[resolved_id] += quantity
+            requirement = requirement_by_id[resolved_id]
+            converted, missing = _quantity_as_base_unit(
+                db,
+                company_id=project.company_id,
+                material_id=reception_item.material_id
+                or expected_item.material_id
+                or requirement.material_id,
+                quantity=quantity,
+                from_unit=reception_item.unit or expected_item.unit,
+                to_unit=requirement.unit,
+            )
+            received_by_requirement[resolved_id] += converted
+            conversion_missing_by_requirement[resolved_id] += missing
             continue
         signature = (reception_item.material_id, *key)
         unassigned_by_signature[signature] = unassigned_by_signature.get(signature, Decimal("0")) + quantity
@@ -950,6 +1021,7 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
         requested = requested_by_requirement.get(requirement.id, Decimal("0"))
         ordered = ordered_by_requirement.get(requirement.id, Decimal("0"))
         received = received_by_requirement.get(requirement.id, Decimal("0"))
+        conversion_missing = conversion_missing_by_requirement.get(requirement.id, Decimal("0"))
         signature = (
             requirement.material_id,
             *_normalized_line_key(requirement.description, requirement.unit, requirement.source_code),
@@ -980,6 +1052,7 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
                 "pending_to_order_quantity": pending_to_order,
                 "pending_to_receive_quantity": pending_to_receive,
                 "over_received_quantity": over_received,
+                "conversion_missing_quantity": conversion_missing,
                 "requested_percent": _percent(requested, required),
                 "ordered_percent": _percent(ordered, required),
                 "received_percent": _percent(received, required),

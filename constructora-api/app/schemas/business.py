@@ -286,6 +286,32 @@ class MaterialRead(MaterialBase, TimestampRead):
     id: int
 
 
+class MaterialUnitConversionBase(BaseModel):
+    from_unit: str = Field(min_length=1, max_length=40)
+    to_unit: str = Field(min_length=1, max_length=40)
+    factor_to_base: PositiveDecimal
+    notes: str | None = None
+    is_active: bool = True
+
+
+class MaterialUnitConversionCreate(MaterialUnitConversionBase):
+    pass
+
+
+class MaterialUnitConversionUpdate(BaseModel):
+    from_unit: str | None = Field(default=None, min_length=1, max_length=40)
+    to_unit: str | None = Field(default=None, min_length=1, max_length=40)
+    factor_to_base: PositiveDecimal | None = None
+    notes: str | None = None
+    is_active: bool | None = None
+
+
+class MaterialUnitConversionRead(MaterialUnitConversionBase, TimestampRead):
+    id: int
+    company_id: int
+    material_id: int
+
+
 class MaterialModelCatalogCreate(BaseModel):
     project_id: int
     house_model_id: int

@@ -12,6 +12,7 @@ from app.models import (
     HouseModelDocument,
     HouseModelMaterialRequirement,
     Material,
+    MaterialUnitConversion,
     Project,
     ProjectHouseModel,
     Supplier,
@@ -23,6 +24,9 @@ from app.schemas.business import (
     MaterialModelCatalogRead,
     MaterialRead,
     MaterialUpdate,
+    MaterialUnitConversionCreate,
+    MaterialUnitConversionRead,
+    MaterialUnitConversionUpdate,
 )
 from app.services.audit import record_create, record_delete, record_event, record_update, snapshot
 from app.services.crud import get_or_404
@@ -31,6 +35,10 @@ from app.services.tenancy import company_id_for_write, ensure_same_company, scop
 
 
 router = APIRouter()
+
+
+def _normalize_unit(value: str) -> str:
+    return value.strip().upper()
 
 
 def _model_catalog_row(
@@ -370,6 +378,141 @@ def create_material(
     db.commit()
     db.refresh(item)
     return item
+
+
+@router.get("/{material_id}/unit-conversions", response_model=list[MaterialUnitConversionRead])
+def list_material_unit_conversions(
+    material_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("materials", "view")),
+) -> list[MaterialUnitConversion]:
+    material = get_or_404(db, Material, material_id)
+    ensure_same_company(current_user, material)
+    return list(
+        db.scalars(
+            select(MaterialUnitConversion)
+            .where(MaterialUnitConversion.material_id == material.id)
+            .order_by(MaterialUnitConversion.from_unit)
+        ).all()
+    )
+
+
+@router.post(
+    "/{material_id}/unit-conversions",
+    response_model=MaterialUnitConversionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_material_unit_conversion(
+    material_id: int,
+    payload: MaterialUnitConversionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("materials", "edit")),
+) -> MaterialUnitConversion:
+    material = get_or_404(db, Material, material_id)
+    ensure_same_company(current_user, material)
+    from_unit = _normalize_unit(payload.from_unit)
+    to_unit = _normalize_unit(payload.to_unit)
+    if to_unit != _normalize_unit(material.unit):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La unidad base de conversion debe coincidir con la unidad del material",
+        )
+    if from_unit == to_unit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No necesitas equivalencia cuando la unidad solicitada es igual a la unidad base",
+        )
+    existing = db.scalar(
+        select(MaterialUnitConversion).where(
+            MaterialUnitConversion.company_id == material.company_id,
+            MaterialUnitConversion.material_id == material.id,
+            MaterialUnitConversion.from_unit == from_unit,
+            MaterialUnitConversion.to_unit == to_unit,
+        )
+    )
+    if existing is not None:
+        before = snapshot(existing, ["factor_to_base", "notes", "is_active"])
+        existing.factor_to_base = payload.factor_to_base
+        existing.notes = payload.notes
+        existing.is_active = payload.is_active
+        record_update(db, current_user, module="materiales", item=existing, before=before)
+        db.commit()
+        db.refresh(existing)
+        return existing
+    item = MaterialUnitConversion(
+        company_id=material.company_id,
+        material_id=material.id,
+        from_unit=from_unit,
+        to_unit=to_unit,
+        factor_to_base=payload.factor_to_base,
+        notes=payload.notes,
+        is_active=payload.is_active,
+    )
+    db.add(item)
+    db.flush()
+    record_create(db, current_user, module="materiales", item=item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.patch(
+    "/{material_id}/unit-conversions/{conversion_id}",
+    response_model=MaterialUnitConversionRead,
+)
+def update_material_unit_conversion(
+    material_id: int,
+    conversion_id: int,
+    payload: MaterialUnitConversionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("materials", "edit")),
+) -> MaterialUnitConversion:
+    material = get_or_404(db, Material, material_id)
+    ensure_same_company(current_user, material)
+    item = get_or_404(db, MaterialUnitConversion, conversion_id)
+    if item.material_id != material.id or item.company_id != material.company_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversion no encontrada")
+    data = payload.model_dump(exclude_unset=True)
+    if "from_unit" in data and data["from_unit"] is not None:
+        data["from_unit"] = _normalize_unit(data["from_unit"])
+    if "to_unit" in data and data["to_unit"] is not None:
+        data["to_unit"] = _normalize_unit(data["to_unit"])
+    target_to_unit = data.get("to_unit", item.to_unit)
+    if target_to_unit != _normalize_unit(material.unit):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La unidad base de conversion debe coincidir con la unidad del material",
+        )
+    target_from_unit = data.get("from_unit", item.from_unit)
+    if target_from_unit == target_to_unit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La unidad origen debe ser distinta a la unidad base",
+        )
+    before = snapshot(item, list(data.keys()))
+    for field, value in data.items():
+        setattr(item, field, value)
+    record_update(db, current_user, module="materiales", item=item, before=before)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/{material_id}/unit-conversions/{conversion_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_material_unit_conversion(
+    material_id: int,
+    conversion_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("materials", "edit")),
+) -> None:
+    material = get_or_404(db, Material, material_id)
+    ensure_same_company(current_user, material)
+    item = get_or_404(db, MaterialUnitConversion, conversion_id)
+    if item.material_id != material.id or item.company_id != material.company_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversion no encontrada")
+    record_delete(db, current_user, module="materiales", item=item)
+    db.delete(item)
+    db.commit()
 
 
 @router.get("/{material_id}", response_model=MaterialRead)

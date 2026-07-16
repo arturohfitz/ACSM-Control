@@ -248,6 +248,35 @@ class Material(TimestampMixin, Base):
     )
     project_prices: Mapped[list[ProjectMaterialPrice]] = relationship(back_populates="material")
     supplier: Mapped["Supplier | None"] = relationship()
+    unit_conversions: Mapped[list["MaterialUnitConversion"]] = relationship(
+        back_populates="material", cascade="all, delete-orphan"
+    )
+
+
+class MaterialUnitConversion(TimestampMixin, Base):
+    __tablename__ = "material_unit_conversions"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "material_id",
+            "from_unit",
+            "to_unit",
+            name="uq_material_unit_conversion_pair",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    material_id: Mapped[int] = mapped_column(
+        ForeignKey("materials.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    from_unit: Mapped[str] = mapped_column(String(40), nullable=False)
+    to_unit: Mapped[str] = mapped_column(String(40), nullable=False)
+    factor_to_base: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    material: Mapped[Material] = relationship(back_populates="unit_conversions")
 
 
 class LaborRate(TimestampMixin, Base):

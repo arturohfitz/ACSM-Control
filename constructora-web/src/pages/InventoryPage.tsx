@@ -173,6 +173,7 @@ type ProjectModelMaterialControlItem = {
   pending_to_order_quantity: string
   pending_to_receive_quantity: string
   over_received_quantity: string
+  conversion_missing_quantity: string
   requested_percent: string
   ordered_percent: string
   received_percent: string
@@ -1554,6 +1555,11 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                     {Number(item.unassigned_received_quantity) > 0 ? (
                       <div className="mt-1 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
                         {formatQuantity(item.unassigned_received_quantity)} {item.unit} sin asignar
+                      </div>
+                    ) : null}
+                    {Number(item.conversion_missing_quantity) > 0 ? (
+                      <div className="mt-1 inline-flex rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-800">
+                        {formatQuantity(item.conversion_missing_quantity)} sin conversion
                       </div>
                     ) : null}
                   </td>

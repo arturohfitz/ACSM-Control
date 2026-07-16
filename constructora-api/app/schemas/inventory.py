@@ -286,6 +286,7 @@ class ProjectModelMaterialControlItem(BaseModel):
     pending_to_order_quantity: Decimal
     pending_to_receive_quantity: Decimal
     over_received_quantity: Decimal
+    conversion_missing_quantity: Decimal
     requested_percent: Decimal
     ordered_percent: Decimal
     received_percent: Decimal
