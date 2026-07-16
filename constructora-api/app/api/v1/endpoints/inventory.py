@@ -16,6 +16,8 @@ from app.models import (
     ExpectedMaterialList,
     HouseModelMaterialRequirement,
     Material,
+    MaterialRequisition,
+    MaterialRequisitionItem,
     MaterialReception,
     MaterialReceptionItem,
     Project,
@@ -861,6 +863,43 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
         text_index.setdefault(key, []).append(requirement.id)
         model_text_index.setdefault((requirement.house_model_id, *key), []).append(requirement.id)
 
+    requested_by_requirement: dict[int, Decimal] = {item.id: Decimal("0") for item in requirements}
+    requested_rows = db.execute(
+        select(MaterialRequisitionItem, MaterialRequisition)
+        .join(MaterialRequisition, MaterialRequisition.id == MaterialRequisitionItem.requisition_id)
+        .where(
+            MaterialRequisition.project_id == project.id,
+            MaterialRequisition.status != "rejected",
+            MaterialRequisitionItem.house_model_material_requirement_id.in_(requested_by_requirement),
+            MaterialRequisitionItem.status != "rejected",
+        )
+    ).all()
+    for requisition_item, _requisition in requested_rows:
+        requirement_id = requisition_item.house_model_material_requirement_id
+        if requirement_id is None:
+            continue
+        requested_by_requirement[requirement_id] += (
+            requisition_item.approved_quantity
+            or requisition_item.requested_quantity
+            or Decimal("0")
+        )
+
+    ordered_by_requirement: dict[int, Decimal] = {item.id: Decimal("0") for item in requirements}
+    ordered_rows = db.execute(
+        select(PurchaseOrderItem, PurchaseOrder)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderItem.purchase_order_id)
+        .where(
+            PurchaseOrder.project_id == project.id,
+            PurchaseOrder.status != "cancelled",
+            PurchaseOrderItem.house_model_material_requirement_id.in_(ordered_by_requirement),
+        )
+    ).all()
+    for order_item, _purchase_order in ordered_rows:
+        requirement_id = order_item.house_model_material_requirement_id
+        if requirement_id is None:
+            continue
+        ordered_by_requirement[requirement_id] += order_item.quantity_ordered or Decimal("0")
+
     received_by_requirement: dict[int, Decimal] = {item.id: Decimal("0") for item in requirements}
     unassigned_by_signature: dict[tuple[int | None, str, str, str], Decimal] = {}
     reception_rows = db.execute(
@@ -908,6 +947,8 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
     for requirement in requirements:
         assignment = assigned_by_model[requirement.house_model_id]
         required = requirement.quantity_per_house * assignment.quantity
+        requested = requested_by_requirement.get(requirement.id, Decimal("0"))
+        ordered = ordered_by_requirement.get(requirement.id, Decimal("0"))
         received = received_by_requirement.get(requirement.id, Decimal("0"))
         signature = (
             requirement.material_id,
@@ -915,6 +956,8 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
         )
         unassigned = unassigned_by_signature.get(signature, Decimal("0"))
         pending = max(required - received, Decimal("0"))
+        pending_to_order = max(required - ordered, Decimal("0"))
+        pending_to_receive = max(ordered - received, Decimal("0"))
         over_received = max(received - required, Decimal("0"))
         response.append(
             {
@@ -929,10 +972,16 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
                 "unit": requirement.unit,
                 "quantity_per_house": requirement.quantity_per_house,
                 "required_quantity": required,
+                "requested_quantity": requested,
+                "ordered_quantity": ordered,
                 "received_quantity": received,
                 "unassigned_received_quantity": unassigned,
                 "pending_quantity": pending,
+                "pending_to_order_quantity": pending_to_order,
+                "pending_to_receive_quantity": pending_to_receive,
                 "over_received_quantity": over_received,
+                "requested_percent": _percent(requested, required),
+                "ordered_percent": _percent(ordered, required),
                 "received_percent": _percent(received, required),
                 "status": _control_status(required, received),
             }

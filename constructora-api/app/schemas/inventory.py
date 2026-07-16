@@ -278,9 +278,15 @@ class ProjectModelMaterialControlItem(BaseModel):
     unit: str
     quantity_per_house: Decimal
     required_quantity: Decimal
+    requested_quantity: Decimal
+    ordered_quantity: Decimal
     received_quantity: Decimal
     unassigned_received_quantity: Decimal
     pending_quantity: Decimal
+    pending_to_order_quantity: Decimal
+    pending_to_receive_quantity: Decimal
     over_received_quantity: Decimal
+    requested_percent: Decimal
+    ordered_percent: Decimal
     received_percent: Decimal
     status: InventoryItemStatus

@@ -165,10 +165,16 @@ type ProjectModelMaterialControlItem = {
   unit: string
   quantity_per_house: string
   required_quantity: string
+  requested_quantity: string
+  ordered_quantity: string
   received_quantity: string
   unassigned_received_quantity: string
   pending_quantity: string
+  pending_to_order_quantity: string
+  pending_to_receive_quantity: string
   over_received_quantity: string
+  requested_percent: string
+  ordered_percent: string
   received_percent: string
   status: string
 }
@@ -480,7 +486,12 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       case 'progress_desc':
         return items.sort((a, b) => Number(b.received_percent) - Number(a.received_percent))
       case 'pending_desc':
-        return items.sort((a, b) => Number(b.pending_quantity) - Number(a.pending_quantity))
+        return items.sort(
+          (a, b) =>
+            Number(b.pending_to_order_quantity) +
+            Number(b.pending_to_receive_quantity) -
+            (Number(a.pending_to_order_quantity) + Number(a.pending_to_receive_quantity)),
+        )
       case 'status':
         return items.sort((a, b) => a.status.localeCompare(b.status) || a.description.localeCompare(b.description))
       case 'material':
@@ -576,11 +587,24 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       filteredControlItems.reduce(
         (totals, item) => ({
           required: totals.required + Number(item.required_quantity),
+          requested: totals.requested + Number(item.requested_quantity),
+          ordered: totals.ordered + Number(item.ordered_quantity),
           received: totals.received + Number(item.received_quantity),
           pending: totals.pending + Number(item.pending_quantity),
+          pendingToOrder: totals.pendingToOrder + Number(item.pending_to_order_quantity),
+          pendingToReceive: totals.pendingToReceive + Number(item.pending_to_receive_quantity),
           unassigned: totals.unassigned + Number(item.unassigned_received_quantity),
         }),
-        { required: 0, received: 0, pending: 0, unassigned: 0 },
+        {
+          required: 0,
+          requested: 0,
+          ordered: 0,
+          received: 0,
+          pending: 0,
+          pendingToOrder: 0,
+          pendingToReceive: 0,
+          unassigned: 0,
+        },
       ),
     [filteredControlItems],
   )
@@ -1449,11 +1473,23 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           </button>
         </div>
 
-        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-3 md:grid-cols-4">
+        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-3 md:grid-cols-6">
           <div className="rounded-md border border-acsm-line bg-white p-3">
             <div className="text-xs font-semibold uppercase text-acsm-muted">Requerido</div>
             <div className="mt-1 text-lg font-bold text-acsm-ink">
               {formatQuantity(controlTotals.required)}
+            </div>
+          </div>
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Solicitado</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatQuantity(controlTotals.requested)}
+            </div>
+          </div>
+          <div className="rounded-md border border-acsm-line bg-white p-3">
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Comprado</div>
+            <div className="mt-1 text-lg font-bold text-acsm-ink">
+              {formatQuantity(controlTotals.ordered)}
             </div>
           </div>
           <div className="rounded-md border border-acsm-line bg-white p-3">
@@ -1463,19 +1499,15 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
             </div>
           </div>
           <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Pendiente</div>
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Pend. compra</div>
             <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.pending)}
+              {formatQuantity(controlTotals.pendingToOrder)}
             </div>
           </div>
           <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Avance</div>
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Pend. recibir</div>
             <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatPercent(
-                controlTotals.required > 0
-                  ? (controlTotals.received / controlTotals.required) * 100
-                  : 0,
-              )}
+              {formatQuantity(controlTotals.pendingToReceive)}
             </div>
           </div>
         </div>
@@ -1488,15 +1520,18 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
         ) : null}
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] text-sm">
+          <table className="w-full min-w-[1320px] text-sm">
             <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
               <tr>
                 <th className="px-4 py-3">Modelo</th>
                 <th className="px-4 py-3">Material</th>
                 <th className="px-4 py-3">Por vivienda</th>
                 <th className="px-4 py-3">Requerido</th>
+                <th className="px-4 py-3">Solicitado</th>
+                <th className="px-4 py-3">Comprado</th>
                 <th className="px-4 py-3">Recibido</th>
-                <th className="px-4 py-3">Pendiente</th>
+                <th className="px-4 py-3">Pend. compra</th>
+                <th className="px-4 py-3">Pend. recibir</th>
                 <th className="px-4 py-3">Avance</th>
                 <th className="px-4 py-3">Estado</th>
               </tr>
@@ -1529,20 +1564,47 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                     {formatQuantity(item.required_quantity)} {item.unit}
                   </td>
                   <td className="px-4 py-3">
+                    <div className="font-semibold text-acsm-ink">
+                      {formatQuantity(item.requested_quantity)} {item.unit}
+                    </div>
+                    <div className="text-xs text-acsm-muted">
+                      {formatPercent(item.requested_percent)}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-acsm-ink">
+                      {formatQuantity(item.ordered_quantity)} {item.unit}
+                    </div>
+                    <div className="text-xs text-acsm-muted">
+                      {formatPercent(item.ordered_percent)}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
                     {formatQuantity(item.received_quantity)} {item.unit}
                   </td>
                   <td className="px-4 py-3">
-                    {formatQuantity(item.pending_quantity)} {item.unit}
+                    {formatQuantity(item.pending_to_order_quantity)} {item.unit}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="h-2 w-28 overflow-hidden rounded-full bg-acsm-paper">
-                      <div
-                        className="h-full rounded-full bg-acsm-green"
-                        style={{ width: `${Math.min(Number(item.received_percent), 100)}%` }}
-                      />
+                    {formatQuantity(item.pending_to_receive_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="space-y-1">
+                      <div className="h-1.5 w-28 overflow-hidden rounded-full bg-acsm-paper">
+                        <div
+                          className="h-full rounded-full bg-acsm-teal"
+                          style={{ width: `${Math.min(Number(item.ordered_percent), 100)}%` }}
+                        />
+                      </div>
+                      <div className="h-1.5 w-28 overflow-hidden rounded-full bg-acsm-paper">
+                        <div
+                          className="h-full rounded-full bg-acsm-green"
+                          style={{ width: `${Math.min(Number(item.received_percent), 100)}%` }}
+                        />
+                      </div>
                     </div>
                     <div className="mt-1 text-xs font-semibold text-acsm-muted">
-                      {formatPercent(item.received_percent)}
+                      OC {formatPercent(item.ordered_percent)} · Rec. {formatPercent(item.received_percent)}
                     </div>
                   </td>
                   <td className="px-4 py-3">
@@ -1554,7 +1616,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               ))}
               {!sortedControlItems.length ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-acsm-muted">
+                  <td colSpan={11} className="px-4 py-6 text-center text-acsm-muted">
                     No hay explosion de materiales integrada para los modelos de este desarrollo.
                   </td>
                 </tr>
