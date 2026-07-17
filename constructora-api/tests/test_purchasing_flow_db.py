@@ -432,7 +432,7 @@ class PurchasingFlowDBTest(unittest.TestCase):
         )
 
         purchase_order = self._get_purchase_order(purchase_order.id)
-        self.assertEqual(purchase_order.status, "received")
+        self.assertEqual(purchase_order.status, "factured")
         self.assertTrue(all(item.status == "complete" for item in purchase_order.items))
 
         validation = validate_supplier_invoice(invoice.id, self.db, self.user)
@@ -637,6 +637,21 @@ class PurchasingFlowDBTest(unittest.TestCase):
             self.db,
             self.user,
         )
+        blocked_invoice = self.db.get(SupplierInvoice, blocked_invoice.id)
+        assert blocked_invoice is not None
+        self.assertEqual(blocked_invoice.status, "approved_for_payment")
+        create_supplier_payment(
+            SupplierPaymentCreate(
+                supplier_invoice_id=blocked_invoice.id,
+                amount=blocked_invoice.total,
+                scheduled_date=date.today(),
+                paid_at=date.today(),
+                status="paid",
+                reference=f"PAGO-EXCESO-{self.suffix}",
+            ),
+            self.db,
+            self.user,
+        )
         purchase_order = self._get_purchase_order(purchase_order.id)
         self.assertEqual(purchase_order.status, "received")
 
@@ -645,11 +660,11 @@ class PurchasingFlowDBTest(unittest.TestCase):
                 purchase_order_id=purchase_order.id,
                 invoice_number=f"FAC-PARCIAL-2-{self.suffix}",
                 invoice_date=date.today(),
-                total=Decimal("1250.00"),
+                total=Decimal("1225.00"),
                 items=[
                     SupplierInvoiceItemCreate(
                         purchase_order_item_id=po_item.id,
-                        quantity=Decimal("50"),
+                        quantity=Decimal("49"),
                         unit_price=Decimal("25"),
                     )
                 ],

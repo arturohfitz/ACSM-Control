@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import hashlib
 import logging
@@ -27,6 +27,8 @@ from app.models import (
     ProjectWarehouse,
     PurchaseOrder,
     PurchaseOrderItem,
+    SupplierInvoice,
+    SupplierInvoiceItem,
     User,
     WarehouseStock,
 )
@@ -76,6 +78,12 @@ SPANISH_MONTHS = {
     "nov": 11,
     "dic": 12,
 }
+
+INVOICE_RECEIVABLE_STATUSES = ("received", "approved_for_payment", "scheduled", "paid")
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 PDF_ROW_RE = re.compile(
     r"^\s*(?P<line>\d+)\s+"
@@ -658,6 +666,177 @@ def _sync_purchase_order_item(
         purchase_order.status = "received"
     elif any(item.received_quantity > 0 for item in purchase_order.items):
         purchase_order.status = "partially_received"
+
+
+def _invoiced_quantities_by_po_item(
+    db: Session,
+    purchase_order_id: int,
+    *,
+    exclude_invoice_id: int | None = None,
+) -> dict[int, Decimal]:
+    statement = (
+        select(
+            SupplierInvoiceItem.purchase_order_item_id,
+            func.coalesce(func.sum(SupplierInvoiceItem.quantity), Decimal("0")),
+        )
+        .join(SupplierInvoice, SupplierInvoice.id == SupplierInvoiceItem.supplier_invoice_id)
+        .where(
+            SupplierInvoice.purchase_order_id == purchase_order_id,
+            SupplierInvoice.status.in_(INVOICE_RECEIVABLE_STATUSES),
+        )
+        .group_by(SupplierInvoiceItem.purchase_order_item_id)
+    )
+    if exclude_invoice_id is not None:
+        statement = statement.where(SupplierInvoice.id != exclude_invoice_id)
+    return {item_id: quantity for item_id, quantity in db.execute(statement).all()}
+
+
+def _invoice_is_backed_by_received_material(
+    db: Session,
+    invoice: SupplierInvoice,
+) -> tuple[bool, int, str]:
+    purchase_order = invoice.purchase_order
+    if purchase_order is None:
+        return False, 1, "La factura no tiene orden de compra asociada."
+
+    if invoice.items:
+        if purchase_order.billing_mode != "partial":
+            return False, len(invoice.items), "La orden no esta configurada para facturacion parcial."
+        invoiced = _invoiced_quantities_by_po_item(
+            db,
+            purchase_order.id,
+            exclude_invoice_id=invoice.id,
+        )
+        pending = 0
+        for invoice_item in invoice.items:
+            po_item = invoice_item.purchase_order_item
+            if po_item is None:
+                pending += 1
+                continue
+            already_invoiced = invoiced.get(po_item.id, Decimal("0"))
+            available_to_invoice = max(po_item.received_quantity - already_invoiced, Decimal("0"))
+            if invoice_item.quantity > available_to_invoice:
+                pending += 1
+        if pending:
+            return (
+                False,
+                pending,
+                "La factura rebasa el material recibido pendiente de facturar.",
+            )
+        return (
+            True,
+            0,
+            "Factura parcial validada contra material recibido y disponible para pago.",
+        )
+
+    pending = sum(
+        1 for item in purchase_order.items if item.received_quantity < item.quantity_ordered
+    )
+    if pending:
+        return False, pending, "La orden aun tiene material pendiente por recibir."
+    return True, 0, "Factura validada contra recepcion completa de la orden de compra."
+
+
+def _release_invoices_ready_after_reception(
+    db: Session,
+    expected_list: ExpectedMaterialList,
+    current_user: User,
+) -> int:
+    if expected_list.purchase_order_id is None:
+        return 0
+    purchase_order = db.scalar(
+        select(PurchaseOrder)
+        .where(PurchaseOrder.id == expected_list.purchase_order_id)
+        .options(
+            selectinload(PurchaseOrder.items),
+            selectinload(PurchaseOrder.supplier),
+        )
+    )
+    if purchase_order is None:
+        return 0
+    invoices = list(
+        db.scalars(
+            select(SupplierInvoice)
+            .where(
+                SupplierInvoice.purchase_order_id == purchase_order.id,
+                SupplierInvoice.status == "blocked",
+            )
+            .options(
+                selectinload(SupplierInvoice.items).selectinload(
+                    SupplierInvoiceItem.purchase_order_item
+                ),
+                selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+                selectinload(SupplierInvoice.supplier),
+            )
+            .order_by(SupplierInvoice.invoice_date, SupplierInvoice.id)
+        ).all()
+    )
+    released = 0
+    for invoice in invoices:
+        is_ready, pending_items, message = _invoice_is_backed_by_received_material(db, invoice)
+        if not is_ready:
+            invoice.notes = message
+            continue
+        invoice.status = "approved_for_payment"
+        invoice.notes = message
+        invoice.validated_at = _now()
+        invoice.validated_by = current_user.id
+        if not invoice.items:
+            purchase_order.status = "factured"
+        released += 1
+        resolve_notifications(
+            db,
+            company_id=invoice.company_id,
+            notification_type="supplier_invoice_blocked",
+            entity_type="SupplierInvoice",
+            entity_id=invoice.id,
+        )
+        notify_permission(
+            db,
+            company_id=invoice.company_id,
+            module="supplier_payments",
+            action="view",
+            notification_type="supplier_invoice_ready_to_pay",
+            title="Factura lista para pago",
+            body=(
+                f"La factura {invoice.invoice_number} ya esta respaldada por material "
+                "recibido y puede programarse para pago."
+            ),
+            category="task",
+            priority="normal",
+            source_module="inventario",
+            entity_type="SupplierInvoice",
+            entity_id=invoice.id,
+            entity_label=invoice.invoice_number,
+            action_url="/supplier-payments",
+            project_id=purchase_order.project_id,
+            metadata={
+                "purchase_order_id": purchase_order.id,
+                "purchase_order": purchase_order.po_number,
+                "pending_items": pending_items,
+                "total": str(invoice.total),
+            },
+        )
+        record_event(
+            db,
+            current_user,
+            module="inventario",
+            action="release_invoice",
+            entity_type="SupplierInvoice",
+            entity_id=invoice.id,
+            company_id=invoice.company_id,
+            label=invoice.invoice_number,
+            description=(
+                f"{current_user.full_name} libero la factura {invoice.invoice_number} "
+                "para pago con recepcion de material"
+            ),
+            metadata={
+                "purchase_order_id": purchase_order.id,
+                "purchase_order": purchase_order.po_number,
+                "status": invoice.status,
+            },
+        )
+    return released
 
 
 def _default_warehouse_for_project(db: Session, project: Project) -> ProjectWarehouse:
@@ -1548,6 +1727,7 @@ def create_quick_inventory_document(
             },
         )
         _sync_reception_notifications(db, expected_list, current_user)
+        _release_invoices_ready_after_reception(db, expected_list, current_user)
     db.commit()
     db.refresh(expected_list)
     if reception is not None:
@@ -1718,6 +1898,7 @@ def create_reception(
         },
     )
     _sync_reception_notifications(db, expected_list, current_user)
+    _release_invoices_ready_after_reception(db, expected_list, current_user)
     db.commit()
     db.refresh(reception)
     return reception
