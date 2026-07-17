@@ -119,6 +119,52 @@ class MaterialRequisitionRead(TimestampRead):
     items: list[MaterialRequisitionItemRead] = Field(default_factory=list)
 
 
+class MaterialRequisitionTrackingStep(BaseModel):
+    key: str
+    label: str
+    status: Literal["pending", "active", "complete", "blocked", "warning"]
+    detail: str | None = None
+    entity_type: str | None = None
+    entity_id: int | None = None
+    entity_label: str | None = None
+    timestamp: datetime | None = None
+
+
+class MaterialRequisitionTrackingItem(BaseModel):
+    requisition_item_id: int
+    description: str
+    source_code: str | None = None
+    unit: str
+    requested_quantity: Decimal
+    requested_unit: str | None = None
+    rfq_quantity: Decimal
+    ordered_quantity: Decimal
+    received_quantity: Decimal
+
+
+class MaterialRequisitionTrackingRead(BaseModel):
+    requisition: MaterialRequisitionRead
+    project_name: str | None = None
+    house_model_name: str | None = None
+    rfq_id: int | None = None
+    rfq_number: str | None = None
+    rfq_status: str | None = None
+    supplier_count: int = 0
+    quote_count: int = 0
+    approved_quote_count: int = 0
+    purchase_order_count: int = 0
+    invoice_count: int = 0
+    payment_count: int = 0
+    requested_quantity: Decimal
+    rfq_quantity: Decimal
+    ordered_quantity: Decimal
+    received_quantity: Decimal
+    invoiced_amount: Decimal
+    paid_amount: Decimal
+    steps: list[MaterialRequisitionTrackingStep] = Field(default_factory=list)
+    items: list[MaterialRequisitionTrackingItem] = Field(default_factory=list)
+
+
 class MaterialRequisitionConvertResult(BaseModel):
     requisition: MaterialRequisitionRead
     rfq: SupplierRFQRead

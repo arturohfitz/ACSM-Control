@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  AlertTriangle,
   Check,
+  CircleDot,
   ClipboardList,
+  Clock,
   Eye,
   FileText,
+  PackageCheck,
   Pencil,
   Plus,
   RefreshCw,
@@ -110,6 +114,52 @@ type RequisitionEditItem = {
   notes: string
 }
 
+type RequisitionTrackingStep = {
+  key: string
+  label: string
+  status: 'pending' | 'active' | 'complete' | 'blocked' | 'warning'
+  detail?: string | null
+  entity_type?: string | null
+  entity_id?: number | null
+  entity_label?: string | null
+  timestamp?: string | null
+}
+
+type RequisitionTrackingItem = {
+  requisition_item_id: number
+  description: string
+  source_code?: string | null
+  unit: string
+  requested_quantity: string
+  requested_unit?: string | null
+  rfq_quantity: string
+  ordered_quantity: string
+  received_quantity: string
+}
+
+type RequisitionTracking = {
+  requisition: MaterialRequisition
+  project_name?: string | null
+  house_model_name?: string | null
+  rfq_id?: number | null
+  rfq_number?: string | null
+  rfq_status?: string | null
+  supplier_count: number
+  quote_count: number
+  approved_quote_count: number
+  purchase_order_count: number
+  invoice_count: number
+  payment_count: number
+  requested_quantity: string
+  rfq_quantity: string
+  ordered_quantity: string
+  received_quantity: string
+  invoiced_amount: string
+  paid_amount: string
+  steps: RequisitionTrackingStep[]
+  items: RequisitionTrackingItem[]
+}
+
 const statusLabels: Record<string, string> = {
   submitted: 'Pendiente',
   in_review: 'En revision',
@@ -204,6 +254,149 @@ function statusClass(status: string) {
   return 'border-sky-200 bg-sky-50 text-sky-800'
 }
 
+function trackingStepClass(status: RequisitionTrackingStep['status']) {
+  if (status === 'complete') return 'border-emerald-200 bg-emerald-50 text-emerald-800'
+  if (status === 'active') return 'border-sky-300 bg-sky-50 text-sky-800'
+  if (status === 'blocked') return 'border-rose-200 bg-rose-50 text-rose-700'
+  if (status === 'warning') return 'border-amber-200 bg-amber-50 text-amber-800'
+  return 'border-slate-200 bg-white text-slate-500'
+}
+
+function TrackingIcon({ status }: { status: RequisitionTrackingStep['status'] }) {
+  if (status === 'complete') return <Check className="h-4 w-4" aria-hidden="true" />
+  if (status === 'active') return <Clock className="h-4 w-4" aria-hidden="true" />
+  if (status === 'blocked' || status === 'warning') return <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+  return <CircleDot className="h-4 w-4" aria-hidden="true" />
+}
+
+function TrackingPanel({
+  tracking,
+  loading,
+}: {
+  tracking: RequisitionTracking | null
+  loading: boolean
+}) {
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-sky-300 bg-white/80 px-4 py-6 text-sm font-semibold text-acsm-muted">
+        Cargando seguimiento del requerimiento...
+      </div>
+    )
+  }
+  if (!tracking) return null
+  const comparableUnits = new Set(tracking.items.map((item) => item.unit)).size <= 1
+  const receivedPercent =
+    comparableUnits && Number(tracking.ordered_quantity) > 0
+      ? Math.min(100, (Number(tracking.received_quantity) / Number(tracking.ordered_quantity)) * 100)
+      : null
+  return (
+    <div className="overflow-hidden rounded-2xl border border-sky-300 bg-white/85 shadow-[0_18px_44px_rgba(8,47,73,0.12)]">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-sky-200 bg-[linear-gradient(180deg,#ffffff_0%,#e8f6ff_100%)] px-4 py-3">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl border border-sky-300 bg-sky-50 text-sky-700">
+            <PackageCheck className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-acsm-muted">
+              Seguimiento del proceso
+            </div>
+            <h3 className="text-lg font-bold text-acsm-ink">
+              {tracking.requisition.requisition_number} · {tracking.requisition.title}
+            </h3>
+            <p className="text-sm text-acsm-muted">
+              {tracking.project_name || 'Desarrollo sin nombre'} · {tracking.house_model_name || 'Modelo sin nombre'}
+              {tracking.rfq_number ? ` · ${tracking.rfq_number}` : ''}
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-xl border border-sky-200 bg-white px-3 py-2">
+            <div className="text-[10px] font-bold uppercase text-acsm-muted">Proveedores</div>
+            <div className="font-bold text-acsm-ink">{tracking.supplier_count}</div>
+          </div>
+          <div className="rounded-xl border border-sky-200 bg-white px-3 py-2">
+            <div className="text-[10px] font-bold uppercase text-acsm-muted">Cotizaciones</div>
+            <div className="font-bold text-acsm-ink">{tracking.quote_count}</div>
+          </div>
+          <div className="rounded-xl border border-sky-200 bg-white px-3 py-2">
+            <div className="text-[10px] font-bold uppercase text-acsm-muted">OC</div>
+            <div className="font-bold text-acsm-ink">{tracking.purchase_order_count}</div>
+          </div>
+          <div className="rounded-xl border border-sky-200 bg-white px-3 py-2">
+            <div className="text-[10px] font-bold uppercase text-acsm-muted">Recibido</div>
+            <div className="font-bold text-acsm-ink">
+              {receivedPercent === null ? 'Por partida' : `${formatNumber(receivedPercent)}%`}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-3 border-b border-sky-200 p-4 lg:grid-cols-4">
+        {tracking.steps.map((step) => (
+          <div key={step.key} className={`rounded-2xl border p-3 ${trackingStepClass(step.status)}`}>
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/80">
+                <TrackingIcon status={step.status} />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold">{step.label}</div>
+                <div className="truncate text-xs opacity-80">{step.entity_label || step.status}</div>
+              </div>
+            </div>
+            {step.detail ? <p className="mt-2 line-clamp-2 text-xs opacity-85">{step.detail}</p> : null}
+          </div>
+        ))}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[900px] text-sm">
+          <thead className="bg-sky-100 text-xs uppercase text-acsm-muted">
+            <tr>
+              <th className="px-4 py-3 text-left">Material</th>
+              <th className="px-4 py-3 text-left">Solicitado</th>
+              <th className="px-4 py-3 text-left">Cotizado</th>
+              <th className="px-4 py-3 text-left">Ordenado</th>
+              <th className="px-4 py-3 text-left">Recibido</th>
+              <th className="px-4 py-3 text-left">Avance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tracking.items.map((item) => {
+              const ordered = Number(item.ordered_quantity)
+              const received = Number(item.received_quantity)
+              const percent = ordered > 0 ? Math.min(100, (received / ordered) * 100) : 0
+              return (
+                <tr key={item.requisition_item_id} className="border-t border-sky-100">
+                  <td className="px-4 py-3">
+                    <div className="font-bold text-acsm-ink">{item.description}</div>
+                    <div className="text-xs text-acsm-muted">{item.source_code || 'Sin clave'}</div>
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-acsm-ink">
+                    {formatNumber(item.requested_quantity)} {item.requested_unit || item.unit}
+                  </td>
+                  <td className="px-4 py-3 text-acsm-muted">
+                    {formatNumber(item.rfq_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3 text-acsm-muted">
+                    {formatNumber(item.ordered_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3 text-acsm-muted">
+                    {formatNumber(item.received_quantity)} {item.unit}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="h-2 w-32 overflow-hidden rounded-full bg-sky-100">
+                      <div className="h-full rounded-full bg-sky-600" style={{ width: `${percent}%` }} />
+                    </div>
+                    <div className="mt-1 text-xs font-bold text-acsm-muted">{formatNumber(percent)}%</div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
   const isPurchasing = mode === 'purchasing'
   const [projects, setProjects] = useState<Project[]>([])
@@ -231,6 +424,8 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
   const [editRequiredDate, setEditRequiredDate] = useState('')
   const [editNotes, setEditNotes] = useState('')
   const [editItems, setEditItems] = useState<RequisitionEditItem[]>([])
+  const [tracking, setTracking] = useState<RequisitionTracking | null>(null)
+  const [trackingLoading, setTrackingLoading] = useState(false)
 
   const selectedProject = useMemo(
     () => projects.find((project) => String(project.id) === projectId) ?? null,
@@ -366,6 +561,27 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter])
 
+  useEffect(() => {
+    if (!selectedRequisition) {
+      setTracking(null)
+      return
+    }
+    loadTracking(selectedRequisition.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRequisition?.id])
+
+  async function loadTracking(requisitionId: number) {
+    setTrackingLoading(true)
+    try {
+      const payload = await apiRequest<RequisitionTracking>(`/material-requisitions/${requisitionId}/tracking`)
+      setTracking(payload)
+    } catch {
+      setTracking(null)
+    } finally {
+      setTrackingLoading(false)
+    }
+  }
+
   function canEditRequisition(requisition: MaterialRequisition | null) {
     return Boolean(requisition && requisition.status === 'submitted' && !requisition.converted_rfq_id)
   }
@@ -438,6 +654,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
       setSelectedRequisitionId(updated.id)
       showActionNotice(`Requerimiento ${updated.requisition_number} actualizado.`)
       await loadRequisitions()
+      await loadTracking(updated.id)
     } catch (error) {
       showActionNotice(error instanceof Error ? error.message : 'No fue posible actualizar el requerimiento', 'error')
     }
@@ -550,6 +767,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
         decision === 'approved' ? 'success' : 'warning',
       )
       await loadRequisitions()
+      await loadTracking(updated.id)
     } catch (error) {
       showActionNotice(error instanceof Error ? error.message : 'No fue posible revisar el requerimiento', 'error')
     }
@@ -587,6 +805,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
       setRfqDeadline('')
       showActionNotice(`Se genero ${result.rfq.rfq_number} y se envio a proveedores.`)
       await loadRequisitions()
+      await loadTracking(selectedRequisition.id)
     } catch (error) {
       showActionNotice(error instanceof Error ? error.message : 'No fue posible convertir a cotizacion', 'error')
     }
@@ -1180,6 +1399,8 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                     </div>
                   </div>
 
+                  <TrackingPanel tracking={tracking} loading={trackingLoading} />
+
                   <div className="overflow-hidden rounded-2xl border border-sky-300 bg-white/80">
                     <div className="border-b border-sky-300 bg-sky-50 px-4 py-3">
                       <h3 className="font-bold text-acsm-ink">Material solicitado por obra</h3>
@@ -1543,36 +1764,39 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                     </div>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[860px] text-sm">
-                      <thead className="bg-sky-100 text-xs uppercase text-acsm-muted">
-                        <tr>
-                          <th className="px-4 py-3 text-left">Material</th>
-                          <th className="px-4 py-3 text-left">Unidad base</th>
-                          <th className="px-4 py-3 text-left">Unidad solicitada</th>
-                          <th className="px-4 py-3 text-left">Cantidad</th>
-                          <th className="px-4 py-3 text-left">Notas</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedRequisition.items.map((item) => (
-                          <tr key={item.id} className="border-t border-sky-100">
-                            <td className="px-4 py-3">
-                              <div className="font-bold text-acsm-ink">{item.description}</div>
-                              <div className="text-xs text-acsm-muted">{item.source_code || 'Sin clave'}</div>
-                            </td>
-                            <td className="px-4 py-3 text-acsm-muted">{item.unit}</td>
-                            <td className="px-4 py-3 font-semibold text-acsm-ink">
-                              {item.requested_unit || item.unit}
-                            </td>
-                            <td className="px-4 py-3 font-semibold text-acsm-ink">
-                              {formatNumber(item.requested_quantity)}
-                            </td>
-                            <td className="px-4 py-3 text-acsm-muted">{item.notes || '-'}</td>
+                  <div className="space-y-5 p-5">
+                    <TrackingPanel tracking={tracking} loading={trackingLoading} />
+                    <div className="overflow-x-auto rounded-2xl border border-sky-200">
+                      <table className="w-full min-w-[860px] text-sm">
+                        <thead className="bg-sky-100 text-xs uppercase text-acsm-muted">
+                          <tr>
+                            <th className="px-4 py-3 text-left">Material</th>
+                            <th className="px-4 py-3 text-left">Unidad base</th>
+                            <th className="px-4 py-3 text-left">Unidad solicitada</th>
+                            <th className="px-4 py-3 text-left">Cantidad</th>
+                            <th className="px-4 py-3 text-left">Notas</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {selectedRequisition.items.map((item) => (
+                            <tr key={item.id} className="border-t border-sky-100">
+                              <td className="px-4 py-3">
+                                <div className="font-bold text-acsm-ink">{item.description}</div>
+                                <div className="text-xs text-acsm-muted">{item.source_code || 'Sin clave'}</div>
+                              </td>
+                              <td className="px-4 py-3 text-acsm-muted">{item.unit}</td>
+                              <td className="px-4 py-3 font-semibold text-acsm-ink">
+                                {item.requested_unit || item.unit}
+                              </td>
+                              <td className="px-4 py-3 font-semibold text-acsm-ink">
+                                {formatNumber(item.requested_quantity)}
+                              </td>
+                              <td className="px-4 py-3 text-acsm-muted">{item.notes || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>

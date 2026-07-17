@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
@@ -19,8 +21,12 @@ from app.models import (
     Material,
     MaterialRequisition,
     MaterialRequisitionItem,
+    PurchaseOrder,
+    PurchaseOrderItem,
     Project,
     ProjectHouseModel,
+    SupplierInvoice,
+    SupplierQuote,
     SupplierRFQ,
     SupplierRFQItem,
     SupplierRFQSupplier,
@@ -33,6 +39,9 @@ from app.schemas.material_requisition import (
     MaterialRequisitionCreate,
     MaterialRequisitionRead,
     MaterialRequisitionReview,
+    MaterialRequisitionTrackingItem,
+    MaterialRequisitionTrackingRead,
+    MaterialRequisitionTrackingStep,
     MaterialRequisitionUpdate,
 )
 from app.services.audit import record_event
@@ -45,6 +54,9 @@ from app.services.tenancy import ensure_same_company, get_user_company_id, scope
 
 router = APIRouter()
 
+ZERO = Decimal("0")
+TrackingStepStatus = Literal["pending", "active", "complete", "blocked", "warning"]
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -54,6 +66,8 @@ def _requisition_options():
     return (
         selectinload(MaterialRequisition.requested_by),
         selectinload(MaterialRequisition.reviewed_by),
+        selectinload(MaterialRequisition.project),
+        selectinload(MaterialRequisition.house_model),
         selectinload(MaterialRequisition.items),
     )
 
@@ -336,6 +350,291 @@ def create_material_requisition(
     )
     db.commit()
     return _get_requisition_for_user(db, requisition.id, current_user)
+
+
+def _tracking_status(
+    *,
+    complete: bool = False,
+    active: bool = False,
+    blocked: bool = False,
+    warning: bool = False,
+) -> TrackingStepStatus:
+    if blocked:
+        return "blocked"
+    if warning:
+        return "warning"
+    if complete:
+        return "complete"
+    if active:
+        return "active"
+    return "pending"
+
+
+def _tracking_step(
+    key: str,
+    label: str,
+    step_status: TrackingStepStatus,
+    *,
+    detail: str | None = None,
+    entity_type: str | None = None,
+    entity_id: int | None = None,
+    entity_label: str | None = None,
+    timestamp: datetime | None = None,
+) -> MaterialRequisitionTrackingStep:
+    return MaterialRequisitionTrackingStep(
+        key=key,
+        label=label,
+        status=step_status,
+        detail=detail,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        timestamp=timestamp,
+    )
+
+
+@router.get("/{requisition_id}/tracking", response_model=MaterialRequisitionTrackingRead)
+def get_material_requisition_tracking(
+    requisition_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("material_requisitions", "view")),
+) -> MaterialRequisitionTrackingRead:
+    requisition = _get_requisition_for_user(db, requisition_id, current_user)
+    rfq: SupplierRFQ | None = None
+    if requisition.converted_rfq_id is not None:
+        rfq = db.scalar(
+            select(SupplierRFQ)
+            .where(SupplierRFQ.id == requisition.converted_rfq_id)
+            .options(
+                selectinload(SupplierRFQ.items),
+                selectinload(SupplierRFQ.supplier_links),
+                selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.supplier),
+                selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.items),
+                selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.approval),
+                selectinload(SupplierRFQ.quotes)
+                .selectinload(SupplierQuote.purchase_order)
+                .selectinload(PurchaseOrder.items),
+                selectinload(SupplierRFQ.quotes)
+                .selectinload(SupplierQuote.purchase_order)
+                .selectinload(PurchaseOrder.invoices)
+                .selectinload(SupplierInvoice.items),
+                selectinload(SupplierRFQ.quotes)
+                .selectinload(SupplierQuote.purchase_order)
+                .selectinload(PurchaseOrder.invoices)
+                .selectinload(SupplierInvoice.payments),
+            )
+        )
+
+    quotes = list(rfq.quotes if rfq is not None else [])
+    purchase_orders = [quote.purchase_order for quote in quotes if quote.purchase_order is not None]
+    invoices = [invoice for order in purchase_orders for invoice in order.invoices]
+    payments = [payment for invoice in invoices for payment in invoice.payments]
+
+    quote_count = len(quotes)
+    supplier_count = len(rfq.supplier_links) if rfq is not None else 0
+    approved_quote_count = sum(1 for quote in quotes if quote.status == "approved")
+    purchase_order_count = len(purchase_orders)
+    invoice_count = len(invoices)
+    payment_count = len(payments)
+
+    rfq_items_by_id = {item.id: item for item in (rfq.items if rfq is not None else [])}
+    po_items_by_rfq_item: dict[int, list[PurchaseOrderItem]] = {}
+    for order in purchase_orders:
+        for item in order.items:
+            if item.rfq_item_id is not None:
+                po_items_by_rfq_item.setdefault(item.rfq_item_id, []).append(item)
+
+    requested_quantity = sum((item.requested_quantity for item in requisition.items), ZERO)
+    rfq_quantity = sum((item.quantity for item in (rfq.items if rfq is not None else [])), ZERO)
+    ordered_quantity = sum(
+        (item.quantity_ordered for order in purchase_orders for item in order.items),
+        ZERO,
+    )
+    received_quantity = sum(
+        (item.received_quantity for order in purchase_orders for item in order.items),
+        ZERO,
+    )
+    invoiced_amount = sum((invoice.total for invoice in invoices), ZERO)
+    paid_amount = sum((payment.amount for payment in payments if payment.status == "paid"), ZERO)
+
+    requested_items = []
+    for item in requisition.items:
+        rfq_item = rfq_items_by_id.get(item.supplier_rfq_item_id or 0)
+        related_po_items = po_items_by_rfq_item.get(item.supplier_rfq_item_id or 0, [])
+        requested_items.append(
+            MaterialRequisitionTrackingItem(
+                requisition_item_id=item.id,
+                description=item.description,
+                source_code=item.source_code,
+                unit=item.unit,
+                requested_unit=item.requested_unit,
+                requested_quantity=item.requested_quantity,
+                rfq_quantity=rfq_item.quantity if rfq_item is not None else ZERO,
+                ordered_quantity=sum((po_item.quantity_ordered for po_item in related_po_items), ZERO),
+                received_quantity=sum((po_item.received_quantity for po_item in related_po_items), ZERO),
+            )
+        )
+
+    rejected = requisition.status == "rejected"
+    cancelled = requisition.status == "cancelled"
+    approval_requested = any(quote.approval is not None and quote.approval.status == "requested" for quote in quotes)
+    all_orders_received = bool(purchase_orders) and all(
+        bool(order.items) and all(item.received_quantity >= item.quantity_ordered for item in order.items)
+        for order in purchase_orders
+    )
+    has_paid_invoice = any(payment.status == "paid" for payment in payments)
+    all_payments_closed = bool(invoices) and all(
+        invoice.status in {"paid", "closed"} or any(payment.status == "paid" for payment in invoice.payments)
+        for invoice in invoices
+    )
+
+    steps = [
+        _tracking_step(
+            "origin",
+            "Obra creo requerimiento",
+            "complete",
+            detail=f"{requisition.requisition_number} enviado a Compras.",
+            entity_type="MaterialRequisition",
+            entity_id=requisition.id,
+            entity_label=requisition.requisition_number,
+            timestamp=requisition.submitted_at,
+        ),
+        _tracking_step(
+            "review",
+            "Revision de Compras",
+            _tracking_status(
+                complete=requisition.status
+                in {"approved", "converted_to_rfq", "ordered_to_suppliers"},
+                active=requisition.status in {"submitted", "in_review"},
+                blocked=rejected or cancelled,
+            ),
+            detail=(
+                requisition.review_notes
+                if rejected
+                else "Compras valida partidas, desarrollo y prioridad antes de cotizar."
+            ),
+            entity_type="MaterialRequisition",
+            entity_id=requisition.id,
+            entity_label=requisition.requisition_number,
+            timestamp=requisition.reviewed_at,
+        ),
+        _tracking_step(
+            "rfq",
+            "Solicitud a proveedores",
+            _tracking_status(
+                complete=rfq is not None,
+                active=requisition.status == "approved",
+                blocked=rejected or cancelled,
+            ),
+            detail=(
+                f"{rfq.rfq_number} con {supplier_count} proveedor(es) invitado(s)."
+                if rfq is not None
+                else "Pendiente de convertir a solicitud de cotizacion."
+            ),
+            entity_type="SupplierRFQ" if rfq is not None else None,
+            entity_id=rfq.id if rfq is not None else None,
+            entity_label=rfq.rfq_number if rfq is not None else None,
+            timestamp=rfq.sent_at if rfq is not None else None,
+        ),
+        _tracking_step(
+            "quotes",
+            "Cotizaciones recibidas",
+            _tracking_status(
+                complete=bool(rfq is not None and supplier_count > 0 and quote_count >= supplier_count),
+                active=quote_count > 0 or (rfq is not None and rfq.status in {"sent", "quoted"}),
+                blocked=rejected or cancelled,
+            ),
+            detail=(
+                f"{quote_count} de {supplier_count} cotizacion(es) capturada(s)."
+                if rfq is not None
+                else "Sin solicitud a proveedores."
+            ),
+        ),
+        _tracking_step(
+            "approval",
+            "Aprobacion gerencial",
+            _tracking_status(
+                complete=approved_quote_count > 0 or (rfq is not None and rfq.status == "awarded"),
+                active=approval_requested or (rfq is not None and rfq.status == "approval_pending"),
+                blocked=rejected or cancelled,
+                warning=bool(rfq is not None and rfq.status == "exception_requested"),
+            ),
+            detail=(
+                f"{approved_quote_count} cotizacion(es) aprobada(s)."
+                if approved_quote_count
+                else "Pendiente de solicitar o resolver aprobacion."
+            ),
+        ),
+        _tracking_step(
+            "purchase_order",
+            "Orden de compra",
+            _tracking_status(
+                complete=purchase_order_count > 0,
+                active=approved_quote_count > 0,
+                blocked=rejected or cancelled,
+            ),
+            detail=(
+                ", ".join(order.po_number for order in purchase_orders)
+                if purchase_orders
+                else "Compras aun no genera o envia la OC."
+            ),
+            entity_type="PurchaseOrder" if purchase_order_count == 1 else None,
+            entity_id=purchase_orders[0].id if purchase_order_count == 1 else None,
+            entity_label=purchase_orders[0].po_number if purchase_order_count == 1 else None,
+            timestamp=purchase_orders[0].created_at if purchase_order_count == 1 else None,
+        ),
+        _tracking_step(
+            "inventory",
+            "Recepcion de inventario",
+            _tracking_status(
+                complete=all_orders_received,
+                active=received_quantity > 0,
+                blocked=rejected or cancelled,
+            ),
+            detail=(
+                f"Recibido {received_quantity} de {ordered_quantity} unidad(es) ordenadas."
+                if purchase_orders
+                else "Inventario recibe cuando exista OC."
+            ),
+        ),
+        _tracking_step(
+            "payments",
+            "Facturas y pagos",
+            _tracking_status(
+                complete=all_payments_closed,
+                active=invoice_count > 0 or has_paid_invoice,
+                blocked=rejected or cancelled,
+            ),
+            detail=(
+                f"{invoice_count} factura(s), {payment_count} pago(s), pagado ${paid_amount}."
+                if invoice_count or payment_count
+                else "Pagos se habilita conforme se validan recepciones y facturas."
+            ),
+        ),
+    ]
+
+    return MaterialRequisitionTrackingRead(
+        requisition=requisition,
+        project_name=requisition.project.name if requisition.project else None,
+        house_model_name=requisition.house_model.name if requisition.house_model else None,
+        rfq_id=rfq.id if rfq is not None else None,
+        rfq_number=rfq.rfq_number if rfq is not None else None,
+        rfq_status=rfq.status if rfq is not None else None,
+        supplier_count=supplier_count,
+        quote_count=quote_count,
+        approved_quote_count=approved_quote_count,
+        purchase_order_count=purchase_order_count,
+        invoice_count=invoice_count,
+        payment_count=payment_count,
+        requested_quantity=requested_quantity,
+        rfq_quantity=rfq_quantity,
+        ordered_quantity=ordered_quantity,
+        received_quantity=received_quantity,
+        invoiced_amount=invoiced_amount,
+        paid_amount=paid_amount,
+        steps=steps,
+        items=requested_items,
+    )
 
 
 @router.get("/{requisition_id}", response_model=MaterialRequisitionRead)
