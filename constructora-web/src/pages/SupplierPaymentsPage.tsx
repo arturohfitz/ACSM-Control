@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, CreditCard, FileCheck2, RefreshCw } from 'lucide-react'
+import { BarChart3, CheckCircle2, CreditCard, FileCheck2, RefreshCw } from 'lucide-react'
 
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
@@ -23,7 +23,9 @@ type PurchaseOrder = {
     quantity_ordered: string
     received_quantity: string
     unit_price: string
+    line_total: string
     unit: string
+    status: string
   }[]
 }
 
@@ -89,6 +91,25 @@ function statusLabel(status: string) {
   return labels[status] ?? status
 }
 
+function percent(value: number, total: number) {
+  if (!total) return 0
+  return Math.min(100, Math.max(0, (value / total) * 100))
+}
+
+function formatQuantity(value: number) {
+  return value.toLocaleString('es-MX', { maximumFractionDigits: 4 })
+}
+
+function statusPillClass(status: string) {
+  if (['closed', 'paid'].includes(status)) return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (['received', 'approved_for_payment', 'scheduled', 'factured'].includes(status)) {
+    return 'border-blue-200 bg-blue-50 text-blue-700'
+  }
+  if (['partially_received', 'blocked'].includes(status)) return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (['cancelled', 'rejected'].includes(status)) return 'border-red-200 bg-red-50 text-red-700'
+  return 'border-acsm-line bg-white text-acsm-muted'
+}
+
 export default function SupplierPaymentsPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [invoices, setInvoices] = useState<SupplierInvoice[]>([])
@@ -112,15 +133,40 @@ export default function SupplierPaymentsPage() {
     () => new Map(invoices.map((invoice) => [invoice.id, invoice])),
     [invoices],
   )
+  const activeInvoiceStatuses = useMemo(
+    () => new Set(['received', 'approved_for_payment', 'scheduled', 'paid']),
+    [],
+  )
   const selectedOrder = useMemo(
     () => orders.find((order) => String(order.id) === purchaseOrderId) ?? null,
     [orders, purchaseOrderId],
   )
+  const selectedOrderInvoices = useMemo(() => {
+    if (!selectedOrder) return []
+    return invoices.filter((invoice) => invoice.purchase_order_id === selectedOrder.id)
+  }, [invoices, selectedOrder])
+  const selectedOrderPayments = useMemo(() => {
+    if (!selectedOrder) return []
+    const invoiceIds = new Set(selectedOrderInvoices.map((invoice) => invoice.id))
+    return payments.filter((payment) => invoiceIds.has(payment.supplier_invoice_id))
+  }, [payments, selectedOrder, selectedOrderInvoices])
   const invoicedQuantityByItem = useMemo(() => {
-    const activeStatuses = new Set(['received', 'approved_for_payment', 'scheduled', 'paid'])
     const totals = new Map<number, number>()
     for (const invoice of invoices) {
-      if (!activeStatuses.has(invoice.status)) continue
+      if (!activeInvoiceStatuses.has(invoice.status)) continue
+      for (const item of invoice.items ?? []) {
+        totals.set(
+          item.purchase_order_item_id,
+          (totals.get(item.purchase_order_item_id) ?? 0) + Number(item.quantity || 0),
+        )
+      }
+    }
+    return totals
+  }, [activeInvoiceStatuses, invoices])
+  const paidQuantityByItem = useMemo(() => {
+    const totals = new Map<number, number>()
+    for (const invoice of invoices) {
+      if (invoice.status !== 'paid') continue
       for (const item of invoice.items ?? []) {
         totals.set(
           item.purchase_order_item_id,
@@ -144,6 +190,77 @@ export default function SupplierPaymentsPage() {
   }, [invoiceRows, invoicedQuantityByItem, selectedOrder])
   const partialTotal = partialInvoiceRows.reduce((sum, row) => sum + row.lineTotal, 0)
   const selectedOrderIsPartial = selectedOrder?.billing_mode === 'partial'
+  const selectedOrderSummary = useMemo(() => {
+    if (!selectedOrder) return null
+    const orderedAmount = selectedOrder.items.reduce(
+      (sum, item) => sum + Number(item.line_total || 0),
+      0,
+    )
+    const receivedAmount = selectedOrder.items.reduce((sum, item) => {
+      const ordered = Number(item.quantity_ordered || 0)
+      const received = Math.min(Number(item.received_quantity || 0), ordered)
+      return sum + received * Number(item.unit_price || 0)
+    }, 0)
+    const invoicedAmount = selectedOrderInvoices
+      .filter((invoice) => activeInvoiceStatuses.has(invoice.status))
+      .reduce((sum, invoice) => sum + Number(invoice.total || 0), 0)
+    const paidAmount = selectedOrderPayments
+      .filter((payment) => payment.status === 'paid')
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+    const scheduledAmount = selectedOrderPayments
+      .filter((payment) => payment.status === 'scheduled')
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+    const blockedInvoices = selectedOrderInvoices.filter((invoice) => invoice.status === 'blocked').length
+    const approvedInvoices = selectedOrderInvoices.filter((invoice) => invoice.status === 'approved_for_payment').length
+    const orderedLines = selectedOrder.items.length
+    const receivedLines = selectedOrder.items.filter(
+      (item) => Number(item.received_quantity || 0) >= Number(item.quantity_ordered || 0),
+    ).length
+    const partialLines = selectedOrder.items.filter((item) => {
+      const received = Number(item.received_quantity || 0)
+      return received > 0 && received < Number(item.quantity_ordered || 0)
+    }).length
+    return {
+      orderedAmount,
+      receivedAmount,
+      invoicedAmount,
+      paidAmount,
+      scheduledAmount,
+      blockedInvoices,
+      approvedInvoices,
+      orderedLines,
+      receivedLines,
+      partialLines,
+      pendingReceiveAmount: Math.max(orderedAmount - receivedAmount, 0),
+      pendingPaymentAmount: Math.max(invoicedAmount - paidAmount, 0),
+      receptionPercent: percent(receivedAmount, orderedAmount),
+      invoicePercent: percent(invoicedAmount, orderedAmount),
+      paymentPercent: percent(paidAmount, orderedAmount),
+    }
+  }, [activeInvoiceStatuses, selectedOrder, selectedOrderInvoices, selectedOrderPayments])
+  const selectedOrderItemRows = useMemo(() => {
+    if (!selectedOrder) return []
+    return selectedOrder.items.map((item) => {
+      const ordered = Number(item.quantity_ordered || 0)
+      const received = Number(item.received_quantity || 0)
+      const invoiced = invoicedQuantityByItem.get(item.id) ?? 0
+      const paid = paidQuantityByItem.get(item.id) ?? 0
+      const pendingToReceive = Math.max(ordered - received, 0)
+      const pendingToInvoice = Math.max(received - invoiced, 0)
+      return {
+        ...item,
+        ordered,
+        received,
+        invoiced,
+        paid,
+        pendingToReceive,
+        pendingToInvoice,
+        receptionPercent: percent(received, ordered),
+        invoicePercent: percent(invoiced, ordered),
+        paymentPercent: percent(paid, ordered),
+      }
+    })
+  }, [invoicedQuantityByItem, paidQuantityByItem, selectedOrder])
 
   async function loadData() {
     setLoading(true)
@@ -450,7 +567,13 @@ export default function SupplierPaymentsPage() {
                                 max={row.available}
                                 step="0.0001"
                                 value={row.draft.quantity}
-                                onChange={(event) => patchInvoiceRow(row.id, { quantity: event.target.value })}
+                                onChange={(event) => {
+                                  const rawValue = Number(event.target.value || 0)
+                                  const nextValue = Math.max(0, Math.min(rawValue, row.available))
+                                  patchInvoiceRow(row.id, {
+                                    quantity: event.target.value === '' ? '' : String(nextValue),
+                                  })
+                                }}
                                 disabled={row.available <= 0}
                                 className="h-8 w-full rounded-md border border-acsm-line px-2 text-right disabled:bg-slate-100"
                               />
@@ -503,49 +626,237 @@ export default function SupplierPaymentsPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-md border border-acsm-line">
-            <table className="min-w-[920px] w-full text-sm">
-              <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
-                <tr>
-                  <th className="px-4 py-3 text-left">Factura</th>
-                  <th className="px-4 py-3 text-left">Proveedor</th>
-                  <th className="px-4 py-3 text-left">Orden</th>
-                  <th className="px-4 py-3 text-left">Vence</th>
-                  <th className="px-4 py-3 text-left">Total</th>
-                  <th className="px-4 py-3 text-left">Estado</th>
-                  <th className="px-4 py-3 text-right">Accion</th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.map((invoice) => (
-                  <tr key={invoice.id} className="border-t border-acsm-line">
-                    <td className="px-4 py-3 font-semibold">{invoice.invoice_number}</td>
-                    <td className="px-4 py-3">{invoice.supplier?.name ?? invoice.supplier_id}</td>
-                    <td className="px-4 py-3">{invoice.purchase_order?.po_number ?? invoice.purchase_order_id}</td>
-                    <td className="px-4 py-3">{invoice.due_date}</td>
-                    <td className="px-4 py-3">{formatMoney(invoice.total)}</td>
-                    <td className="px-4 py-3">{statusLabel(invoice.status)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => void validateInvoice(invoice.id)}
-                        className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
-                      >
-                        <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                        Validar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!invoices.length && (
+          <div className="space-y-4">
+            {selectedOrder && selectedOrderSummary && (
+              <div className="overflow-hidden rounded-md border border-acsm-line bg-white">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-acsm-paper px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-white text-acsm-green">
+                      <BarChart3 className="h-4 w-4" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-acsm-muted">
+                        Control de orden
+                      </div>
+                      <h3 className="text-base font-semibold text-acsm-ink">
+                        {selectedOrder.po_number} · {selectedOrder.supplier?.name ?? 'Proveedor'}
+                      </h3>
+                    </div>
+                  </div>
+                  <div
+                    className={[
+                      'rounded-full border px-3 py-1 text-xs font-bold',
+                      statusPillClass(selectedOrder.status),
+                    ].join(' ')}
+                  >
+                    {statusLabel(selectedOrder.status)}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-md border border-acsm-line bg-white p-3">
+                    <div className="text-xs font-semibold uppercase text-acsm-muted">Pedido</div>
+                    <div className="mt-1 text-lg font-bold text-acsm-ink">
+                      {formatMoney(selectedOrderSummary.orderedAmount)}
+                    </div>
+                    <div className="text-xs text-acsm-muted">
+                      {selectedOrderSummary.orderedLines} partidas
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-blue-100 bg-blue-50 p-3">
+                    <div className="text-xs font-semibold uppercase text-blue-700">Recibido</div>
+                    <div className="mt-1 text-lg font-bold text-blue-900">
+                      {selectedOrderSummary.receptionPercent.toFixed(0)}%
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-white">
+                      <div
+                        className="h-2 rounded-full bg-blue-500"
+                        style={{ width: `${selectedOrderSummary.receptionPercent}%` }}
+                      />
+                    </div>
+                    <div className="mt-2 text-xs text-blue-800">
+                      {selectedOrderSummary.receivedLines} completas · {selectedOrderSummary.partialLines} parciales
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-cyan-100 bg-cyan-50 p-3">
+                    <div className="text-xs font-semibold uppercase text-cyan-700">Facturado</div>
+                    <div className="mt-1 text-lg font-bold text-cyan-900">
+                      {formatMoney(selectedOrderSummary.invoicedAmount)}
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-white">
+                      <div
+                        className="h-2 rounded-full bg-cyan-500"
+                        style={{ width: `${selectedOrderSummary.invoicePercent}%` }}
+                      />
+                    </div>
+                    <div className="mt-2 text-xs text-cyan-800">
+                      {selectedOrderSummary.approvedInvoices} listas · {selectedOrderSummary.blockedInvoices} bloqueadas
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-emerald-100 bg-emerald-50 p-3">
+                    <div className="text-xs font-semibold uppercase text-emerald-700">Pagado</div>
+                    <div className="mt-1 text-lg font-bold text-emerald-900">
+                      {formatMoney(selectedOrderSummary.paidAmount)}
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-white">
+                      <div
+                        className="h-2 rounded-full bg-emerald-500"
+                        style={{ width: `${selectedOrderSummary.paymentPercent}%` }}
+                      />
+                    </div>
+                    <div className="mt-2 text-xs text-emerald-800">
+                      {formatMoney(selectedOrderSummary.pendingPaymentAmount)} pendiente
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-acsm-line px-4 py-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-sm font-semibold text-acsm-ink">Partidas de la orden</h4>
+                      <p className="text-xs text-acsm-muted">
+                        Cantidades contra recepcion, facturacion y pago.
+                      </p>
+                    </div>
+                    <div className="text-xs font-semibold text-acsm-muted">
+                      Pendiente por recibir: {formatMoney(selectedOrderSummary.pendingReceiveAmount)}
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto rounded-md border border-acsm-line">
+                    <table className="min-w-[920px] w-full text-xs">
+                      <thead className="bg-acsm-paper uppercase text-acsm-muted">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Material</th>
+                          <th className="px-3 py-2 text-right">Pedido</th>
+                          <th className="px-3 py-2 text-right">Recibido</th>
+                          <th className="px-3 py-2 text-right">Facturado</th>
+                          <th className="px-3 py-2 text-right">Pagado</th>
+                          <th className="px-3 py-2 text-left">Avance</th>
+                          <th className="px-3 py-2 text-left">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedOrderItemRows.map((item) => (
+                          <tr key={item.id} className="border-t border-acsm-line">
+                            <td className="px-3 py-2">
+                              <div className="font-semibold text-acsm-ink">{item.description}</div>
+                              <div className="text-acsm-muted">{item.unit}</div>
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {formatQuantity(item.ordered)} {item.unit}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {formatQuantity(item.received)} {item.unit}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {formatQuantity(item.invoiced)} {item.unit}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {formatQuantity(item.paid)} {item.unit}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-16 text-[11px] text-acsm-muted">Rec.</span>
+                                  <div className="h-1.5 flex-1 rounded-full bg-slate-100">
+                                    <div
+                                      className="h-1.5 rounded-full bg-blue-500"
+                                      style={{ width: `${item.receptionPercent}%` }}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="w-16 text-[11px] text-acsm-muted">Fact.</span>
+                                  <div className="h-1.5 flex-1 rounded-full bg-slate-100">
+                                    <div
+                                      className="h-1.5 rounded-full bg-cyan-500"
+                                      style={{ width: `${item.invoicePercent}%` }}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="w-16 text-[11px] text-acsm-muted">Pago</span>
+                                  <div className="h-1.5 flex-1 rounded-full bg-slate-100">
+                                    <div
+                                      className="h-1.5 rounded-full bg-emerald-500"
+                                      style={{ width: `${item.paymentPercent}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span
+                                className={[
+                                  'inline-flex rounded-full border px-2 py-1 text-[11px] font-bold',
+                                  statusPillClass(item.status),
+                                ].join(' ')}
+                              >
+                                {statusLabel(item.status)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="overflow-x-auto rounded-md border border-acsm-line">
+              <table className="min-w-[920px] w-full text-sm">
+                <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
                   <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center text-acsm-muted">
-                      Aun no hay facturas registradas.
-                    </td>
+                    <th className="px-4 py-3 text-left">Factura</th>
+                    <th className="px-4 py-3 text-left">Proveedor</th>
+                    <th className="px-4 py-3 text-left">Orden</th>
+                    <th className="px-4 py-3 text-left">Vence</th>
+                    <th className="px-4 py-3 text-left">Total</th>
+                    <th className="px-4 py-3 text-left">Estado</th>
+                    <th className="px-4 py-3 text-right">Accion</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {invoices.map((invoice) => (
+                    <tr key={invoice.id} className="border-t border-acsm-line">
+                      <td className="px-4 py-3 font-semibold">{invoice.invoice_number}</td>
+                      <td className="px-4 py-3">{invoice.supplier?.name ?? invoice.supplier_id}</td>
+                      <td className="px-4 py-3">{invoice.purchase_order?.po_number ?? invoice.purchase_order_id}</td>
+                      <td className="px-4 py-3">{invoice.due_date}</td>
+                      <td className="px-4 py-3">{formatMoney(invoice.total)}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={[
+                            'inline-flex rounded-full border px-2 py-1 text-xs font-bold',
+                            statusPillClass(invoice.status),
+                          ].join(' ')}
+                        >
+                          {statusLabel(invoice.status)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => void validateInvoice(invoice.id)}
+                          className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
+                        >
+                          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                          Validar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!invoices.length && (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-6 text-center text-acsm-muted">
+                        Aun no hay facturas registradas.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
