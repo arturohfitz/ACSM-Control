@@ -231,8 +231,20 @@ function makeQuote(rfq: Rfq, supplier: Supplier, quoteId: number, price = 20): S
   }
 }
 
-async function mockApi(page: Page, currentUser = user) {
-  const warehouses = [{ id: 1, project_id: 1, name: 'Bodega Privada Encinos', location: 'Obra' }]
+async function mockApi(
+  page: Page,
+  currentUser = user,
+  options: { withoutWarehouses?: boolean } = {},
+) {
+  let warehouses: Array<{
+    id: number
+    project_id: number
+    name: string
+    location: string | null
+    notes?: string | null
+  }> = options.withoutWarehouses
+    ? []
+    : [{ id: 1, project_id: 1, name: 'Bodega Privada Encinos', location: 'Obra' }]
   let rfqState = clone(rfqs)
   const quotesByRfq: Record<number, SupplierQuote[]> = {
     10: suppliers.map((supplier, index) => makeQuote(rfqs[0], supplier, 600 + index, 22 + index)),
@@ -420,7 +432,7 @@ async function mockApi(page: Page, currentUser = user) {
     if (pathname === '/purchasing/supplier-quote-approvals') return json(approvals)
     if (pathname === '/purchasing/supplier-invoices' && method === 'GET') return json(supplierInvoices)
     if (pathname === '/purchasing/supplier-payments' && method === 'GET') return json(supplierPayments)
-    if (pathname === '/inventory/projects/1/warehouses') return json(warehouses)
+    if (pathname === '/inventory/projects/1/warehouses' && method === 'GET') return json(warehouses)
     if (pathname === '/inventory/projects/1/expected-materials') return json(expectedLists)
     if (pathname === '/inventory/projects/1/status') return json(inventoryStatus())
     if (pathname === '/inventory/projects/1/missing-materials') {
@@ -428,6 +440,19 @@ async function mockApi(page: Page, currentUser = user) {
     }
     if (pathname === '/inventory/projects/1/receptions' && method === 'GET') return json(receptions)
     if (pathname === '/inventory/warehouses/1/stock') return json(stockItems)
+
+    if (pathname === '/inventory/warehouses' && method === 'POST') {
+      const payload = await request.postDataJSON()
+      const created = {
+        id: warehouses.length ? Math.max(...warehouses.map((warehouse) => warehouse.id)) + 1 : 1,
+        project_id: Number(payload.project_id),
+        name: payload.name,
+        location: payload.location,
+        notes: payload.notes,
+      }
+      warehouses = [...warehouses, created]
+      return json(created, 201)
+    }
 
     if (pathname === '/purchasing/supplier-rfqs' && method === 'POST') {
       const payload = await request.postDataJSON()
@@ -972,6 +997,27 @@ test('inventario recibe parcialmente una orden de compra generada desde compras'
   await expect(missingSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('60 saco')).toBeVisible()
   await expect(statusSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('40 saco')).toBeVisible()
   await expect(statusSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('partial')).toBeVisible()
+})
+
+test('inventario exige crear y seleccionar una bodega antes de recibir material', async ({ page }) => {
+  await mockApi(page, user, { withoutWarehouses: true })
+  await authenticate(page)
+  await page.goto('/inventory/material-receiving')
+
+  await expect(page.getByText('Falta crear una bodega para este desarrollo')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Registrar recepcion' })).toBeDisabled()
+
+  await page.getByRole('button', { name: 'Crear bodega' }).click()
+  await expect(page.getByRole('heading', { name: 'Nueva bodega' })).toBeVisible()
+  await page.getByLabel('Nombre de la bodega').fill('Bodega de acceso norte')
+  await page.getByLabel('Ubicacion').fill('Acceso norte')
+  await page.getByRole('button', { name: 'Crear y seleccionar' }).click()
+
+  await expect(
+    page.getByText('Bodega Bodega de acceso norte creada y seleccionada para esta recepcion'),
+  ).toBeVisible()
+  await expect(page.getByLabel('Bodega')).toHaveValue('1')
+  await expect(page.getByText('Falta crear una bodega para este desarrollo')).toHaveCount(0)
 })
 
 test('pagos bloquea factura con faltantes y permite pagar al completar recepcion', async ({ page }) => {

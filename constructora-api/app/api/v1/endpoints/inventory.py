@@ -927,26 +927,6 @@ def _release_invoices_ready_after_reception(
     return released
 
 
-def _default_warehouse_for_project(db: Session, project: Project) -> ProjectWarehouse:
-    warehouse = db.scalar(
-        select(ProjectWarehouse)
-        .where(ProjectWarehouse.project_id == project.id, ProjectWarehouse.is_active.is_(True))
-        .order_by(ProjectWarehouse.id)
-    )
-    if warehouse is not None:
-        return warehouse
-    warehouse = ProjectWarehouse(
-        company_id=project.company_id,
-        project_id=project.id,
-        name=f"Bodega {project.name}",
-        location=project.location,
-        is_active=True,
-    )
-    db.add(warehouse)
-    db.flush()
-    return warehouse
-
-
 def _single_project_house_model_id(db: Session, project: Project) -> int | None:
     ids = list(
         db.scalars(
@@ -1789,11 +1769,12 @@ def create_quick_inventory_document(
     current_user: User = Depends(require_permission("inventory", "create")),
 ) -> dict:
     project = _project_for_user(db, project_id, current_user)
-    warehouse = (
-        _warehouse_for_project(db, payload.warehouse_id, project, current_user)
-        if payload.warehouse_id is not None
-        else _default_warehouse_for_project(db, project)
-    )
+    if payload.warehouse_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debes crear y seleccionar una bodega antes de registrar material",
+        )
+    warehouse = _warehouse_for_project(db, payload.warehouse_id, project, current_user)
     house_model_id = payload.house_model_id or _single_project_house_model_id(db, project)
     if house_model_id is not None:
         _resolve_requirement_context(

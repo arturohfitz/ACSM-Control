@@ -14,6 +14,7 @@ import {
   Warehouse,
 } from 'lucide-react'
 
+import FormDrawer from '../components/FormDrawer'
 import { apiRequest } from '../lib/api'
 
 type Project = {
@@ -384,6 +385,10 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [warehouseDrawerOpen, setWarehouseDrawerOpen] = useState(false)
+  const [warehouseName, setWarehouseName] = useState('')
+  const [warehouseLocation, setWarehouseLocation] = useState('')
+  const [warehouseNotes, setWarehouseNotes] = useState('')
 
   const [documentFile, setDocumentFile] = useState<File | null>(null)
   const [sourceText, setSourceText] = useState('')
@@ -711,7 +716,11 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           ? current
           : '',
       )
-      setWarehouseId((current) => current || (warehouseData[0] ? String(warehouseData[0].id) : ''))
+      setWarehouseId((current) =>
+        current && warehouseData.some((warehouse) => String(warehouse.id) === current)
+          ? current
+          : '',
+      )
 
       const contextualWarehouseId = searchParams.get('warehouse_id')
       if (
@@ -814,6 +823,8 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setWarehouseId(String(expectedList.warehouse_id))
     } else if (order.warehouse_id) {
       setWarehouseId(String(order.warehouse_id))
+    } else {
+      setWarehouseId('')
     }
     setPoDeliveryReference(order.po_number)
     setPoDeliveredBy(order.supplier?.name ?? '')
@@ -881,7 +892,11 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   }
 
   async function savePurchaseOrderReception() {
-    if (!projectId || !selectedPurchaseOrderList || !warehouseId) return
+    if (!projectId || !selectedPurchaseOrderList) return
+    if (!warehouseId) {
+      setError('Selecciona una bodega antes de registrar la recepcion')
+      return
+    }
     const validRows = poReceiveRows.filter((row) => Number(row.received_quantity) > 0)
     if (!validRows.length) {
       setError('Captura al menos una cantidad recibida de la orden de compra')
@@ -919,6 +934,53 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       await loadProjectInventory(projectId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible registrar la recepcion')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function openWarehouseDrawer() {
+    setWarehouseName('')
+    setWarehouseLocation('')
+    setWarehouseNotes('')
+    setWarehouseDrawerOpen(true)
+  }
+
+  function closeWarehouseDrawer() {
+    if (saving) return
+    setWarehouseDrawerOpen(false)
+  }
+
+  async function createWarehouse(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!projectId) {
+      setError('Selecciona un desarrollo antes de crear la bodega')
+      return
+    }
+    if (!warehouseName.trim()) return
+
+    setSaving(true)
+    setError('')
+    setNotice('')
+    try {
+      const created = await apiRequest<ProjectWarehouse>('/inventory/warehouses', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: Number(projectId),
+          name: warehouseName.trim(),
+          location: textOrNull(warehouseLocation),
+          notes: textOrNull(warehouseNotes),
+          is_active: true,
+        }),
+      })
+      setWarehouses((current) =>
+        [...current, created].sort((left, right) => left.name.localeCompare(right.name)),
+      )
+      setWarehouseId(String(created.id))
+      setWarehouseDrawerOpen(false)
+      setNotice(`Bodega ${created.name} creada y seleccionada para esta recepcion`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible crear la bodega')
     } finally {
       setSaving(false)
     }
@@ -1147,7 +1209,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               onChange={(event) => setWarehouseId(event.target.value)}
               className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
             >
-              <option value="">Automatico</option>
+              <option value="">Selecciona una bodega</option>
               {warehouses.map((warehouse) => (
                 <option key={warehouse.id} value={warehouse.id}>
                   {warehouse.name}
@@ -1164,6 +1226,27 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
             Actualizar
           </button>
         </div>
+        {projectId && !warehouses.length ? (
+          <div className="mt-3 flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />
+              <div>
+                <p className="text-sm font-semibold">Falta crear una bodega para este desarrollo</p>
+                <p className="mt-0.5 text-xs text-amber-800">
+                  No se puede registrar material sin identificar la bodega que lo recibe.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={openWarehouseDrawer}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md bg-amber-700 px-3 text-sm font-semibold text-white hover:bg-amber-800"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Crear bodega
+            </button>
+          </div>
+        ) : null}
         {error ? (
           <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
@@ -1219,7 +1302,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               onChange={(event) => setWarehouseId(event.target.value)}
               className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
             >
-              <option value="">Automatico</option>
+              <option value="">Selecciona una bodega</option>
               {warehouses.map((warehouse) => (
                 <option key={warehouse.id} value={warehouse.id}>
                   {warehouse.name}
@@ -1236,6 +1319,33 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
             Actualizar
           </button>
         </div>
+
+        {projectId && !warehouses.length ? (
+          <div className="flex flex-col gap-3 border-b border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />
+              <div>
+                <p className="text-sm font-semibold">Falta crear una bodega para este desarrollo</p>
+                <p className="mt-0.5 text-xs text-amber-800">
+                  Crea la bodega y confirma su seleccion antes de registrar la recepcion.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={openWarehouseDrawer}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md bg-amber-700 px-3 text-sm font-semibold text-white hover:bg-amber-800"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Crear bodega
+            </button>
+          </div>
+        ) : projectId && warehouses.length && !warehouseId ? (
+          <div className="flex items-start gap-3 border-b border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+            <Warehouse className="mt-0.5 h-4 w-4 shrink-0 text-sky-700" aria-hidden="true" />
+            Selecciona la bodega donde ingresara el material para habilitar el registro.
+          </div>
+        ) : null}
 
         {error ? (
           <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -2262,6 +2372,71 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
         </div>
       </section>
       ) : null}
+
+      <FormDrawer
+        open={warehouseDrawerOpen}
+        title="Nueva bodega"
+        description={`Asigna una bodega al desarrollo ${selectedProject?.name ?? 'seleccionado'}.`}
+        onClose={closeWarehouseDrawer}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeWarehouseDrawer}
+              disabled={saving}
+              className="h-10 rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold text-acsm-ink disabled:opacity-60"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="warehouse-create-form"
+              disabled={saving || !warehouseName.trim()}
+              className="inline-flex h-10 items-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
+            >
+              <Save className="h-4 w-4" aria-hidden="true" />
+              {saving ? 'Guardando...' : 'Crear y seleccionar'}
+            </button>
+          </div>
+        }
+      >
+        <form id="warehouse-create-form" onSubmit={(event) => void createWarehouse(event)} className="space-y-4">
+          <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-950">
+            La bodega quedara ligada solamente a este desarrollo. Ninguna recepcion se asignara de forma automatica.
+          </div>
+          <label className="block text-sm font-semibold text-acsm-ink">
+            Nombre de la bodega
+            <input
+              autoFocus
+              value={warehouseName}
+              onChange={(event) => setWarehouseName(event.target.value)}
+              placeholder="Ej. Bodega principal"
+              maxLength={160}
+              required
+              className="mt-1 h-11 w-full rounded-md border border-acsm-line bg-white px-3 text-sm font-normal"
+            />
+          </label>
+          <label className="block text-sm font-semibold text-acsm-ink">
+            Ubicacion
+            <input
+              value={warehouseLocation}
+              onChange={(event) => setWarehouseLocation(event.target.value)}
+              placeholder="Ej. Acceso norte, lote 4"
+              className="mt-1 h-11 w-full rounded-md border border-acsm-line bg-white px-3 text-sm font-normal"
+            />
+          </label>
+          <label className="block text-sm font-semibold text-acsm-ink">
+            Notas
+            <textarea
+              value={warehouseNotes}
+              onChange={(event) => setWarehouseNotes(event.target.value)}
+              placeholder="Responsable, horario o indicaciones de recepcion"
+              rows={4}
+              className="mt-1 w-full resize-y rounded-md border border-acsm-line bg-white px-3 py-2 text-sm font-normal"
+            />
+          </label>
+        </form>
+      </FormDrawer>
     </div>
   )
 }

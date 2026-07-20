@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.v1.endpoints.inventory import (
+    create_quick_inventory_document,
     create_reception,
     list_inventory_inbound_cases,
     project_model_material_control,
@@ -54,7 +55,12 @@ from app.models import (
     User,
     WarehouseStock,
 )
-from app.schemas.inventory import MaterialReceptionCreate, MaterialReceptionItemCreate
+from app.schemas.inventory import (
+    MaterialReceptionCreate,
+    MaterialReceptionItemCreate,
+    QuickInventoryDocumentCreate,
+    QuickInventoryLine,
+)
 from app.schemas.purchasing import (
     PurchaseOrderBillingModeUpdate,
     SupplierAgreementCreate,
@@ -135,6 +141,45 @@ class PurchasingFlowDBTest(unittest.TestCase):
     def tearDown(self) -> None:
         cleanup_company_data(self.db, self.company.id)
         self.db.close()
+
+    def test_inventory_document_requires_explicit_warehouse_selection(self) -> None:
+        warehouse_count = self.db.scalar(
+            select(func.count(ProjectWarehouse.id)).where(
+                ProjectWarehouse.project_id == self.project.id
+            )
+        )
+
+        with self.assertRaises(HTTPException) as missing_warehouse:
+            create_quick_inventory_document(
+                self.project.id,
+                QuickInventoryDocumentCreate(
+                    warehouse_id=None,
+                    name=f"Documento sin bodega {self.suffix}",
+                    items=[
+                        QuickInventoryLine(
+                            description="Material sin asignacion automatica",
+                            unit="PZA",
+                            expected_quantity=Decimal("1"),
+                        )
+                    ],
+                ),
+                self.db,
+                self.user,
+            )
+
+        self.assertEqual(missing_warehouse.exception.status_code, 400)
+        self.assertEqual(
+            missing_warehouse.exception.detail,
+            "Debes crear y seleccionar una bodega antes de registrar material",
+        )
+        self.assertEqual(
+            self.db.scalar(
+                select(func.count(ProjectWarehouse.id)).where(
+                    ProjectWarehouse.project_id == self.project.id
+                )
+            ),
+            warehouse_count,
+        )
 
     def test_model_material_control_tracks_partial_inventory_receipts(self) -> None:
         house_model = HouseModel(
