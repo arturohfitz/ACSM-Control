@@ -27,6 +27,7 @@ import SettingsPage from './pages/SettingsPage'
 import SupplierAgreementsPage from './pages/SupplierAgreementsPage'
 import SupplierPaymentsPage from './pages/SupplierPaymentsPage'
 import SupplierQuotePortalPage from './pages/SupplierQuotePortalPage'
+import WorkWorkspacePage from './pages/WorkWorkspacePage'
 
 function InventoryReceivingRedirect({ type }: { type: 'oc' | 'sin-oc' }) {
   const location = useLocation()
@@ -51,6 +52,13 @@ export default function App() {
           <Route path="/clients" element={protect(<ClientsPage />, 'clients:view')} />
           <Route path="/projects" element={protect(<ProjectsPage />, 'projects:view')} />
           <Route path="/house-models" element={protect(<HouseModelsPage />, 'house_models:view')} />
+          <Route
+            path="/work"
+            element={protect(
+              <WorkWorkspacePage />,
+              ['materials:view', 'construction_concepts:view', 'material_requisitions:view'],
+            )}
+          />
           <Route path="/materials" element={protect(<MaterialsPage />, 'materials:view')} />
           <Route path="/suppliers" element={protect(<SuppliersPage />, 'suppliers:view')} />
           <Route

@@ -19,6 +19,7 @@ from app.models import (
     HouseModel,
     HouseModelMaterialRequirement,
     Material,
+    MaterialUnitConversion,
     MaterialRequisition,
     MaterialRequisitionItem,
     PurchaseOrder,
@@ -160,6 +161,97 @@ def _requirement_for_requisition(
     return requirement
 
 
+def _normalize_unit(value: str | None) -> str:
+    return (value or "").strip().upper()
+
+
+def _quantity_snapshot(
+    db: Session,
+    *,
+    requirement: HouseModelMaterialRequirement,
+    requested_unit: str,
+    requested_quantity: Decimal,
+) -> tuple[Decimal, Decimal]:
+    base_unit = _normalize_unit(requirement.unit)
+    normalized_requested_unit = _normalize_unit(requested_unit)
+    if normalized_requested_unit == base_unit:
+        return Decimal("1"), requested_quantity
+    if requirement.material_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"{requirement.description} no esta vinculado al catalogo y no puede convertir "
+                f"{normalized_requested_unit} a {base_unit}"
+            ),
+        )
+    conversion = db.scalar(
+        select(MaterialUnitConversion).where(
+            MaterialUnitConversion.material_id == requirement.material_id,
+            MaterialUnitConversion.from_unit == normalized_requested_unit,
+            MaterialUnitConversion.to_unit == base_unit,
+            MaterialUnitConversion.is_active.is_(True),
+        )
+    )
+    if conversion is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Falta registrar la equivalencia de {normalized_requested_unit} a {base_unit} "
+                f"para {requirement.description}"
+            ),
+        )
+    return conversion.factor_to_base, requested_quantity * conversion.factor_to_base
+
+
+def _item_base_quantity(db: Session, item: MaterialRequisitionItem) -> Decimal:
+    if item.requested_base_quantity is not None:
+        return item.requested_base_quantity
+    if _normalize_unit(item.requested_unit) in {"", _normalize_unit(item.unit)}:
+        return item.requested_quantity
+    if item.material_id is None:
+        return Decimal("0")
+    conversion = db.scalar(
+        select(MaterialUnitConversion).where(
+            MaterialUnitConversion.material_id == item.material_id,
+            MaterialUnitConversion.from_unit == _normalize_unit(item.requested_unit),
+            MaterialUnitConversion.to_unit == _normalize_unit(item.unit),
+            MaterialUnitConversion.is_active.is_(True),
+        )
+    )
+    return item.requested_quantity * conversion.factor_to_base if conversion is not None else Decimal("0")
+
+
+def _requested_base_by_requirement(
+    db: Session,
+    requirement_ids: list[int],
+    *,
+    project_id: int,
+    exclude_requisition_id: int | None = None,
+) -> dict[int, Decimal]:
+    if not requirement_ids:
+        return {}
+    statement = (
+        select(MaterialRequisitionItem)
+        .join(MaterialRequisition)
+        .where(
+            MaterialRequisitionItem.house_model_material_requirement_id.in_(requirement_ids),
+            MaterialRequisition.project_id == project_id,
+            MaterialRequisition.status.notin_({"rejected", "cancelled"}),
+        )
+    )
+    if exclude_requisition_id is not None:
+        statement = statement.where(MaterialRequisitionItem.requisition_id != exclude_requisition_id)
+    totals: dict[int, Decimal] = {}
+    for item in db.scalars(statement).all():
+        if item.house_model_material_requirement_id is None:
+            continue
+        totals[item.house_model_material_requirement_id] = (
+            totals.get(item.house_model_material_requirement_id, Decimal("0"))
+            + _item_base_quantity(db, item)
+        )
+    return totals
+
+
 @router.get("/available-materials", response_model=list[AvailableRequirementRead])
 def list_available_materials(
     project_id: int,
@@ -203,6 +295,11 @@ def list_available_materials(
             )
         )
     requirements = list(db.scalars(statement).all())
+    requested_by_requirement = _requested_base_by_requirement(
+        db,
+        [item.id for item in requirements],
+        project_id=project.id,
+    )
     return [
         AvailableRequirementRead(
             id=item.id,
@@ -215,6 +312,22 @@ def list_available_materials(
             quantity_per_house=item.quantity_per_house,
             assigned_houses=quantities_by_model[item.house_model_id],
             total_required=item.quantity_per_house * quantities_by_model[item.house_model_id],
+            already_requested=requested_by_requirement.get(item.id, Decimal("0")),
+            available_to_request=max(
+                item.quantity_per_house * quantities_by_model[item.house_model_id]
+                - requested_by_requirement.get(item.id, Decimal("0")),
+                Decimal("0"),
+            ),
+            requested_percent=min(
+                (
+                    requested_by_requirement.get(item.id, Decimal("0"))
+                    / (item.quantity_per_house * quantities_by_model[item.house_model_id])
+                    * Decimal("100")
+                )
+                if item.quantity_per_house * quantities_by_model[item.house_model_id] > 0
+                else Decimal("0"),
+                Decimal("100"),
+            ),
             validation_status=item.validation_status,
             family=item.family,
         )
@@ -275,7 +388,7 @@ def create_material_requisition(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El modelo de casa no pertenece a la inmobiliaria del desarrollo",
         )
-    _project_model_assignment(db, project.id, house_model.id)
+    assignment = _project_model_assignment(db, project.id, house_model.id)
 
     requisition = MaterialRequisition(
         company_id=project.company_id,
@@ -294,6 +407,16 @@ def create_material_requisition(
     db.add(requisition)
     db.flush()
 
+    if len({item.house_model_material_requirement_id for item in payload.items}) != len(payload.items):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes agregar dos veces el mismo material al requerimiento",
+        )
+    requested_by_requirement = _requested_base_by_requirement(
+        db,
+        [item.house_model_material_requirement_id for item in payload.items],
+        project_id=project.id,
+    )
     for item in payload.items:
         requirement = _requirement_for_requisition(
             db,
@@ -302,7 +425,26 @@ def create_material_requisition(
             house_model_id=house_model.id,
             current_user=current_user,
         )
-        requested_unit = (item.requested_unit or "").strip() or requirement.unit
+        requested_unit = _normalize_unit(item.requested_unit) or _normalize_unit(requirement.unit)
+        conversion_factor, requested_base_quantity = _quantity_snapshot(
+            db,
+            requirement=requirement,
+            requested_unit=requested_unit,
+            requested_quantity=item.requested_quantity,
+        )
+        total_required = requirement.quantity_per_house * assignment.quantity
+        available = max(
+            total_required - requested_by_requirement.get(requirement.id, Decimal("0")),
+            Decimal("0"),
+        )
+        if requested_base_quantity > available:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"{requirement.description} supera lo disponible por solicitar. "
+                    f"Disponible: {available} {requirement.unit}"
+                ),
+            )
         db.add(
             MaterialRequisitionItem(
                 requisition_id=requisition.id,
@@ -313,6 +455,9 @@ def create_material_requisition(
                 unit=requirement.unit,
                 requested_unit=requested_unit,
                 requested_quantity=item.requested_quantity,
+                requested_base_quantity=requested_base_quantity,
+                unit_conversion_factor=conversion_factor,
+                coverage_houses=item.coverage_houses,
                 status="pending",
                 notes=item.notes,
             )
@@ -675,7 +820,19 @@ def update_material_requisition(
         requisition.notes = payload.notes
 
     if payload.items is not None:
+        project = _project_for_user(db, requisition.project_id, current_user)
+        assignment = _project_model_assignment(db, requisition.project_id, requisition.house_model_id)
         items_by_id = {item.id: item for item in requisition.items}
+        requested_by_requirement = _requested_base_by_requirement(
+            db,
+            [
+                item.house_model_material_requirement_id
+                for item in requisition.items
+                if item.house_model_material_requirement_id is not None
+            ],
+            project_id=requisition.project_id,
+            exclude_requisition_id=requisition.id,
+        )
         for item_payload in payload.items:
             item = items_by_id.get(item_payload.id)
             if item is None:
@@ -683,8 +840,43 @@ def update_material_requisition(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Una partida no pertenece al requerimiento seleccionado",
                 )
+            if item.house_model_material_requirement_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="La partida no conserva relacion con la explosion del modelo",
+                )
+            requirement = _requirement_for_requisition(
+                db,
+                requirement_id=item.house_model_material_requirement_id,
+                project=project,
+                house_model_id=requisition.house_model_id,
+                current_user=current_user,
+            )
+            requested_unit = _normalize_unit(item_payload.requested_unit) or _normalize_unit(item.unit)
+            conversion_factor, requested_base_quantity = _quantity_snapshot(
+                db,
+                requirement=requirement,
+                requested_unit=requested_unit,
+                requested_quantity=item_payload.requested_quantity,
+            )
+            total_required = requirement.quantity_per_house * assignment.quantity
+            available = max(
+                total_required - requested_by_requirement.get(requirement.id, Decimal("0")),
+                Decimal("0"),
+            )
+            if requested_base_quantity > available:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"{requirement.description} supera lo disponible por solicitar. "
+                        f"Disponible: {available} {requirement.unit}"
+                    ),
+                )
             item.requested_quantity = item_payload.requested_quantity
-            item.requested_unit = (item_payload.requested_unit or "").strip() or item.unit
+            item.requested_unit = requested_unit
+            item.requested_base_quantity = requested_base_quantity
+            item.unit_conversion_factor = conversion_factor
+            item.coverage_houses = item_payload.coverage_houses
             item.notes = item_payload.notes
 
     record_event(
@@ -698,6 +890,65 @@ def update_material_requisition(
         label=requisition.requisition_number,
         description=f"{current_user.full_name} actualizo el requerimiento {requisition.requisition_number}",
         metadata={"partidas": len(requisition.items), "project_id": requisition.project_id},
+    )
+    db.commit()
+    return _get_requisition_for_user(db, requisition.id, current_user)
+
+
+@router.post("/{requisition_id}/start-review", response_model=MaterialRequisitionRead)
+def start_material_requisition_review(
+    requisition_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("material_requisitions", "review")),
+) -> MaterialRequisition:
+    requisition = _get_requisition_for_user(db, requisition_id, current_user)
+    if requisition.status == "in_review":
+        return requisition
+    if requisition.status != "submitted" or requisition.converted_rfq_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo puedes tomar requerimientos pendientes de revision",
+        )
+    requisition.status = "in_review"
+    requisition.reviewed_by_user_id = current_user.id
+    requisition.reviewed_at = _now()
+    resolve_notifications(
+        db,
+        company_id=requisition.company_id,
+        notification_type="material_requisition_submitted",
+        entity_type="MaterialRequisition",
+        entity_id=requisition.id,
+    )
+    notify_user_id(
+        db,
+        user_id=requisition.requested_by_user_id,
+        company_id=requisition.company_id,
+        notification_type="material_requisition_in_review",
+        title="Compras inicio la revision",
+        body=f"{current_user.full_name} tomo {requisition.requisition_number} para revision.",
+        category="info",
+        priority="normal",
+        source_module="compras",
+        entity_type="MaterialRequisition",
+        entity_id=requisition.id,
+        entity_label=requisition.requisition_number,
+        action_url=(
+            f"/work?project_id={requisition.project_id}"
+            f"&house_model_id={requisition.house_model_id}"
+            f"&requisition_id={requisition.id}"
+        ),
+        project_id=requisition.project_id,
+    )
+    record_event(
+        db,
+        current_user,
+        module="compras",
+        action="start_review",
+        entity_type="MaterialRequisition",
+        entity_id=requisition.id,
+        company_id=requisition.company_id,
+        label=requisition.requisition_number,
+        description=f"{current_user.full_name} tomo {requisition.requisition_number} para revision",
     )
     db.commit()
     return _get_requisition_for_user(db, requisition.id, current_user)
@@ -750,7 +1001,11 @@ def review_material_requisition(
         entity_type="MaterialRequisition",
         entity_id=requisition.id,
         entity_label=requisition.requisition_number,
-        action_url="/field-requisitions",
+        action_url=(
+            f"/work?project_id={requisition.project_id}"
+            f"&house_model_id={requisition.house_model_id}"
+            f"&requisition_id={requisition.id}"
+        ),
         project_id=requisition.project_id,
         metadata={"review_notes": payload.review_notes},
     )

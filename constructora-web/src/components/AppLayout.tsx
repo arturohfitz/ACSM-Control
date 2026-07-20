@@ -48,7 +48,12 @@ const navItems = [
   { to: '/', label: 'Inicio', icon: Home, permission: null },
   { to: '/companies', label: 'Constructoras', icon: Building2, permission: 'companies:view' },
   { to: '/clients', label: 'Inmobiliarias', icon: Building2, permission: 'clients:view' },
-  { to: '/field-requisitions', label: 'Obra', icon: HardHat, permission: 'material_requisitions:create' },
+  {
+    to: '/work',
+    label: 'Obra',
+    icon: HardHat,
+    permission: ['materials:view', 'construction_concepts:view', 'material_requisitions:view'],
+  },
   { to: '/purchasing', label: 'Compras', icon: ShoppingCart, permission: 'supplier_rfq:view' },
   { to: '/inventory', label: 'Inventario', icon: Warehouse, permission: 'inventory:view' },
   {
@@ -125,6 +130,12 @@ const purchasingSubItems = [
 
 const workSubItems = [
   {
+    to: '/work',
+    label: 'Centro de Obra',
+    icon: HardHat,
+    permission: ['materials:view', 'construction_concepts:view', 'material_requisitions:view'],
+  },
+  {
     to: '/materials',
     label: 'Catalogo materiales',
     icon: Package,
@@ -181,6 +192,7 @@ const titles: Record<string, string> = {
   '/clients': 'Inmobiliarias',
   '/projects': 'Desarrollos',
   '/house-models': 'Modelos por inmobiliaria',
+  '/work': 'Centro de Obra',
   '/materials': 'Catalogo de materiales',
   '/suppliers': 'Proveedores',
   '/supplier-agreements': 'Convenios de proveedores',
@@ -308,6 +320,7 @@ export default function AppLayout() {
     location.pathname === '/projects' ||
     location.pathname === '/house-models'
   const isWorkRoute =
+    location.pathname === '/work' ||
     location.pathname === '/materials' ||
     location.pathname.startsWith('/field-requisitions') ||
     location.pathname === '/construction-concepts'
@@ -358,7 +371,7 @@ export default function AppLayout() {
     () =>
       navItems.filter((item) => {
         if (item.to === '/clients') return visibleRealEstateSubItems.length > 0
-        if (item.to === '/field-requisitions') return visibleWorkSubItems.length > 0
+        if (item.to === '/work') return visibleWorkSubItems.length > 0
         if (item.to === '/purchasing') return visiblePurchasingSubItems.length > 0
         if (item.to === '/inventory') return visibleInventorySubItems.length > 0
         return canUsePermission(item.permission, hasPermission)
@@ -603,7 +616,7 @@ export default function AppLayout() {
           {visibleNavItems.map((item) => {
             const Icon = item.icon
             const hasRealEstateChildren = item.to === '/clients' && visibleRealEstateSubItems.length > 0
-            const hasWorkChildren = item.to === '/field-requisitions' && visibleWorkSubItems.length > 0
+            const hasWorkChildren = item.to === '/work' && visibleWorkSubItems.length > 0
             const hasPurchasingChildren = item.to === '/purchasing' && visiblePurchasingSubItems.length > 0
             const hasInventoryChildren = item.to === '/inventory' && visibleInventorySubItems.length > 0
             const primaryTo = (() => {
@@ -636,7 +649,7 @@ export default function AppLayout() {
                     const isSectionActive =
                       isActive ||
                       (item.to === '/clients' && isRealEstateRoute) ||
-                      (item.to === '/field-requisitions' && isWorkRoute) ||
+                      (item.to === '/work' && isWorkRoute) ||
                       (item.to === '/purchasing' && isPurchasingRoute) ||
                       (item.to === '/inventory' && isInventoryRoute)
                     return [

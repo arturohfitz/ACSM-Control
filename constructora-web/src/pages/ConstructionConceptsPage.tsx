@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Check, Plus, RefreshCw, Search, Warehouse } from 'lucide-react'
 
 import FormDrawer from '../components/FormDrawer'
+import { useAuth } from '../auth/AuthContext'
 import { showActionNotice } from '../lib/actionNotice'
 import { apiRequest } from '../lib/api'
 
@@ -68,6 +70,10 @@ type ConceptForm = {
   description: string
   default_waste_percent: string
   default_indirect_percent: string
+  quantity_per_house: string
+  chapter_code: string
+  chapter_name: string
+  unit_price_reference: string
 }
 
 const emptyConceptForm: ConceptForm = {
@@ -77,6 +83,10 @@ const emptyConceptForm: ConceptForm = {
   description: '',
   default_waste_percent: '0',
   default_indirect_percent: '0',
+  quantity_per_house: '1',
+  chapter_code: '',
+  chapter_name: '',
+  unit_price_reference: '0',
 }
 
 function formatNumber(value: string | number | null | undefined, digits = 2) {
@@ -99,13 +109,17 @@ function nullableText(value: string) {
 }
 
 export default function ConstructionConceptsPage() {
+  const { hasPermission } = useAuth()
+  const [searchParams] = useSearchParams()
+  const requestedProjectId = Number(searchParams.get('project_id')) || null
+  const requestedModelId = Number(searchParams.get('house_model_id')) || null
   const [clients, setClients] = useState<Client[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [models, setModels] = useState<HouseModel[]>([])
   const [summary, setSummary] = useState<ProjectSummary | null>(null)
   const [items, setItems] = useState<ConceptModelCatalogItem[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
-  const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(requestedProjectId)
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(requestedModelId)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [catalogLoading, setCatalogLoading] = useState(false)
@@ -153,7 +167,11 @@ export default function ConstructionConceptsPage() {
       setClients(clientData)
       setProjects(projectData)
       setModels(modelData)
-      setSelectedProjectId(nextProjectId ?? projectData[0]?.id ?? null)
+      setSelectedProjectId(
+        nextProjectId && projectData.some((project) => project.id === nextProjectId)
+          ? nextProjectId
+          : null,
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar conceptos')
     } finally {
@@ -174,7 +192,7 @@ export default function ConstructionConceptsPage() {
         if (current && data.assigned_models.some((item) => item.house_model_id === current)) {
           return current
         }
-        return data.assigned_models[0]?.house_model_id ?? null
+        return data.assigned_models.length === 1 ? data.assigned_models[0].house_model_id : null
       })
     } catch (err) {
       setSummary(null)
@@ -223,6 +241,10 @@ export default function ConstructionConceptsPage() {
   }, [selectedProjectId, selectedModelId])
 
   function startCreate() {
+    if (!selectedProjectId || !selectedModelId) {
+      showActionNotice('Selecciona primero el desarrollo y modelo donde se registrara el concepto.', 'warning')
+      return
+    }
     setForm(emptyConceptForm)
     setDrawerOpen(true)
   }
@@ -235,10 +257,14 @@ export default function ConstructionConceptsPage() {
 
   async function submitConcept(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!selectedProjectId || !selectedModelId) {
+      showActionNotice('Selecciona desarrollo y modelo antes de guardar.', 'warning')
+      return
+    }
     setSaving(true)
     setError('')
     try {
-      await apiRequest('/construction-concepts', {
+      await apiRequest('/construction-concepts/model-catalog', {
         method: 'POST',
         body: JSON.stringify({
           code: form.code.trim(),
@@ -247,8 +273,12 @@ export default function ConstructionConceptsPage() {
           description: nullableText(form.description),
           default_waste_percent: Number(form.default_waste_percent || 0),
           default_indirect_percent: Number(form.default_indirect_percent || 0),
-          materials: [],
-          labor: [],
+          project_id: selectedProjectId,
+          house_model_id: selectedModelId,
+          quantity_per_house: Number(form.quantity_per_house || 0),
+          chapter_code: nullableText(form.chapter_code),
+          chapter_name: nullableText(form.chapter_name),
+          unit_price_reference: Number(form.unit_price_reference || 0),
         }),
       })
       showActionNotice('Concepto guardado correctamente')
@@ -264,14 +294,16 @@ export default function ConstructionConceptsPage() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
+        {hasPermission('construction_concepts:create') ? <button
           type="button"
           onClick={startCreate}
+          disabled={!selectedProjectId || !selectedModelId}
+          title={!selectedProjectId || !selectedModelId ? 'Selecciona desarrollo y modelo' : 'Agregar concepto al modelo'}
           className="inline-flex h-11 items-center gap-2 rounded-xl bg-[linear-gradient(180deg,#1f7fc4_0%,#0f609c_100%)] px-4 text-sm font-bold text-white shadow-[0_12px_26px_rgba(10,96,160,0.28)] hover:brightness-105"
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
           Nuevo concepto
-        </button>
+        </button> : <span />}
         <button
           type="button"
           onClick={() => {
@@ -520,7 +552,7 @@ export default function ConstructionConceptsPage() {
       <FormDrawer
         open={drawerOpen}
         title="Nuevo concepto"
-        description="Alta en el catalogo global de conceptos de obra."
+        description={`Alta para ${selectedProject?.name ?? 'desarrollo'} / ${selectedModel?.name ?? 'modelo'}.`}
         onClose={closeDrawer}
         footer={
           <button
@@ -544,6 +576,49 @@ export default function ConstructionConceptsPage() {
               required
             />
           </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-acsm-ink">Cantidad por vivienda</span>
+              <input
+                type="number"
+                min="0.000001"
+                step="0.000001"
+                value={form.quantity_per_house}
+                onChange={(event) => setForm((current) => ({ ...current, quantity_per_house: event.target.value }))}
+                className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+                required
+              />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-acsm-ink">Precio unitario de referencia</span>
+              <input
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.unit_price_reference}
+                onChange={(event) => setForm((current) => ({ ...current, unit_price_reference: event.target.value }))}
+                className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+              />
+            </label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-acsm-ink">Codigo de capitulo</span>
+              <input
+                value={form.chapter_code}
+                onChange={(event) => setForm((current) => ({ ...current, chapter_code: event.target.value }))}
+                className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-bold text-acsm-ink">Capitulo</span>
+              <input
+                value={form.chapter_name}
+                onChange={(event) => setForm((current) => ({ ...current, chapter_name: event.target.value }))}
+                className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+              />
+            </label>
+          </div>
           <label className="block">
             <span className="mb-2 block text-sm font-bold text-acsm-ink">Nombre</span>
             <input

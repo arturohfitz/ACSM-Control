@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Check,
   Plus,
@@ -120,14 +121,17 @@ function formatCurrency(value: string | number | null | undefined) {
 }
 
 export default function MaterialsPage() {
+  const [searchParams] = useSearchParams()
+  const requestedProjectId = Number(searchParams.get('project_id')) || null
+  const requestedModelId = Number(searchParams.get('house_model_id')) || null
   const [clients, setClients] = useState<Client[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [models, setModels] = useState<HouseModel[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [summary, setSummary] = useState<ProjectSummary | null>(null)
   const [items, setItems] = useState<MaterialModelCatalogItem[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
-  const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(requestedProjectId)
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(requestedModelId)
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [catalogLoading, setCatalogLoading] = useState(false)
@@ -186,7 +190,11 @@ export default function MaterialsPage() {
       setProjects(projectData)
       setModels(modelData)
       setSuppliers(supplierData)
-      setSelectedProjectId(nextProjectId ?? projectData[0]?.id ?? null)
+      setSelectedProjectId(
+        nextProjectId && projectData.some((project) => project.id === nextProjectId)
+          ? nextProjectId
+          : null,
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar el catalogo')
     } finally {
@@ -207,7 +215,7 @@ export default function MaterialsPage() {
         if (current && data.assigned_models.some((item) => item.house_model_id === current)) {
           return current
         }
-        return data.assigned_models[0]?.house_model_id ?? null
+        return data.assigned_models.length === 1 ? data.assigned_models[0].house_model_id : null
       })
     } catch (err) {
       setSummary(null)

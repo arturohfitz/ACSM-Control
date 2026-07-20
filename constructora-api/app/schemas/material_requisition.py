@@ -31,6 +31,9 @@ class AvailableRequirementRead(BaseModel):
     quantity_per_house: Decimal
     assigned_houses: Decimal
     total_required: Decimal
+    already_requested: Decimal = 0
+    available_to_request: Decimal = 0
+    requested_percent: Decimal = 0
     validation_status: str
     family: str | None = None
 
@@ -39,6 +42,7 @@ class MaterialRequisitionItemCreate(BaseModel):
     house_model_material_requirement_id: int
     requested_quantity: PositiveDecimal
     requested_unit: str | None = Field(default=None, min_length=1, max_length=40)
+    coverage_houses: Decimal | None = Field(default=None, gt=0)
     notes: str | None = None
 
 
@@ -46,6 +50,7 @@ class MaterialRequisitionItemUpdate(BaseModel):
     id: int
     requested_quantity: PositiveDecimal
     requested_unit: str | None = Field(default=None, min_length=1, max_length=40)
+    coverage_houses: Decimal | None = Field(default=None, gt=0)
     notes: str | None = None
 
 
@@ -60,6 +65,9 @@ class MaterialRequisitionItemRead(ORMModel):
     unit: str
     requested_unit: str | None = None
     requested_quantity: Decimal
+    requested_base_quantity: Decimal | None = None
+    unit_conversion_factor: Decimal | None = None
+    coverage_houses: Decimal | None = None
     approved_quantity: Decimal | None = None
     status: str
     notes: str | None = None

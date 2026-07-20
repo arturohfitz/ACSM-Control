@@ -456,6 +456,15 @@ class ConstructionConceptModelCatalogRead(BaseModel):
     is_linked: bool
 
 
+class ConstructionConceptModelCatalogCreate(ConstructionConceptBase):
+    project_id: int
+    house_model_id: int
+    quantity_per_house: PositiveDecimal
+    chapter_code: str | None = Field(default=None, max_length=40)
+    chapter_name: str | None = Field(default=None, max_length=200)
+    unit_price_reference: NonNegativeDecimal = 0
+
+
 class HouseModelConceptCreate(BaseModel):
     construction_concept_id: int
     quantity_formula_type: QuantityFormulaType = "fixed"

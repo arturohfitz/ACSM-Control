@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
   Check,
@@ -53,6 +54,9 @@ type AvailableRequirement = {
   quantity_per_house: string
   assigned_houses: string
   total_required: string
+  already_requested: string
+  available_to_request: string
+  requested_percent: string
   validation_status: string
   family?: string | null
 }
@@ -399,10 +403,14 @@ function TrackingPanel({
 
 export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
   const isPurchasing = mode === 'purchasing'
+  const [searchParams] = useSearchParams()
+  const requestedProjectId = searchParams.get('project_id') ?? ''
+  const requestedModelId = searchParams.get('house_model_id') ?? ''
+  const requestedRequisitionId = Number(searchParams.get('requisition_id')) || null
   const [projects, setProjects] = useState<Project[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [projectId, setProjectId] = useState('')
-  const [houseModelId, setHouseModelId] = useState('')
+  const [projectId, setProjectId] = useState(requestedProjectId)
+  const [houseModelId, setHouseModelId] = useState(requestedModelId)
   const [materialSearch, setMaterialSearch] = useState('')
   const [availableMaterials, setAvailableMaterials] = useState<AvailableRequirement[]>([])
   const [draftItems, setDraftItems] = useState<DraftItem[]>([])
@@ -411,7 +419,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
   const [requiredDate, setRequiredDate] = useState('')
   const [notes, setNotes] = useState('')
   const [requisitions, setRequisitions] = useState<MaterialRequisition[]>([])
-  const [selectedRequisitionId, setSelectedRequisitionId] = useState<number | null>(null)
+  const [selectedRequisitionId, setSelectedRequisitionId] = useState<number | null>(requestedRequisitionId)
   const [statusFilter, setStatusFilter] = useState(isPurchasing ? 'active' : '')
   const [requisitionSearch, setRequisitionSearch] = useState('')
   const [reviewNotes, setReviewNotes] = useState('')
@@ -489,7 +497,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
       ])
       setProjects(projectRows)
       setSuppliers(supplierRows)
-      if (!projectId && projectRows[0]) {
+      if (isPurchasing && !projectId && projectRows[0]) {
         setProjectId(String(projectRows[0].id))
       }
     } catch (error) {
@@ -534,8 +542,11 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
         `/material-requisitions/available-materials?${params}`,
       )
       setAvailableMaterials(rows)
-      const firstModel = rows[0]?.house_model_id
-      setHouseModelId(firstModel ? String(firstModel) : '')
+      setHouseModelId((current) => {
+        if (current && rows.some((item) => String(item.house_model_id) === current)) return current
+        const modelIds = [...new Set(rows.map((item) => item.house_model_id))]
+        return modelIds.length === 1 ? String(modelIds[0]) : ''
+      })
     } catch (error) {
       setAvailableMaterials([])
       showActionNotice(error instanceof Error ? error.message : 'No fue posible leer la explosion del modelo', 'error')
@@ -665,12 +676,21 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
       showActionNotice('Ese material ya esta en el requerimiento.', 'warning')
       return
     }
+    const available = Number(requirement.available_to_request)
+    const perHouse = Number(requirement.quantity_per_house)
+    if (available <= 0) {
+      showActionNotice('La cantidad completa de este material ya fue solicitada.', 'warning')
+      return
+    }
+    const availableHouses = perHouse > 0
+      ? Math.max(1, Math.min(Number(requirement.assigned_houses), Math.floor(available / perHouse)))
+      : Number(requirement.assigned_houses)
     setDraftItems((items) => [
       ...items,
       {
         requirement,
-        housesToCover: formatQuantityInput(Number(requirement.assigned_houses)),
-        quantity: formatQuantityInput(Number(requirement.total_required)),
+        housesToCover: formatQuantityInput(availableHouses),
+        quantity: formatQuantityInput(Math.min(available, perHouse * availableHouses)),
         requestedUnit: requirement.unit,
         notes: '',
       },
@@ -730,6 +750,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
             house_model_material_requirement_id: item.requirement.id,
             requested_quantity: item.quantity,
             requested_unit: item.requestedUnit.trim() || item.requirement.unit,
+            coverage_houses: Number(item.housesToCover),
             notes: item.notes || null,
           })),
         }),
@@ -943,12 +964,15 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                   </div>
                 </div>
                 <div className="max-h-[430px] overflow-y-auto">
-                  {filteredAvailableMaterials.map((item) => (
+                  {filteredAvailableMaterials.map((item) => {
+                    const unavailable = Number(item.available_to_request) <= 0
+                    return (
                     <button
                       type="button"
                       key={item.id}
                       onClick={() => addDraftItem(item)}
-                      className="grid w-full gap-3 border-b border-sky-100 px-4 py-3 text-left transition hover:bg-sky-50 md:grid-cols-[minmax(0,1fr)_110px_130px_88px]"
+                      disabled={unavailable}
+                      className="grid w-full gap-3 border-b border-sky-100 px-4 py-3 text-left transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-55 md:grid-cols-[minmax(0,1fr)_110px_180px_96px]"
                     >
                       <span className="min-w-0">
                         <span className="block text-sm font-bold text-acsm-ink">{item.description}</span>
@@ -958,14 +982,14 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                       </span>
                       <span className="text-sm font-semibold text-acsm-ink">{item.unit}</span>
                       <span className="text-sm text-acsm-muted">
-                        Total sugerido: <b>{formatNumber(item.total_required)}</b>
+                        Disponible: <b>{formatNumber(item.available_to_request)}</b> de {formatNumber(item.total_required)}
                       </span>
                       <span className="inline-flex items-center justify-center rounded-xl border border-sky-300 bg-white px-3 py-2 text-sm font-bold text-sky-700">
                         <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
-                        Agregar
+                        {unavailable ? 'Solicitado' : 'Agregar'}
                       </span>
                     </button>
-                  ))}
+                  )})}
                   {filteredAvailableMaterials.length === 0 ? (
                     <div className="px-4 py-10 text-center text-sm text-acsm-muted">
                       {selectedProject

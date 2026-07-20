@@ -1444,7 +1444,15 @@ export default function PurchasingPage() {
     notifySuccess(`Convenio seleccionado: ${agreement.name}.`, 'info')
   }
 
-  function loadRequisitionIntoRfq(requisition: MaterialRequisition) {
+  async function loadRequisitionIntoRfq(requisition: MaterialRequisition) {
+    try {
+      if (requisition.status === 'submitted') {
+        await apiRequest(`/material-requisitions/${requisition.id}/start-review`, { method: 'POST' })
+      }
+    } catch (error) {
+      notifySuccess(error instanceof Error ? error.message : 'No fue posible tomar el requerimiento', 'error')
+      return
+    }
     setSelectedMaterialRequisitionId(requisition.id)
     setProjectId(String(requisition.project_id))
     setTitle(requisition.title)
@@ -1472,6 +1480,9 @@ export default function PurchasingPage() {
       }),
     )
     notifySuccess(`Requerimiento ${requisition.requisition_number} cargado para cotizar.`, 'info')
+    setMaterialRequisitions(
+      await apiRequest<MaterialRequisition[]>('/material-requisitions?limit=250'),
+    )
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 80)
   }
 

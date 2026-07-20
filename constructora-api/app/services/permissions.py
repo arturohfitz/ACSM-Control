@@ -106,6 +106,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
             "materials:view",
             "materials:create",
             "construction_concepts:view",
+            "construction_concepts:create",
             "material_requisitions:view",
             "material_requisitions:create",
             "suppliers:view",
