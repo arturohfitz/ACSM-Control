@@ -83,6 +83,8 @@ type MaterialReceptionItem = {
   description: string
   unit: string
   received_quantity: string
+  accepted_quantity: string
+  rejected_quantity: string
   condition_status: string
   notes?: string | null
 }
@@ -125,6 +127,8 @@ type PurchaseOrderReceiveRow = {
   unit: string
   pending_quantity: number
   received_quantity: string
+  accepted_quantity: string
+  rejected_quantity: string
   condition_status: 'ok' | 'damaged' | 'incomplete' | 'extra' | 'other'
   notes: string
 }
@@ -144,10 +148,9 @@ type InventoryStatusItem = {
 }
 
 type WarehouseStock = {
-  id: number
-  warehouse_id: number
+  material_id?: number | null
   house_model_id?: number | null
-  house_model_material_requirement_id?: number | null
+  house_model_name?: string | null
   description: string
   unit: string
   quantity_on_hand: string
@@ -352,7 +355,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       : receivingTypeFromQuery(receivingQueryType)
   const [receivingType, setReceivingType] = useState<MaterialReceivingType>(initialReceivingType)
   const [projects, setProjects] = useState<Project[]>([])
-  const [projectId, setProjectId] = useState('')
+  const [projectId, setProjectId] = useState(searchParams.get('project_id') ?? '')
   const [warehouses, setWarehouses] = useState<ProjectWarehouse[]>([])
   const [warehouseId, setWarehouseId] = useState('')
   const [expectedLists, setExpectedLists] = useState<ExpectedMaterialList[]>([])
@@ -532,17 +535,20 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           materialNames.length > 3
             ? `${materialNames.slice(0, 3).join(', ')} +${materialNames.length - 3}`
             : materialNames.join(', ')
-        const totalQuantity = reception.items.reduce(
-          (sum, item) => sum + Number(item.received_quantity || 0),
-          0,
-        )
+        const acceptedItemCount = reception.items.filter(
+          (item) => Number(item.accepted_quantity || 0) > 0,
+        ).length
+        const rejectedItemCount = reception.items.filter(
+          (item) => Number(item.rejected_quantity || 0) > 0,
+        ).length
         return {
           ...reception,
           type,
           provider,
           documentReference,
           materialSummary: materialSummary || '-',
-          totalQuantity,
+          acceptedItemCount,
+          rejectedItemCount,
           searchText: [
             provider,
             documentReference,
@@ -584,29 +590,22 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   )
 
   const controlTotals = useMemo(
-    () =>
-      filteredControlItems.reduce(
-        (totals, item) => ({
-          required: totals.required + Number(item.required_quantity),
-          requested: totals.requested + Number(item.requested_quantity),
-          ordered: totals.ordered + Number(item.ordered_quantity),
-          received: totals.received + Number(item.received_quantity),
-          pending: totals.pending + Number(item.pending_quantity),
-          pendingToOrder: totals.pendingToOrder + Number(item.pending_to_order_quantity),
-          pendingToReceive: totals.pendingToReceive + Number(item.pending_to_receive_quantity),
-          unassigned: totals.unassigned + Number(item.unassigned_received_quantity),
-        }),
-        {
-          required: 0,
-          requested: 0,
-          ordered: 0,
-          received: 0,
-          pending: 0,
-          pendingToOrder: 0,
-          pendingToReceive: 0,
-          unassigned: 0,
-        },
-      ),
+    () => ({
+      lines: filteredControlItems.length,
+      complete: filteredControlItems.filter((item) => item.status === 'complete').length,
+      partial: filteredControlItems.filter((item) => item.status === 'partial').length,
+      pending: filteredControlItems.filter((item) => item.status === 'pending').length,
+      issues: filteredControlItems.filter(
+        (item) =>
+          item.status === 'with_issue' ||
+          Number(item.unassigned_received_quantity) > 0 ||
+          Number(item.conversion_missing_quantity) > 0,
+      ).length,
+      averageProgress: filteredControlItems.length
+        ? filteredControlItems.reduce((sum, item) => sum + Number(item.received_percent), 0) /
+          filteredControlItems.length
+        : 0,
+    }),
     [filteredControlItems],
   )
 
@@ -637,7 +636,15 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
     try {
       const projectData = await apiRequest<Project[]>('/projects')
       setProjects(projectData)
-      if (!projectId && projectData[0]) setProjectId(String(projectData[0].id))
+      const contextualProjectId = searchParams.get('project_id')
+      if (
+        contextualProjectId &&
+        projectData.some((project) => String(project.id) === contextualProjectId)
+      ) {
+        setProjectId(contextualProjectId)
+      } else if (!projectId && projectData[0]) {
+        setProjectId(String(projectData[0].id))
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar desarrollos')
     } finally {
@@ -660,18 +667,32 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       ] =
         await Promise.all([
           apiRequest<ProjectWarehouse[]>(`/inventory/projects/${currentProjectId}/warehouses`),
-          apiRequest<ExpectedMaterialList[]>(
-            `/inventory/projects/${currentProjectId}/expected-materials`,
-          ),
-          apiRequest<InventoryStatusItem[]>(`/inventory/projects/${currentProjectId}/status`),
-          apiRequest<InventoryStatusItem[]>(
-            `/inventory/projects/${currentProjectId}/missing-materials`,
-          ),
-          apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders'),
-          apiRequest<ProjectModelMaterialControlItem[]>(
-            `/inventory/projects/${currentProjectId}/model-material-control`,
-          ),
-          apiRequest<MaterialReception[]>(`/inventory/projects/${currentProjectId}/receptions`),
+          showMaterialReceiving || showMissing
+            ? apiRequest<ExpectedMaterialList[]>(
+                `/inventory/projects/${currentProjectId}/expected-materials`,
+              )
+            : Promise.resolve([]),
+          showMissing
+            ? apiRequest<InventoryStatusItem[]>(`/inventory/projects/${currentProjectId}/status`)
+            : Promise.resolve([]),
+          showMissing
+            ? apiRequest<InventoryStatusItem[]>(
+                `/inventory/projects/${currentProjectId}/missing-materials`,
+              )
+            : Promise.resolve([]),
+          showMaterialReceiving
+            ? apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders')
+            : Promise.resolve([]),
+          showModelControl
+            ? apiRequest<ProjectModelMaterialControlItem[]>(
+                `/inventory/projects/${currentProjectId}/model-material-control`,
+              )
+            : Promise.resolve([]),
+          showMaterialReceiving
+            ? apiRequest<MaterialReception[]>(
+                `/inventory/projects/${currentProjectId}/receptions`,
+              )
+            : Promise.resolve([]),
         ])
       setWarehouses(warehouseData)
       setExpectedLists(expectedData)
@@ -691,6 +712,14 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           : '',
       )
       setWarehouseId((current) => current || (warehouseData[0] ? String(warehouseData[0].id) : ''))
+
+      const contextualWarehouseId = searchParams.get('warehouse_id')
+      if (
+        contextualWarehouseId &&
+        warehouseData.some((warehouse) => String(warehouse.id) === contextualWarehouseId)
+      ) {
+        setWarehouseId(contextualWarehouseId)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar inventario')
     }
@@ -703,7 +732,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
     }
     try {
       const data = await apiRequest<WarehouseStock[]>(
-        `/inventory/warehouses/${currentWarehouseId}/stock`,
+        `/inventory/warehouses/${currentWarehouseId}/stock-summary`,
       )
       setStockItems(data)
     } catch (err) {
@@ -742,12 +771,24 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   }, [projectId])
 
   useEffect(() => {
-    if (warehouseId) {
+    if (showStock && warehouseId) {
       void loadWarehouseStock(warehouseId)
     } else {
       setStockItems([])
     }
-  }, [warehouseId])
+  }, [showStock, warehouseId])
+
+  useEffect(() => {
+    const contextualPurchaseOrderId = searchParams.get('purchase_order_id')
+    if (
+      contextualPurchaseOrderId &&
+      expectedLists.some(
+        (list) => String(list.purchase_order_id ?? '') === contextualPurchaseOrderId,
+      )
+    ) {
+      selectPurchaseOrder(contextualPurchaseOrderId)
+    }
+  }, [expectedLists, purchaseOrders])
 
   function applyParsedDocument(document: ParsedDocument) {
     setDocumentNumber(document.metadata.document_number ?? documentNumber)
@@ -788,7 +829,9 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
             description: item.description,
             unit: item.unit,
             pending_quantity: pending,
-            received_quantity: pending > 0 ? String(pending) : '',
+            received_quantity: '',
+            accepted_quantity: '',
+            rejected_quantity: '',
             condition_status: 'ok' as const,
             notes: '',
           }
@@ -802,9 +845,38 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
     patch: Partial<PurchaseOrderReceiveRow>,
   ) {
     setPoReceiveRows((current) =>
-      current.map((row) =>
-        row.expected_item_id === expectedItemId ? { ...row, ...patch } : row,
-      ),
+      current.map((row) => {
+        if (row.expected_item_id !== expectedItemId) return row
+        const next = { ...row, ...patch }
+        if ('received_quantity' in patch || 'condition_status' in patch) {
+          const delivered = Number(next.received_quantity || 0)
+          if (next.condition_status === 'damaged') {
+            next.accepted_quantity = '0'
+            next.rejected_quantity = delivered ? String(delivered) : ''
+          } else {
+            next.accepted_quantity = delivered ? String(delivered) : ''
+            next.rejected_quantity = '0'
+          }
+        }
+        if ('accepted_quantity' in patch || 'rejected_quantity' in patch) {
+          next.received_quantity = String(
+            Number(next.accepted_quantity || 0) + Number(next.rejected_quantity || 0),
+          )
+        }
+        return next
+      }),
+    )
+  }
+
+  function receiveAllPending() {
+    setPoReceiveRows((current) =>
+      current.map((row) => ({
+        ...row,
+        received_quantity: String(row.pending_quantity),
+        accepted_quantity: String(row.pending_quantity),
+        rejected_quantity: '0',
+        condition_status: 'ok',
+      })),
     )
   }
 
@@ -831,6 +903,8 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           items: validRows.map((row) => ({
             expected_item_id: row.expected_item_id,
             received_quantity: Number(row.received_quantity),
+            accepted_quantity: Number(row.accepted_quantity || 0),
+            rejected_quantity: Number(row.rejected_quantity || 0),
             condition_status: row.condition_status,
             notes: textOrNull(row.notes),
           })),
@@ -1265,24 +1339,36 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                   Puedes modificar la cantidad recibida si la entrega fue parcial.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void savePurchaseOrderReception()}
-                disabled={saving || !selectedPurchaseOrderList || !warehouseId || !poReceiveRows.length}
-                className="inline-flex h-9 items-center gap-2 rounded-md bg-acsm-green px-3 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
-              >
-                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                Registrar recepcion
-              </button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={receiveAllPending}
+                  disabled={!poReceiveRows.length}
+                  className="inline-flex h-9 items-center rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-sky-50 disabled:opacity-60"
+                >
+                  Recibir todo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void savePurchaseOrderReception()}
+                  disabled={saving || !selectedPurchaseOrderList || !warehouseId || !poReceiveRows.some((row) => Number(row.received_quantity) > 0)}
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-acsm-green px-3 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
+                >
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                  Registrar recepcion
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-sm">
+              <table className="w-full min-w-[1120px] text-sm">
                 <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
                   <tr>
                     <th className="px-3 py-2">Material</th>
                     <th className="px-3 py-2">Pendiente</th>
-                    <th className="px-3 py-2">Recibido ahora</th>
+                    <th className="px-3 py-2">Entregado</th>
+                    <th className="px-3 py-2">Aceptado</th>
+                    <th className="px-3 py-2">Rechazado</th>
                     <th className="px-3 py-2">Condicion</th>
                     <th className="px-3 py-2">Notas</th>
                   </tr>
@@ -1300,6 +1386,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                           min="0"
                           max={row.pending_quantity}
                           step="0.0001"
+                          aria-label={`Entregado ${row.description}`}
                           value={row.received_quantity}
                           onChange={(event) =>
                             updatePoReceiveRow(row.expected_item_id, {
@@ -1307,6 +1394,38 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                             })
                           }
                           className="h-9 w-full rounded-md border border-acsm-line px-2"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          max={row.pending_quantity}
+                          step="0.0001"
+                          aria-label={`Aceptado ${row.description}`}
+                          value={row.accepted_quantity}
+                          onChange={(event) =>
+                            updatePoReceiveRow(row.expected_item_id, {
+                              accepted_quantity: event.target.value,
+                            })
+                          }
+                          className="h-9 w-full rounded-md border border-emerald-200 bg-emerald-50/40 px-2"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          max={row.pending_quantity}
+                          step="0.0001"
+                          aria-label={`Rechazado ${row.description}`}
+                          value={row.rejected_quantity}
+                          onChange={(event) =>
+                            updatePoReceiveRow(row.expected_item_id, {
+                              rejected_quantity: event.target.value,
+                            })
+                          }
+                          className="h-9 w-full rounded-md border border-amber-200 bg-amber-50/40 px-2"
                         />
                       </td>
                       <td className="px-3 py-2">
@@ -1340,7 +1459,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                   ))}
                   {!poReceiveRows.length ? (
                     <tr>
-                      <td colSpan={5} className="px-3 py-6 text-center text-acsm-muted">
+                      <td colSpan={7} className="px-3 py-6 text-center text-acsm-muted">
                         Selecciona una orden de compra pendiente.
                       </td>
                     </tr>
@@ -1372,7 +1491,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           </span>
         </div>
 
-        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-4 md:grid-cols-2 xl:grid-cols-3">
           <label className="min-w-0 text-sm">
             <span className="mb-1.5 block font-medium text-acsm-ink">Desarrollo</span>
             <select
@@ -1384,21 +1503,6 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="min-w-0 text-sm">
-            <span className="mb-1.5 block font-medium text-acsm-ink">Bodega</span>
-            <select
-              value={warehouseId}
-              onChange={(event) => setWarehouseId(event.target.value)}
-              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
-            >
-              <option value="">Automatico</option>
-              {warehouses.map((warehouse) => (
-                <option key={warehouse.id} value={warehouse.id}>
-                  {warehouse.name}
                 </option>
               ))}
             </select>
@@ -1447,6 +1551,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               <option value="pending">Pendiente</option>
               <option value="partial">Parcial</option>
               <option value="complete">Completo</option>
+              <option value="with_issue">Con incidencia</option>
               <option value="over_received">Excedido</option>
             </select>
           </label>
@@ -1474,49 +1579,42 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           </button>
         </div>
 
-        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-3 md:grid-cols-6">
+        <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-3 sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Requerido</div>
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Partidas</div>
             <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.required)}
+              {controlTotals.lines}
             </div>
           </div>
           <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Solicitado</div>
-            <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.requested)}
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Completas</div>
+            <div className="mt-1 text-lg font-bold text-emerald-800">
+              {controlTotals.complete}
             </div>
           </div>
           <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Comprado</div>
-            <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.ordered)}
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Parciales</div>
+            <div className="mt-1 text-lg font-bold text-cyan-800">
+              {controlTotals.partial}
             </div>
           </div>
           <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Recibido</div>
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Pendientes</div>
             <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.received)}
+              {controlTotals.pending}
             </div>
           </div>
           <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Pend. compra</div>
-            <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.pendingToOrder)}
-            </div>
-          </div>
-          <div className="rounded-md border border-acsm-line bg-white p-3">
-            <div className="text-xs font-semibold uppercase text-acsm-muted">Pend. recibir</div>
-            <div className="mt-1 text-lg font-bold text-acsm-ink">
-              {formatQuantity(controlTotals.pendingToReceive)}
+            <div className="text-xs font-semibold uppercase text-acsm-muted">Avance promedio</div>
+            <div className="mt-1 text-lg font-bold text-sky-800">
+              {formatQuantity(controlTotals.averageProgress)}%
             </div>
           </div>
         </div>
 
-        {controlTotals.unassigned > 0 ? (
+        {controlTotals.issues > 0 ? (
           <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Hay {formatQuantity(controlTotals.unassigned)} unidades recibidas sin asignacion segura a
-            modelo. Selecciona el modelo en cargas sin OC o revisa partidas compartidas entre modelos.
+            Hay {controlTotals.issues} partida(s) que requieren revisar asignacion, conversion o condicion.
           </div>
         ) : null}
 
@@ -1977,7 +2075,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                 <th className="px-4 py-3">Documento</th>
                 <th className="px-4 py-3">Materiales</th>
                 <th className="px-4 py-3">Partidas</th>
-                <th className="px-4 py-3">Cantidad</th>
+                <th className="px-4 py-3">Resultado</th>
                 <th className="px-4 py-3">Recibio</th>
                 <th className="px-4 py-3">Estado</th>
               </tr>
@@ -2008,7 +2106,18 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                     </div>
                   </td>
                   <td className="px-4 py-3">{reception.items.length}</td>
-                  <td className="px-4 py-3">{formatQuantity(reception.totalQuantity)}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">
+                        {reception.acceptedItemCount} aceptada(s)
+                      </span>
+                      {reception.rejectedItemCount > 0 ? (
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
+                          {reception.rejectedItemCount} con rechazo
+                        </span>
+                      ) : null}
+                    </div>
+                  </td>
                   <td className="px-4 py-3">{reception.received_by || '-'}</td>
                   <td className="px-4 py-3">
                     <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
@@ -2068,12 +2177,12 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
             </thead>
             <tbody>
               {stockItems.map((item) => (
-                <tr key={item.id} className="border-b border-acsm-line last:border-0">
+                <tr key={`${item.material_id ?? item.description}-${item.house_model_id ?? 'none'}-${item.unit}`} className="border-b border-acsm-line last:border-0">
                   <td className="px-4 py-3 font-semibold">{item.description}</td>
                   <td className="px-4 py-3">{item.unit}</td>
                   <td className="px-4 py-3">{formatQuantity(item.quantity_on_hand)}</td>
                   <td className="px-4 py-3">
-                    {warehouses.find((warehouse) => warehouse.id === item.warehouse_id)?.name ?? item.warehouse_id}
+                    {warehouses.find((warehouse) => String(warehouse.id) === warehouseId)?.name ?? '-'}
                   </td>
                 </tr>
               ))}

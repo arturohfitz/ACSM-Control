@@ -8,7 +8,11 @@ from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.api.v1.endpoints.inventory import create_reception, project_model_material_control
+from app.api.v1.endpoints.inventory import (
+    create_reception,
+    list_inventory_inbound_cases,
+    project_model_material_control,
+)
 from app.api.v1.endpoints.purchasing import (
     approve_supplier_quote,
     approve_supplier_agreement,
@@ -38,6 +42,7 @@ from app.models import (
     HouseModel,
     HouseModelDocument,
     HouseModelMaterialRequirement,
+    InventoryMovement,
     Project,
     ProjectHouseModel,
     ProjectWarehouse,
@@ -47,6 +52,7 @@ from app.models import (
     SupplierInvoice,
     SupplierRFQ,
     User,
+    WarehouseStock,
 )
 from app.schemas.inventory import MaterialReceptionCreate, MaterialReceptionItemCreate
 from app.schemas.purchasing import (
@@ -62,6 +68,7 @@ from app.schemas.purchasing import (
     SupplierRFQExceptionDecision,
     SupplierRFQItemCreate,
 )
+from tests.db_cleanup import cleanup_company_data
 
 
 @unittest.skipUnless(os.getenv("RUN_DB_TESTS") == "1", "requiere RUN_DB_TESTS=1")
@@ -126,6 +133,7 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.db.commit()
 
     def tearDown(self) -> None:
+        cleanup_company_data(self.db, self.company.id)
         self.db.close()
 
     def test_model_material_control_tracks_partial_inventory_receipts(self) -> None:
@@ -217,6 +225,115 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.assertEqual(row["pending_quantity"], Decimal("15"))
         self.assertEqual(row["received_percent"], Decimal("25.00"))
         self.assertEqual(row["status"], "partial")
+
+    def test_damaged_material_is_reported_but_does_not_increase_inventory(self) -> None:
+        house_model = HouseModel(
+            company_id=self.company.id,
+            client_id=self.client.id,
+            name=f"Modelo danado {self.suffix}",
+            construction_m2=Decimal("50"),
+        )
+        self.db.add(house_model)
+        self.db.flush()
+        self.db.add(
+            ProjectHouseModel(
+                project_id=self.project.id,
+                house_model_id=house_model.id,
+                quantity=Decimal("1"),
+            )
+        )
+        document = HouseModelDocument(
+            company_id=self.company.id,
+            client_id=self.client.id,
+            house_model_id=house_model.id,
+            document_type="explosion",
+            file_name=f"danado-{self.suffix}.xlsx",
+            file_hash=f"danado-{self.suffix}",
+            status="integrated",
+            total_items=1,
+        )
+        self.db.add(document)
+        self.db.flush()
+        requirement = HouseModelMaterialRequirement(
+            company_id=self.company.id,
+            client_id=self.client.id,
+            house_model_id=house_model.id,
+            document_id=document.id,
+            source_code="CEM-DANADO",
+            description="Cemento con incidencia",
+            unit="SACO",
+            quantity_per_house=Decimal("10"),
+            validation_status="validated",
+        )
+        self.db.add(requirement)
+        self.db.flush()
+        expected_list = ExpectedMaterialList(
+            company_id=self.company.id,
+            project_id=self.project.id,
+            warehouse_id=self.warehouse.id,
+            name=f"Entrega con incidencia {self.suffix}",
+            status="open",
+        )
+        self.db.add(expected_list)
+        self.db.flush()
+        expected_item = ExpectedMaterialItem(
+            company_id=self.company.id,
+            expected_list_id=expected_list.id,
+            house_model_id=house_model.id,
+            house_model_material_requirement_id=requirement.id,
+            source_code=requirement.source_code,
+            description=requirement.description,
+            unit=requirement.unit,
+            expected_quantity=Decimal("10"),
+            received_quantity=Decimal("0"),
+            status="pending",
+        )
+        self.db.add(expected_item)
+        self.db.commit()
+
+        reception = create_reception(
+            self.project.id,
+            MaterialReceptionCreate(
+                warehouse_id=self.warehouse.id,
+                expected_list_id=expected_list.id,
+                delivery_reference=f"DANADO-{self.suffix}",
+                items=[
+                    MaterialReceptionItemCreate(
+                        expected_item_id=expected_item.id,
+                        received_quantity=Decimal("4"),
+                        accepted_quantity=Decimal("0"),
+                        rejected_quantity=Decimal("4"),
+                        condition_status="damaged",
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+
+        self.db.refresh(expected_item)
+        self.assertEqual(reception.status, "with_issue")
+        self.assertEqual(expected_item.received_quantity, Decimal("0"))
+        self.assertEqual(expected_item.status, "with_issue")
+        self.assertIsNone(
+            self.db.scalar(
+                select(WarehouseStock).where(WarehouseStock.expected_item_id == expected_item.id)
+            )
+        )
+        self.assertIsNone(
+            self.db.scalar(
+                select(InventoryMovement).where(
+                    InventoryMovement.reception_item_id == reception.items[0].id
+                )
+            )
+        )
+        control = project_model_material_control(self.project.id, self.db, self.user)
+        row = next(
+            item
+            for item in control
+            if item["house_model_material_requirement_id"] == requirement.id
+        )
+        self.assertEqual(row["received_quantity"], Decimal("0"))
 
     def test_rfq_quote_comparison_and_approval_request(self) -> None:
         rfq_payload = SupplierRFQCreate(
@@ -388,6 +505,15 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.assertEqual(purchase_order.status, "sent")
         self.assertEqual(expected_list.purchase_order_id, purchase_order.id)
         self.assertEqual(len(expected_list.items), 2)
+        inbound_case = next(
+            item
+            for item in list_inventory_inbound_cases(db=self.db, current_user=self.user)
+            if item["purchase_order_id"] == purchase_order.id
+        )
+        self.assertEqual(inbound_case["stage"], "awaiting")
+        self.assertIn(f"project_id={self.project.id}", inbound_case["next_action_url"])
+        self.assertIn(f"purchase_order_id={purchase_order.id}", inbound_case["next_action_url"])
+        self.assertIn(f"warehouse_id={self.warehouse.id}", inbound_case["next_action_url"])
         purchase_case = next(item for item in list_purchase_cases(db=self.db, current_user=self.user) if item.rfq_id == rfq.id)
         self.assertEqual(purchase_case.current_stage, "receiving")
         self.assertEqual(purchase_case.purchase_order_status, "sent")

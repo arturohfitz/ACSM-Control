@@ -307,7 +307,7 @@ def _sync_incomplete_purchase_order_notifications(db: Session, *, company_id: in
         select(PurchaseOrder)
         .where(
             PurchaseOrder.company_id == company_id,
-            PurchaseOrder.status.in_(("issued", "sent", "partially_received")),
+            PurchaseOrder.status.in_(("sent", "partially_received")),
             PurchaseOrder.issued_at <= today - timedelta(days=3),
         )
         .options(selectinload(PurchaseOrder.supplier), selectinload(PurchaseOrder.items))
@@ -335,7 +335,7 @@ def _sync_incomplete_purchase_order_notifications(db: Session, *, company_id: in
         notify_permission(
             db,
             company_id=company_id,
-            module="inventory",
+            module="inventory_receiving",
             action="receive",
             notification_type="purchase_order_incomplete",
             title="Orden con material pendiente",
@@ -350,7 +350,21 @@ def _sync_incomplete_purchase_order_notifications(db: Session, *, company_id: in
             entity_type="PurchaseOrder",
             entity_id=purchase_order.id,
             entity_label=purchase_order.po_number,
-            action_url="/inventory/material-receiving?type=oc",
+            action_url=(
+                "/inventory/material-receiving?type=oc"
+                f"&project_id={purchase_order.project_id}"
+                f"&purchase_order_id={purchase_order.id}"
+                + (
+                    f"&warehouse_id={purchase_order.warehouse_id}"
+                    if purchase_order.warehouse_id is not None
+                    else ""
+                )
+            ),
             due_at=_day_to_datetime(purchase_order.issued_at),
-            metadata={"pending_items": len(pending_items), "pending_quantity": str(pending_qty)},
+            metadata={
+                "purchase_order_id": purchase_order.id,
+                "warehouse_id": purchase_order.warehouse_id,
+                "pending_items": len(pending_items),
+                "pending_quantity": str(pending_qty),
+            },
         )

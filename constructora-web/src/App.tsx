@@ -15,6 +15,7 @@ import {
 } from './pages/GenericResourcePage'
 import ConstructionConceptsPage from './pages/ConstructionConceptsPage'
 import InventoryPage from './pages/InventoryPage'
+import InventoryWorkspacePage from './pages/InventoryWorkspacePage'
 import LoginPage from './pages/LoginPage'
 import MaterialRequisitionsPage from './pages/MaterialRequisitionsPage'
 import MaterialsPage from './pages/MaterialsPage'
@@ -90,7 +91,11 @@ export default function App() {
           />
           <Route
             path="/inventory"
-            element={protect(<InventoryReceivingRedirect type="oc" />, 'inventory_receiving:view')}
+            element={protect(<InventoryWorkspacePage />, 'inventory_receiving:view')}
+          />
+          <Route
+            path="/inventory/cases/:caseId"
+            element={protect(<InventoryWorkspacePage />, 'inventory_receiving:view')}
           />
           <Route
             path="/inventory/material-receiving"

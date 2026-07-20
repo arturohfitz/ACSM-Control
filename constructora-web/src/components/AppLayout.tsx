@@ -55,7 +55,17 @@ const navItems = [
     permission: ['materials:view', 'construction_concepts:view', 'material_requisitions:view'],
   },
   { to: '/purchasing', label: 'Compras', icon: ShoppingCart, permission: 'supplier_rfq:view' },
-  { to: '/inventory', label: 'Inventario', icon: Warehouse, permission: 'inventory:view' },
+  {
+    to: '/inventory',
+    label: 'Inventario',
+    icon: Warehouse,
+    permission: [
+      'inventory_receiving:view',
+      'inventory_progress:view',
+      'inventory_missing:view',
+      'inventory_stock:view',
+    ],
+  },
   {
     to: '/supplier-payments',
     label: 'Pagos proveedores',
@@ -156,6 +166,13 @@ const workSubItems = [
 ]
 
 const inventorySubItems = [
+  {
+    to: '/inventory',
+    label: 'Centro de Inventarios',
+    icon: Boxes,
+    permission: 'inventory_receiving:view',
+    indent: true,
+  },
   {
     to: '/inventory/material-receiving',
     label: 'Recepcion de materiales',
@@ -314,6 +331,8 @@ export default function AppLayout() {
   const navigate = useNavigate()
   const title = location.pathname.startsWith('/purchasing/cases/')
     ? 'Expediente de compra'
+    : location.pathname.startsWith('/inventory/cases/')
+      ? 'Expediente de inventario'
     : titles[location.pathname] ?? 'ACSM Control'
   const isRealEstateRoute =
     location.pathname === '/clients' ||

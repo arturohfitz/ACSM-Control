@@ -129,8 +129,22 @@ class ExpectedMaterialListRead(TimestampRead):
 class MaterialReceptionItemCreate(BaseModel):
     expected_item_id: int
     received_quantity: PositiveDecimal
+    accepted_quantity: NonNegativeDecimal | None = None
+    rejected_quantity: NonNegativeDecimal | None = None
     condition_status: ReceptionConditionStatus = "ok"
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def validate_quantity_classification(self):
+        if self.accepted_quantity is None and self.rejected_quantity is None:
+            return self
+        accepted = self.accepted_quantity or Decimal("0")
+        rejected = self.rejected_quantity or Decimal("0")
+        if accepted + rejected != self.received_quantity:
+            raise ValueError(
+                "La cantidad aceptada mas la rechazada debe ser igual a la cantidad entregada"
+            )
+        return self
 
 
 class MaterialReceptionCreate(BaseModel):
@@ -154,6 +168,8 @@ class MaterialReceptionItemRead(ORMModel):
     description: str
     unit: str
     received_quantity: Decimal
+    accepted_quantity: Decimal
+    rejected_quantity: Decimal
     condition_status: ReceptionConditionStatus
     notes: str | None = None
 
@@ -291,3 +307,49 @@ class ProjectModelMaterialControlItem(BaseModel):
     ordered_percent: Decimal
     received_percent: Decimal
     status: InventoryItemStatus
+
+
+class InventoryInboundItemRead(BaseModel):
+    expected_item_id: int
+    description: str
+    unit: str
+    house_model_id: int | None = None
+    house_model_name: str | None = None
+    expected_quantity: Decimal
+    accepted_quantity: Decimal
+    pending_quantity: Decimal
+    status: InventoryItemStatus
+
+
+class InventoryInboundCaseRead(BaseModel):
+    id: int
+    expected_list_id: int
+    purchase_order_id: int
+    purchase_order_number: str
+    purchase_order_status: str
+    project_id: int
+    project_name: str
+    warehouse_id: int | None = None
+    warehouse_name: str | None = None
+    supplier_id: int
+    supplier_name: str
+    issued_at: date
+    expected_delivery_date: date | None = None
+    stage: Literal["awaiting", "partial", "issue", "complete"]
+    item_count: int
+    completed_item_count: int
+    pending_item_count: int
+    issue_item_count: int
+    line_progress_percent: Decimal
+    next_action_label: str
+    next_action_url: str
+    items: list[InventoryInboundItemRead] = Field(default_factory=list)
+
+
+class WarehouseStockSummaryRead(BaseModel):
+    material_id: int | None = None
+    house_model_id: int | None = None
+    house_model_name: str | None = None
+    description: str
+    unit: str
+    quantity_on_hand: Decimal

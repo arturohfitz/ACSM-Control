@@ -13,6 +13,7 @@ from app.db.session import SessionLocal
 # Datos transaccionales y catalogos de operacion. Se conservan empresas,
 # usuarios, roles, permisos y configuracion del sistema.
 TABLES_TO_CLEAR = (
+    "inventory_movements",
     "notifications",
     "audit_events",
     "email_outbox_messages",
@@ -27,6 +28,7 @@ TABLES_TO_CLEAR = (
     "purchase_order_items",
     "purchase_orders",
     "supplier_quote_approvals",
+    "supplier_quote_uploads",
     "supplier_quote_items",
     "supplier_quotes",
     "supplier_rfq_suppliers",
@@ -65,6 +67,7 @@ PRESERVED_TABLES = (
     "role_permissions",
     "user_roles",
     "system_email_settings",
+    "system_notification_settings",
 )
 
 STORAGE_DIRS_TO_CLEAR = ("house_model_documents",)

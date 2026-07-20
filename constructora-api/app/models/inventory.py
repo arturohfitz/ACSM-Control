@@ -139,6 +139,12 @@ class MaterialReceptionItem(Base):
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     unit: Mapped[str] = mapped_column(String(40), nullable=False)
     received_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    accepted_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(14, 4), default=0, nullable=False
+    )
+    rejected_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(14, 4), default=0, nullable=False
+    )
     condition_status: Mapped[str] = mapped_column(String(40), default="ok", nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
 
@@ -175,3 +181,28 @@ class WarehouseStock(TimestampMixin, Base):
     expected_item: Mapped[ExpectedMaterialItem] = relationship(back_populates="stock_item")
     house_model: Mapped["HouseModel | None"] = relationship()
     house_model_material_requirement: Mapped["HouseModelMaterialRequirement | None"] = relationship()
+
+
+class InventoryMovement(TimestampMixin, Base):
+    __tablename__ = "inventory_movements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    warehouse_id: Mapped[int] = mapped_column(
+        ForeignKey("project_warehouses.id"), nullable=False, index=True
+    )
+    material_id: Mapped[int | None] = mapped_column(ForeignKey("materials.id"), index=True)
+    house_model_id: Mapped[int | None] = mapped_column(ForeignKey("house_models.id"), index=True)
+    house_model_material_requirement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("house_model_material_requirements.id"), index=True
+    )
+    reception_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("material_reception_items.id"), unique=True, index=True
+    )
+    movement_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    unit: Mapped[str] = mapped_column(String(40), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(160))
+    notes: Mapped[str | None] = mapped_column(Text)

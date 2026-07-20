@@ -957,7 +957,7 @@ test('inventario recibe parcialmente una orden de compra generada desde compras'
   await expect(page.getByText('Lista esperada OC-202606-0001')).toBeVisible()
 
   await page.getByPlaceholder('Recibe').fill('Encargado de bodega')
-  await page.locator('tr', { hasText: 'Cemento gris 50kg' }).locator('input[type="number"]').fill('40')
+  await page.getByLabel('Entregado Cemento gris 50kg').fill('40')
   await page.getByRole('button', { name: 'Registrar recepcion' }).click()
   await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Recepciones procesadas' })).toBeVisible()
@@ -983,7 +983,7 @@ test('pagos bloquea factura con faltantes y permite pagar al completar recepcion
   await page.goto('/inventory/purchase-order-receiving')
   await page.getByLabel('Orden de compra').selectOption('800')
   await page.getByPlaceholder('Recibe').fill('Encargado de bodega')
-  await page.locator('tr', { hasText: 'Cemento gris 50kg' }).locator('input[type="number"]').fill('40')
+  await page.getByLabel('Entregado Cemento gris 50kg').fill('40')
   await page.getByRole('button', { name: 'Registrar recepcion' }).click()
   await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
 
@@ -1006,6 +1006,7 @@ test('pagos bloquea factura con faltantes y permite pagar al completar recepcion
   await page.goto('/inventory/purchase-order-receiving')
   await page.getByLabel('Orden de compra').selectOption('800')
   await page.getByPlaceholder('Recibe').fill('Encargado de bodega')
+  await page.getByRole('button', { name: 'Recibir todo' }).click()
   await page.getByRole('button', { name: 'Registrar recepcion' }).click()
   await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
 

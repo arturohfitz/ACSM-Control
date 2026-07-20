@@ -2857,8 +2857,9 @@ def send_purchase_order(
                 notification_type="purchase_order_ready_to_receive",
                 title="Material esperado por orden de compra",
                 body=(
-                    f"{purchase_order.po_number} fue enviada al proveedor y ya esta disponible "
-                    "para seguimiento de recepcion."
+                    f"{purchase_order.po_number} de {purchase_order.supplier.name} fue enviada. "
+                    f"Se esperan {len(purchase_order.items)} partida(s) para "
+                    f"{purchase_order.project.name}."
                 ),
                 category="task",
                 priority="normal",
@@ -2866,9 +2867,24 @@ def send_purchase_order(
                 entity_type="PurchaseOrder",
                 entity_id=purchase_order.id,
                 entity_label=purchase_order.po_number,
-                action_url="/inventory/material-receiving?type=oc",
+                action_url=(
+                    "/inventory/material-receiving?type=oc"
+                    f"&project_id={purchase_order.project_id}"
+                    f"&purchase_order_id={purchase_order.id}"
+                    + (
+                        f"&warehouse_id={purchase_order.warehouse_id}"
+                        if purchase_order.warehouse_id is not None
+                        else ""
+                    )
+                ),
                 project_id=purchase_order.project_id,
-                metadata={"supplier_id": purchase_order.supplier_id, "rfq_id": rfq.id},
+                metadata={
+                    "supplier_id": purchase_order.supplier_id,
+                    "rfq_id": rfq.id,
+                    "purchase_order_id": purchase_order.id,
+                    "warehouse_id": purchase_order.warehouse_id,
+                    "expected_items": len(purchase_order.items),
+                },
             )
     record_event(
         db,

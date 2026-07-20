@@ -4,6 +4,7 @@ from app.models.notification import Notification
 from app.models.inventory import (
     ExpectedMaterialItem,
     ExpectedMaterialList,
+    InventoryMovement,
     MaterialReception,
     MaterialReceptionItem,
     ProjectWarehouse,
@@ -58,6 +59,7 @@ __all__ = [
     "ConstructionConcept",
     "ExpectedMaterialItem",
     "ExpectedMaterialList",
+    "InventoryMovement",
     "EmailOutboxMessage",
     "HouseModel",
     "HouseModelBudgetActivity",

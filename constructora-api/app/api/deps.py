@@ -67,6 +67,22 @@ def require_permission(module: str, action: str) -> Callable[[User], User]:
     return dependency
 
 
+def require_any_permission(*permissions: tuple[str, str]) -> Callable[[User], User]:
+    def dependency(current_user: User = Depends(get_current_user)) -> User:
+        if not any(
+            user_has_permission(current_user, module, action)
+            for module, action in permissions
+        ):
+            required = ", ".join(f"{module}:{action}" for module, action in permissions)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Se requiere uno de estos permisos: {required}",
+            )
+        return current_user
+
+    return dependency
+
+
 def require_master_admin(current_user: User = Depends(get_current_user)) -> User:
     if not current_user.is_master_admin:
         raise HTTPException(

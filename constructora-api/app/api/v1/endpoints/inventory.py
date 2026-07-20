@@ -9,12 +9,14 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import require_permission
+from app.api.deps import require_any_permission, require_permission
 from app.db.session import get_db
 from app.models import (
     ExpectedMaterialItem,
     ExpectedMaterialList,
+    HouseModel,
     HouseModelMaterialRequirement,
+    InventoryMovement,
     Material,
     MaterialUnitConversion,
     MaterialRequisition,
@@ -39,6 +41,7 @@ from app.schemas.inventory import (
     ExpectedMaterialListCreate,
     ExpectedMaterialListRead,
     InventoryStatusItem,
+    InventoryInboundCaseRead,
     MaterialReceptionCreate,
     MaterialReceptionRead,
     ProjectModelMaterialControlItem,
@@ -52,6 +55,7 @@ from app.schemas.inventory import (
     QuickInventoryParsedDocument,
     QuickInventoryParseTextRequest,
     WarehouseStockRead,
+    WarehouseStockSummaryRead,
 )
 from app.services.audit import record_create, record_delete, record_event, record_update, snapshot
 from app.services.crud import get_or_404
@@ -80,6 +84,14 @@ SPANISH_MONTHS = {
 }
 
 INVOICE_RECEIVABLE_STATUSES = ("received", "approved_for_payment", "scheduled", "paid")
+
+INVENTORY_CONTEXT_VIEW = require_any_permission(
+    ("inventory", "view"),
+    ("inventory_receiving", "view"),
+    ("inventory_progress", "view"),
+    ("inventory_missing", "view"),
+    ("inventory_stock", "view"),
+)
 
 
 def _now() -> datetime:
@@ -614,12 +626,88 @@ def _status_for_item(item: ExpectedMaterialItem, has_issue: bool = False) -> str
     return "over_received"
 
 
+def _classified_reception_quantities(item_payload) -> tuple[Decimal, Decimal]:
+    delivered = item_payload.received_quantity
+    accepted = item_payload.accepted_quantity
+    rejected = item_payload.rejected_quantity
+    if accepted is None and rejected is None:
+        if item_payload.condition_status == "damaged":
+            return Decimal("0"), delivered
+        return delivered, Decimal("0")
+    if accepted is None:
+        accepted = delivered - (rejected or Decimal("0"))
+    if rejected is None:
+        rejected = delivered - accepted
+    if accepted < 0 or rejected < 0 or accepted + rejected != delivered:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "La cantidad aceptada y rechazada debe clasificar exactamente "
+                "todo el material entregado"
+            ),
+        )
+    return accepted, rejected
+
+
+def _record_receipt_movement(
+    db: Session,
+    *,
+    reception: MaterialReception,
+    reception_item: MaterialReceptionItem,
+    accepted_quantity: Decimal,
+) -> None:
+    if accepted_quantity <= 0:
+        return
+    db.add(
+        InventoryMovement(
+            company_id=reception.company_id,
+            project_id=reception.project_id,
+            warehouse_id=reception.warehouse_id,
+            material_id=reception_item.material_id,
+            house_model_id=reception_item.house_model_id,
+            house_model_material_requirement_id=(
+                reception_item.house_model_material_requirement_id
+            ),
+            reception_item_id=reception_item.id,
+            movement_type="receipt",
+            description=reception_item.description,
+            unit=reception_item.unit,
+            quantity=accepted_quantity,
+            reference=reception.delivery_reference,
+            notes=reception_item.notes,
+        )
+    )
+
+
+def _sync_expected_list_status(db: Session, expected_list: ExpectedMaterialList) -> None:
+    items = list(
+        db.scalars(
+            select(ExpectedMaterialItem).where(
+                ExpectedMaterialItem.expected_list_id == expected_list.id
+            )
+        ).all()
+    )
+    if not items:
+        expected_list.status = "open"
+        return
+    if all(item.received_quantity >= item.expected_quantity for item in items):
+        expected_list.status = "complete"
+    elif any(item.status == "with_issue" for item in items):
+        expected_list.status = "with_issue"
+    elif any(item.received_quantity > 0 for item in items):
+        expected_list.status = "partial"
+    else:
+        expected_list.status = "open"
+
+
 def _upsert_stock(
     db: Session,
     warehouse: ProjectWarehouse,
     expected_item: ExpectedMaterialItem,
     received_quantity: Decimal,
 ) -> None:
+    if received_quantity <= 0:
+        return
     stock_item = db.scalar(
         select(WarehouseStock).where(
             WarehouseStock.warehouse_id == warehouse.id,
@@ -1147,7 +1235,7 @@ def _project_model_material_control(db: Session, project: Project) -> list[dict]
         .where(MaterialReception.project_id == project.id)
     ).all()
     for reception_item, expected_item in reception_rows:
-        quantity = reception_item.received_quantity or Decimal("0")
+        quantity = reception_item.accepted_quantity or Decimal("0")
         house_model_id = reception_item.house_model_id or expected_item.house_model_id
         requirement_id = (
             reception_item.house_model_material_requirement_id
@@ -1285,7 +1373,7 @@ def _sync_reception_notifications(
     notify_permission(
         db,
         company_id=expected_list.company_id,
-        module="inventory",
+        module="inventory_receiving",
         action="receive",
         notification_type="purchase_order_incomplete",
         title="Recepcion parcial registrada",
@@ -1299,7 +1387,16 @@ def _sync_reception_notifications(
         entity_type="PurchaseOrder",
         entity_id=purchase_order.id,
         entity_label=purchase_order.po_number,
-        action_url="/inventory/material-receiving?type=oc",
+        action_url=(
+            "/inventory/material-receiving?type=oc"
+            f"&project_id={expected_list.project_id}"
+            f"&purchase_order_id={purchase_order.id}"
+            + (
+                f"&warehouse_id={expected_list.warehouse_id}"
+                if expected_list.warehouse_id is not None
+                else ""
+            )
+        ),
         project_id=expected_list.project_id,
         metadata={
             "expected_list_id": expected_list.id,
@@ -1309,12 +1406,152 @@ def _sync_reception_notifications(
     )
 
 
+@router.get("/inbound-cases", response_model=list[InventoryInboundCaseRead])
+def list_inventory_inbound_cases(
+    project_id: int | None = None,
+    include_complete: bool = False,
+    limit: int = 250,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("inventory_receiving", "view")),
+) -> list[dict]:
+    statement = scoped_select(select(ExpectedMaterialList), ExpectedMaterialList, current_user).where(
+        ExpectedMaterialList.purchase_order_id.is_not(None)
+    )
+    if project_id is not None:
+        statement = statement.where(ExpectedMaterialList.project_id == project_id)
+    expected_lists = list(
+        db.scalars(
+            statement.options(
+                selectinload(ExpectedMaterialList.items).selectinload(
+                    ExpectedMaterialItem.house_model
+                ),
+                selectinload(ExpectedMaterialList.warehouse),
+            )
+            .order_by(ExpectedMaterialList.created_at.desc())
+            .limit(min(max(limit, 1), 500))
+        ).all()
+    )
+    if not expected_lists:
+        return []
+
+    purchase_order_ids = [
+        item.purchase_order_id for item in expected_lists if item.purchase_order_id is not None
+    ]
+    purchase_orders = {
+        item.id: item
+        for item in db.scalars(
+            select(PurchaseOrder)
+            .where(PurchaseOrder.id.in_(purchase_order_ids))
+            .options(
+                selectinload(PurchaseOrder.project),
+                selectinload(PurchaseOrder.supplier),
+            )
+        ).all()
+    }
+    response: list[dict] = []
+    for expected_list in expected_lists:
+        purchase_order = purchase_orders.get(expected_list.purchase_order_id)
+        if purchase_order is None or purchase_order.status == "issued":
+            continue
+        items = expected_list.items
+        pending_items = [
+            item for item in items if item.received_quantity < item.expected_quantity
+        ]
+        completed_items = [
+            item for item in items if item.received_quantity >= item.expected_quantity
+        ]
+        issue_items = [item for item in items if item.status == "with_issue"]
+        if not pending_items:
+            stage = "complete"
+        elif issue_items:
+            stage = "issue"
+        elif any(item.received_quantity > 0 for item in items):
+            stage = "partial"
+        else:
+            stage = "awaiting"
+        if stage == "complete" and not include_complete:
+            continue
+        line_progress = Decimal("0")
+        if items:
+            line_progress = (
+                sum(
+                    (
+                        min(
+                            item.received_quantity / item.expected_quantity,
+                            Decimal("1"),
+                        )
+                        if item.expected_quantity > 0
+                        else Decimal("1")
+                        for item in items
+                    ),
+                    Decimal("0"),
+                )
+                / Decimal(len(items))
+                * Decimal("100")
+            ).quantize(Decimal("0.01"))
+        query = (
+            f"type=oc&project_id={expected_list.project_id}"
+            f"&purchase_order_id={purchase_order.id}"
+        )
+        if expected_list.warehouse_id is not None:
+            query += f"&warehouse_id={expected_list.warehouse_id}"
+        response.append(
+            {
+                "id": expected_list.id,
+                "expected_list_id": expected_list.id,
+                "purchase_order_id": purchase_order.id,
+                "purchase_order_number": purchase_order.po_number,
+                "purchase_order_status": purchase_order.status,
+                "project_id": purchase_order.project_id,
+                "project_name": purchase_order.project.name,
+                "warehouse_id": expected_list.warehouse_id,
+                "warehouse_name": (
+                    expected_list.warehouse.name if expected_list.warehouse else None
+                ),
+                "supplier_id": purchase_order.supplier_id,
+                "supplier_name": purchase_order.supplier.name,
+                "issued_at": purchase_order.issued_at,
+                "expected_delivery_date": purchase_order.expected_delivery_date,
+                "stage": stage,
+                "item_count": len(items),
+                "completed_item_count": len(completed_items),
+                "pending_item_count": len(pending_items),
+                "issue_item_count": len(issue_items),
+                "line_progress_percent": line_progress,
+                "next_action_label": (
+                    "Consultar recepcion" if stage == "complete" else "Continuar recepcion"
+                ),
+                "next_action_url": f"/inventory/material-receiving?{query}",
+                "items": [
+                    {
+                        "expected_item_id": item.id,
+                        "description": item.description,
+                        "unit": item.unit,
+                        "house_model_id": item.house_model_id,
+                        "house_model_name": (
+                            item.house_model.name if item.house_model else None
+                        ),
+                        "expected_quantity": item.expected_quantity,
+                        "accepted_quantity": item.received_quantity,
+                        "pending_quantity": max(
+                            item.expected_quantity - item.received_quantity,
+                            Decimal("0"),
+                        ),
+                        "status": item.status,
+                    }
+                    for item in items
+                ],
+            }
+        )
+    return response
+
+
 @router.get("/warehouses", response_model=list[ProjectWarehouseRead])
 def list_warehouses(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory", "view")),
+    current_user: User = Depends(INVENTORY_CONTEXT_VIEW),
 ) -> list[ProjectWarehouse]:
     statement = scoped_select(select(ProjectWarehouse), ProjectWarehouse, current_user)
     return list(db.scalars(statement.offset(skip).limit(limit)).all())
@@ -1375,7 +1612,7 @@ def delete_warehouse(
 def list_project_warehouses(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory", "view")),
+    current_user: User = Depends(INVENTORY_CONTEXT_VIEW),
 ) -> list[ProjectWarehouse]:
     project = _project_for_user(db, project_id, current_user)
     return list(
@@ -1391,7 +1628,13 @@ def list_project_warehouses(
 def list_expected_materials(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory", "view")),
+    current_user: User = Depends(
+        require_any_permission(
+            ("inventory", "view"),
+            ("inventory_receiving", "view"),
+            ("inventory_missing", "view"),
+        )
+    ),
 ) -> list[ExpectedMaterialList]:
     project = _project_for_user(db, project_id, current_user)
     return list(
@@ -1659,27 +1902,43 @@ def create_quick_inventory_document(
         db.add(reception)
         db.flush()
         for expected_item, line in received_lines:
-            db.add(
-                MaterialReceptionItem(
-                    reception_id=reception.id,
-                    expected_item_id=expected_item.id,
-                    material_id=expected_item.material_id,
-                    house_model_id=expected_item.house_model_id,
-                    house_model_material_requirement_id=expected_item.house_model_material_requirement_id,
-                    description=expected_item.description,
-                    unit=expected_item.unit,
-                    received_quantity=line.received_quantity or Decimal("0"),
-                    condition_status=line.condition_status,
-                    notes=line.notes,
-                )
+            delivered_quantity = line.received_quantity or Decimal("0")
+            accepted_quantity = (
+                Decimal("0") if line.condition_status == "damaged" else delivered_quantity
             )
-            expected_item.received_quantity += line.received_quantity or Decimal("0")
+            rejected_quantity = delivered_quantity - accepted_quantity
+            reception_item = MaterialReceptionItem(
+                reception_id=reception.id,
+                expected_item_id=expected_item.id,
+                material_id=expected_item.material_id,
+                house_model_id=expected_item.house_model_id,
+                house_model_material_requirement_id=expected_item.house_model_material_requirement_id,
+                description=expected_item.description,
+                unit=expected_item.unit,
+                received_quantity=delivered_quantity,
+                accepted_quantity=accepted_quantity,
+                rejected_quantity=rejected_quantity,
+                condition_status=line.condition_status,
+                notes=line.notes,
+            )
+            db.add(reception_item)
+            db.flush()
+            expected_item.received_quantity += accepted_quantity
             expected_item.status = _status_for_item(
                 expected_item,
-                has_issue=line.condition_status != "ok",
+                has_issue=rejected_quantity > 0 or line.condition_status != "ok",
             )
-            _sync_purchase_order_item(db, expected_item, line.received_quantity or Decimal("0"))
-            _upsert_stock(db, warehouse, expected_item, line.received_quantity or Decimal("0"))
+            _sync_purchase_order_item(db, expected_item, accepted_quantity)
+            _upsert_stock(db, warehouse, expected_item, accepted_quantity)
+            _record_receipt_movement(
+                db,
+                reception=reception,
+                reception_item=reception_item,
+                accepted_quantity=accepted_quantity,
+            )
+        _sync_expected_list_status(db, expected_list)
+        if any(line.condition_status != "ok" for _, line in received_lines):
+            reception.status = "with_issue"
 
     record_event(
         db,
@@ -1843,6 +2102,7 @@ def create_reception(
     db.add(reception)
     db.flush()
 
+    has_reception_issue = False
     for item_payload in payload.items:
         expected_item = get_or_404(db, ExpectedMaterialItem, item_payload.expected_item_id)
         ensure_same_company(current_user, expected_item, db=db)
@@ -1851,27 +2111,43 @@ def create_reception(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Una partida recibida no pertenece a la lista esperada",
             )
-        db.add(
-            MaterialReceptionItem(
-                reception_id=reception.id,
-                expected_item_id=expected_item.id,
-                material_id=expected_item.material_id,
-                house_model_id=expected_item.house_model_id,
-                house_model_material_requirement_id=expected_item.house_model_material_requirement_id,
-                description=expected_item.description,
-                unit=expected_item.unit,
-                received_quantity=item_payload.received_quantity,
-                condition_status=item_payload.condition_status,
-                notes=item_payload.notes,
-            )
+        accepted_quantity, rejected_quantity = _classified_reception_quantities(item_payload)
+        has_reception_issue = has_reception_issue or (
+            rejected_quantity > 0 or item_payload.condition_status != "ok"
         )
-        expected_item.received_quantity += item_payload.received_quantity
+        reception_item = MaterialReceptionItem(
+            reception_id=reception.id,
+            expected_item_id=expected_item.id,
+            material_id=expected_item.material_id,
+            house_model_id=expected_item.house_model_id,
+            house_model_material_requirement_id=expected_item.house_model_material_requirement_id,
+            description=expected_item.description,
+            unit=expected_item.unit,
+            received_quantity=item_payload.received_quantity,
+            accepted_quantity=accepted_quantity,
+            rejected_quantity=rejected_quantity,
+            condition_status=item_payload.condition_status,
+            notes=item_payload.notes,
+        )
+        db.add(reception_item)
+        db.flush()
+        expected_item.received_quantity += accepted_quantity
         expected_item.status = _status_for_item(
             expected_item,
-            has_issue=item_payload.condition_status != "ok",
+            has_issue=rejected_quantity > 0 or item_payload.condition_status != "ok",
         )
-        _sync_purchase_order_item(db, expected_item, item_payload.received_quantity)
-        _upsert_stock(db, warehouse, expected_item, item_payload.received_quantity)
+        _sync_purchase_order_item(db, expected_item, accepted_quantity)
+        _upsert_stock(db, warehouse, expected_item, accepted_quantity)
+        _record_receipt_movement(
+            db,
+            reception=reception,
+            reception_item=reception_item,
+            accepted_quantity=accepted_quantity,
+        )
+
+    _sync_expected_list_status(db, expected_list)
+    if has_reception_issue:
+        reception.status = "with_issue"
 
     record_event(
         db,
@@ -1908,7 +2184,7 @@ def create_reception(
 def list_project_receptions(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory", "view")),
+    current_user: User = Depends(require_permission("inventory_receiving", "view")),
 ) -> list[MaterialReception]:
     project = _project_for_user(db, project_id, current_user)
     return list(
@@ -1925,7 +2201,7 @@ def list_project_receptions(
 def project_inventory_status(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory", "view")),
+    current_user: User = Depends(INVENTORY_CONTEXT_VIEW),
 ) -> list[dict]:
     project = _project_for_user(db, project_id, current_user)
     items = list(
@@ -1946,7 +2222,7 @@ def project_inventory_status(
 def project_model_material_control(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory", "view")),
+    current_user: User = Depends(require_permission("inventory_progress", "view")),
 ) -> list[dict]:
     project = _project_for_user(db, project_id, current_user)
     return _project_model_material_control(db, project)
@@ -1956,7 +2232,7 @@ def project_model_material_control(
 def project_missing_materials(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory", "view")),
+    current_user: User = Depends(require_permission("inventory_missing", "view")),
 ) -> list[dict]:
     project = _project_for_user(db, project_id, current_user)
     items = list(
@@ -1977,7 +2253,7 @@ def project_missing_materials(
 def warehouse_stock(
     warehouse_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory", "view")),
+    current_user: User = Depends(require_permission("inventory_stock", "view")),
 ) -> list[WarehouseStock]:
     warehouse = get_or_404(db, ProjectWarehouse, warehouse_id)
     ensure_same_company(current_user, warehouse, db=db)
@@ -1988,3 +2264,55 @@ def warehouse_stock(
             .order_by(WarehouseStock.description)
         ).all()
     )
+
+
+@router.get(
+    "/warehouses/{warehouse_id}/stock-summary",
+    response_model=list[WarehouseStockSummaryRead],
+)
+def warehouse_stock_summary(
+    warehouse_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("inventory_stock", "view")),
+) -> list[dict]:
+    warehouse = get_or_404(db, ProjectWarehouse, warehouse_id)
+    ensure_same_company(current_user, warehouse, db=db)
+    rows = db.execute(
+        select(
+            InventoryMovement.material_id,
+            InventoryMovement.house_model_id,
+            HouseModel.name,
+            InventoryMovement.description,
+            InventoryMovement.unit,
+            func.coalesce(func.sum(InventoryMovement.quantity), Decimal("0")),
+        )
+        .outerjoin(HouseModel, HouseModel.id == InventoryMovement.house_model_id)
+        .where(InventoryMovement.warehouse_id == warehouse.id)
+        .group_by(
+            InventoryMovement.material_id,
+            InventoryMovement.house_model_id,
+            HouseModel.name,
+            InventoryMovement.description,
+            InventoryMovement.unit,
+        )
+        .having(func.sum(InventoryMovement.quantity) != 0)
+        .order_by(InventoryMovement.description, HouseModel.name)
+    ).all()
+    return [
+        {
+            "material_id": material_id,
+            "house_model_id": house_model_id,
+            "house_model_name": house_model_name,
+            "description": description,
+            "unit": unit,
+            "quantity_on_hand": quantity_on_hand,
+        }
+        for (
+            material_id,
+            house_model_id,
+            house_model_name,
+            description,
+            unit,
+            quantity_on_hand,
+        ) in rows
+    ]

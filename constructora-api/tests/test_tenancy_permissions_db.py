@@ -3,12 +3,14 @@ import unittest
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.core.security import create_access_token, get_password_hash
 from app.db.session import SessionLocal, engine
 from app.main import app
 from app.models import Client, Company, Project, Role, User, UserClientAccess, UserRole
 from app.services.permissions import ensure_default_permissions, permission_code, set_role_permissions
+from tests.db_cleanup import cleanup_company_data
 
 
 @unittest.skipUnless(os.getenv("RUN_DB_TESTS") == "1", "requiere RUN_DB_TESTS=1")
@@ -74,6 +76,11 @@ class TenancyPermissionsDBTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
+        master_user_id = self.master_user.id
+        cleanup_company_data(self.db, self.company_a.id)
+        cleanup_company_data(self.db, self.company_b.id)
+        self.db.execute(text("DELETE FROM users WHERE id = :user_id"), {"user_id": master_user_id})
+        self.db.commit()
         self.db.close()
 
     def _create_company(self, label: str) -> Company:
