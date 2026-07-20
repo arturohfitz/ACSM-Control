@@ -42,7 +42,8 @@ from app.models import (
     User,
 )
 from app.schemas.purchasing import (
-    PurchaseOrderApprovalRead,
+    PurchaseCaseRead,
+    PurchaseCaseStepRead,
     PurchaseOrderBillingModeUpdate,
     PurchaseOrderRead,
     SupplierAgreementCreate,
@@ -1067,6 +1068,243 @@ def list_supplier_rfqs(
             .limit(limit)
         ).all()
     )
+
+
+_PURCHASE_STAGE_LABELS = {
+    "origin": "Origen validado",
+    "providers": "Proveedores convocados",
+    "documents": "Respuesta de proveedores",
+    "capture": "Cotizaciones capturadas",
+    "comparison": "Comparativo listo",
+    "approval": "Aprobacion gerencial",
+    "order": "Orden de compra",
+    "receiving": "Recepcion de material",
+    "payment": "Facturacion y pago",
+    "closed": "Proceso concluido",
+    "cancelled": "Proceso cancelado",
+}
+
+
+def _purchase_case_from_rfq(
+    rfq: SupplierRFQ,
+    requisition: MaterialRequisition | None,
+) -> PurchaseCaseRead:
+    supplier_count = len(rfq.supplier_links)
+    item_count = len(rfq.items)
+    upload_count = sum(len(link.quote_uploads) for link in rfq.supplier_links)
+    eligible_quotes = [quote for quote in rfq.quotes if quote.status != "discarded"]
+    complete_quotes = [quote for quote in eligible_quotes if item_count and len(quote.items) == item_count]
+    required_quote_count = 1 if rfq.request_type in {"agreement", "exception"} else min(3, supplier_count)
+    approvals = [quote.approval for quote in rfq.quotes if quote.approval is not None]
+    approval = next((item for item in approvals if item.status == "approved"), None)
+    if approval is None:
+        approval = next((item for item in approvals if item.status == "requested"), None)
+    approved_quote = next((quote for quote in rfq.quotes if quote.status == "approved"), None)
+    if approved_quote is None and approval is not None:
+        approved_quote = approval.supplier_quote
+    purchase_order = approved_quote.purchase_order if approved_quote is not None else None
+
+    enough_quotes = bool(required_quote_count) and len(complete_quotes) >= required_quote_count
+    if rfq.status == "cancelled":
+        current_stage = "cancelled"
+    elif purchase_order is not None and purchase_order.status == "closed":
+        current_stage = "closed"
+    elif purchase_order is not None and purchase_order.status in {"received", "factured"}:
+        current_stage = "payment"
+    elif purchase_order is not None and purchase_order.status in {"sent", "partially_received"}:
+        current_stage = "receiving"
+    elif rfq.status in {"approved_for_order", "purchase_order_ready"} or (
+        purchase_order is not None and purchase_order.status == "issued"
+    ):
+        current_stage = "order"
+    elif approval is not None and approval.status == "requested":
+        current_stage = "approval"
+    elif enough_quotes:
+        current_stage = "comparison"
+    elif upload_count or eligible_quotes:
+        current_stage = "capture"
+    elif supplier_count:
+        current_stage = "documents"
+    else:
+        current_stage = "providers"
+
+    next_actions = {
+        "providers": ("Seleccionar proveedores", f"/purchasing/operations?rfq_id={rfq.id}&focus=request"),
+        "documents": ("Revisar respuestas", f"/purchasing/operations?rfq_id={rfq.id}&focus=uploads"),
+        "capture": ("Capturar cotizaciones", f"/purchasing/operations?rfq_id={rfq.id}&focus=uploads"),
+        "comparison": ("Revisar comparativo", f"/purchasing/operations?rfq_id={rfq.id}&focus=comparison"),
+        "approval": ("Consultar aprobacion", "/purchasing/approvals"),
+        "order": ("Preparar orden de compra", f"/purchasing/cases/{rfq.id}"),
+        "receiving": ("Consultar recepcion", "/inventory/material-receiving"),
+        "payment": ("Consultar facturas y pagos", "/supplier-payments"),
+        "closed": ("Consultar expediente", f"/purchasing/cases/{rfq.id}"),
+        "cancelled": ("Consultar expediente", f"/purchasing/cases/{rfq.id}"),
+    }
+    next_action_label, next_action_url = next_actions[current_stage]
+    needs_attention = rfq.status == "email_error" or (
+        rfq.response_deadline is not None
+        and rfq.response_deadline < date.today()
+        and current_stage in {"documents", "capture"}
+    )
+
+    stage_order = [
+        "origin",
+        "providers",
+        "documents",
+        "capture",
+        "comparison",
+        "approval",
+        "order",
+        "receiving",
+        "payment",
+    ]
+    current_index = len(stage_order) if current_stage == "closed" else (
+        stage_order.index(current_stage) if current_stage in stage_order else 0
+    )
+    details = {
+        "origin": requisition.requisition_number if requisition else "Solicitud creada directamente por Compras",
+        "providers": f"{supplier_count} proveedor(es) seleccionado(s)",
+        "documents": f"{upload_count} documento(s) recibido(s)",
+        "capture": f"{len(complete_quotes)} de {required_quote_count} cotizacion(es) completas",
+        "comparison": "Costo, entrega y credito disponibles para decidir",
+        "approval": approval.status if approval is not None else "Sin solicitud de aprobacion",
+        "order": purchase_order.po_number if purchase_order is not None else "Pendiente de generar",
+        "receiving": purchase_order.status if purchase_order is not None else "Aun no activada",
+        "payment": f"{len(purchase_order.invoices)} factura(s)" if purchase_order is not None else "Sin facturas",
+    }
+    steps = [
+        PurchaseCaseStepRead(
+            key=key,
+            label=_PURCHASE_STAGE_LABELS[key],
+            status=(
+                "attention"
+                if needs_attention and key == current_stage
+                else "complete"
+                if index < current_index
+                else "current"
+                if index == current_index and current_stage not in {"closed", "cancelled"}
+                else "pending"
+            ),
+            detail=details[key],
+        )
+        for index, key in enumerate(stage_order)
+    ]
+    return PurchaseCaseRead(
+        id=rfq.id,
+        rfq_id=rfq.id,
+        rfq_number=rfq.rfq_number,
+        title=rfq.title,
+        status=rfq.status,
+        project_id=rfq.project_id,
+        project_name=rfq.project.name,
+        requisition_id=requisition.id if requisition else None,
+        requisition_number=requisition.requisition_number if requisition else None,
+        owner_name=rfq.creator.full_name if rfq.creator else None,
+        required_by=rfq.required_by,
+        response_deadline=rfq.response_deadline,
+        supplier_count=supplier_count,
+        item_count=item_count,
+        upload_count=upload_count,
+        quote_count=len(eligible_quotes),
+        complete_quote_count=len(complete_quotes),
+        required_quote_count=required_quote_count,
+        approval_status=approval.status if approval else None,
+        approved_supplier_name=approved_quote.supplier.name if approved_quote and approved_quote.supplier else None,
+        approved_total=approved_quote.subtotal if approved_quote else None,
+        purchase_order_id=purchase_order.id if purchase_order else None,
+        purchase_order_number=purchase_order.po_number if purchase_order else None,
+        purchase_order_status=purchase_order.status if purchase_order else None,
+        current_stage=current_stage,
+        current_stage_label=_PURCHASE_STAGE_LABELS[current_stage],
+        next_action_label=next_action_label,
+        next_action_url=next_action_url,
+        needs_attention=needs_attention,
+        steps=steps,
+        created_at=rfq.created_at,
+        updated_at=rfq.updated_at,
+    )
+
+
+@router.get("/purchase-cases", response_model=list[PurchaseCaseRead])
+def list_purchase_cases(
+    skip: int = 0,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_rfq", "view")),
+) -> list[PurchaseCaseRead]:
+    statement = scoped_select(select(SupplierRFQ), SupplierRFQ, current_user)
+    rfqs = list(
+        db.scalars(
+            statement.options(
+                selectinload(SupplierRFQ.project),
+                selectinload(SupplierRFQ.creator),
+                selectinload(SupplierRFQ.items),
+                selectinload(SupplierRFQ.supplier_links).selectinload(SupplierRFQSupplier.quote_uploads),
+                selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.supplier),
+                selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.items),
+                selectinload(SupplierRFQ.quotes)
+                .selectinload(SupplierQuote.approval)
+                .selectinload(SupplierQuoteApproval.supplier_quote),
+                selectinload(SupplierRFQ.quotes)
+                .selectinload(SupplierQuote.purchase_order)
+                .selectinload(PurchaseOrder.invoices)
+                .selectinload(SupplierInvoice.payments),
+            )
+            .order_by(SupplierRFQ.updated_at.desc())
+            .offset(skip)
+            .limit(limit)
+        ).all()
+    )
+    rfq_ids = [rfq.id for rfq in rfqs]
+    requisitions = (
+        list(
+            db.scalars(
+                scoped_select(select(MaterialRequisition), MaterialRequisition, current_user).where(
+                    MaterialRequisition.converted_rfq_id.in_(rfq_ids)
+                )
+            ).all()
+        )
+        if rfq_ids
+        else []
+    )
+    requisition_by_rfq = {item.converted_rfq_id: item for item in requisitions}
+    return [_purchase_case_from_rfq(rfq, requisition_by_rfq.get(rfq.id)) for rfq in rfqs]
+
+
+@router.get("/purchase-cases/{rfq_id}", response_model=PurchaseCaseRead)
+def get_purchase_case(
+    rfq_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_rfq", "view")),
+) -> PurchaseCaseRead:
+    statement = scoped_select(select(SupplierRFQ), SupplierRFQ, current_user).where(
+        SupplierRFQ.id == rfq_id
+    )
+    rfq = db.scalar(
+        statement.options(
+            selectinload(SupplierRFQ.project),
+            selectinload(SupplierRFQ.creator),
+            selectinload(SupplierRFQ.items),
+            selectinload(SupplierRFQ.supplier_links).selectinload(SupplierRFQSupplier.quote_uploads),
+            selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.supplier),
+            selectinload(SupplierRFQ.quotes).selectinload(SupplierQuote.items),
+            selectinload(SupplierRFQ.quotes)
+            .selectinload(SupplierQuote.approval)
+            .selectinload(SupplierQuoteApproval.supplier_quote),
+            selectinload(SupplierRFQ.quotes)
+            .selectinload(SupplierQuote.purchase_order)
+            .selectinload(PurchaseOrder.invoices)
+            .selectinload(SupplierInvoice.payments),
+        )
+    )
+    if rfq is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expediente no encontrado")
+    requisition = db.scalar(
+        scoped_select(select(MaterialRequisition), MaterialRequisition, current_user).where(
+            MaterialRequisition.converted_rfq_id == rfq.id
+        )
+    )
+    return _purchase_case_from_rfq(rfq, requisition)
 
 
 @router.get("/supplier-rfq-exceptions", response_model=list[SupplierRFQExceptionRead])
@@ -2188,12 +2426,12 @@ def request_supplier_quote_approval(
     return _get_supplier_quote_approval(db, approval.id, current_user)
 
 
-@router.post("/supplier-quotes/{quote_id}/approve", response_model=PurchaseOrderApprovalRead)
+@router.post("/supplier-quotes/{quote_id}/approve", response_model=SupplierQuoteApprovalRead)
 def approve_supplier_quote(
     quote_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("supplier_quotes", "approve")),
-) -> dict:
+) -> SupplierQuoteApproval:
     quote = _supplier_quote_for_approval(db, quote_id, current_user)
     if quote.purchase_order is not None:
         raise HTTPException(
@@ -2230,25 +2468,6 @@ def approve_supplier_quote(
             )
         pending_approval.supplier_quote_id = quote.id
         pending_approval.supplier_quote = quote
-    project = _project_for_user(db, rfq.project_id, current_user)
-    warehouse = _warehouse_for_project(db, rfq.warehouse_id, project)
-    purchase_order = PurchaseOrder(
-        company_id=quote.company_id,
-        project_id=project.id,
-        warehouse_id=warehouse.id if warehouse else None,
-        supplier_id=quote.supplier_id,
-        supplier_quote_id=quote.id,
-        po_number=_next_number(db, PurchaseOrder, "po_number", "OC", quote.company_id),
-        status="issued",
-        issued_at=date.today(),
-        payment_terms_days=quote.payment_terms_days,
-        subtotal=quote.subtotal,
-        notes=quote.notes,
-        approved_by=current_user.id,
-        approved_at=_now(),
-    )
-    db.add(purchase_order)
-    db.flush()
     record_event(
         db,
         current_user,
@@ -2260,7 +2479,7 @@ def approve_supplier_quote(
         label=quote.quote_number or f"Cotizacion proveedor {quote.id}",
         description=(
             f"{current_user.full_name} aprobo la cotizacion del proveedor "
-            f"y genero la orden {purchase_order.po_number}"
+            "para que Compras prepare la orden de compra"
         ),
         metadata={
             "supplier_id": quote.supplier_id,
@@ -2269,86 +2488,11 @@ def approve_supplier_quote(
             "approved_quote_id": quote.id,
         },
     )
-    record_create(db, current_user, module="ordenes_compra", item=purchase_order)
-
-    expected_list = ExpectedMaterialList(
-        company_id=quote.company_id,
-        project_id=project.id,
-        warehouse_id=warehouse.id if warehouse else None,
-        purchase_order_id=purchase_order.id,
-        name=f"OC {purchase_order.po_number}",
-        document_number=purchase_order.po_number,
-        supplier_name=quote.supplier.name if quote.supplier else None,
-        document_date=purchase_order.issued_at,
-        delivery_date=purchase_order.expected_delivery_date,
-        source_document_name=f"{purchase_order.po_number}.pdf",
-        source_notes="Lista esperada generada automaticamente desde orden de compra.",
-        status="open",
-    )
-    db.add(expected_list)
-    db.flush()
-
-    for quote_item in quote.items:
-        rfq_item = quote_item.rfq_item
-        po_item = PurchaseOrderItem(
-            purchase_order_id=purchase_order.id,
-            rfq_item_id=quote_item.rfq_item_id,
-            house_model_id=rfq_item.house_model_id if rfq_item else None,
-            house_model_material_requirement_id=(
-                rfq_item.house_model_material_requirement_id if rfq_item else None
-            ),
-            material_id=quote_item.material_id,
-            description=quote_item.description,
-            unit=quote_item.unit,
-            quantity_ordered=quote_item.quantity,
-            unit_price=quote_item.unit_price,
-            line_total=quote_item.line_total,
-            received_quantity=Decimal("0"),
-            status="pending",
-            notes=quote_item.notes,
-        )
-        db.add(po_item)
-        db.flush()
-        db.add(
-            ExpectedMaterialItem(
-                company_id=quote.company_id,
-                expected_list_id=expected_list.id,
-                material_id=quote_item.material_id,
-                house_model_id=rfq_item.house_model_id if rfq_item else None,
-                house_model_material_requirement_id=(
-                    rfq_item.house_model_material_requirement_id if rfq_item else None
-                ),
-                purchase_order_item_id=po_item.id,
-                description=quote_item.description,
-                unit=quote_item.unit,
-                expected_quantity=quote_item.quantity,
-                unit_price=quote_item.unit_price,
-                line_total=quote_item.line_total,
-                received_quantity=Decimal("0"),
-                status="pending",
-                notes=quote_item.notes,
-            )
-        )
     quote.status = "approved"
     pending_approval.status = "approved"
     pending_approval.decided_by = current_user.id
     pending_approval.decided_at = _now()
-    rfq.status = "awarded"
-    material_requisition = db.scalar(
-        select(MaterialRequisition)
-        .where(
-            MaterialRequisition.converted_rfq_id == rfq.id,
-            MaterialRequisition.company_id == rfq.company_id,
-        )
-        .options(selectinload(MaterialRequisition.items))
-    )
-    if material_requisition is not None:
-        material_requisition.status = "ordered_to_suppliers"
-        material_requisition.review_notes = (
-            f"Compras realizo el pedido a proveedores mediante {purchase_order.po_number}."
-        )
-        for requisition_item in material_requisition.items:
-            requisition_item.status = "ordered"
+    rfq.status = "approved_for_order"
     for rfq_quote in rfq.quotes:
         if rfq_quote.id != quote.id and rfq_quote.status != "approved":
             rfq_quote.status = "discarded"
@@ -2369,40 +2513,20 @@ def approve_supplier_quote(
         title="Cotizacion aprobada",
         body=(
             f"Se aprobo {quote.supplier.name if quote.supplier else 'el proveedor'} "
-            f"y se genero la orden {purchase_order.po_number}."
+            f"para {rfq.rfq_number}. Ya puedes preparar la orden de compra."
         ),
         category="info",
         priority="normal",
         source_module="compras",
-        entity_type="PurchaseOrder",
-        entity_id=purchase_order.id,
-        entity_label=purchase_order.po_number,
-        action_url="/purchasing",
+        entity_type="SupplierRFQ",
+        entity_id=rfq.id,
+        entity_label=rfq.rfq_number,
+        action_url=f"/purchasing/cases/{rfq.id}",
         project_id=rfq.project_id,
-        metadata={"rfq_id": rfq.id, "quote_id": quote.id, "purchase_order_id": purchase_order.id},
-    )
-    notify_permission(
-        db,
-        company_id=quote.company_id,
-        module="inventory_receiving",
-        action="receive",
-        notification_type="purchase_order_ready_to_receive",
-        title="OC lista para recibir",
-        body=f"{purchase_order.po_number} quedo lista para recepcion en inventario.",
-        category="task",
-        priority="normal",
-        source_module="inventario",
-        entity_type="PurchaseOrder",
-        entity_id=purchase_order.id,
-        entity_label=purchase_order.po_number,
-        action_url="/inventory/material-receiving?type=oc",
-        project_id=rfq.project_id,
-        metadata={"supplier_id": quote.supplier_id, "subtotal": str(quote.subtotal)},
+        metadata={"rfq_id": rfq.id, "quote_id": quote.id},
     )
     db.commit()
-    db.refresh(purchase_order)
-    db.refresh(expected_list)
-    return {"purchase_order": purchase_order, "expected_list": expected_list}
+    return _get_supplier_quote_approval(db, pending_approval.id, current_user)
 
 
 @router.post("/supplier-quotes/{quote_id}/reject-approval", response_model=SupplierQuoteApprovalRead)
@@ -2472,6 +2596,159 @@ def reject_supplier_quote_approval(
     return _get_supplier_quote_approval(db, quote.approval.id, current_user)
 
 
+def _create_expected_list_for_purchase_order(
+    db: Session,
+    purchase_order: PurchaseOrder,
+) -> ExpectedMaterialList:
+    existing = db.scalar(
+        select(ExpectedMaterialList)
+        .where(ExpectedMaterialList.purchase_order_id == purchase_order.id)
+        .options(selectinload(ExpectedMaterialList.items))
+    )
+    if existing is not None:
+        return existing
+
+    expected_list = ExpectedMaterialList(
+        company_id=purchase_order.company_id,
+        project_id=purchase_order.project_id,
+        warehouse_id=purchase_order.warehouse_id,
+        purchase_order_id=purchase_order.id,
+        name=f"OC {purchase_order.po_number}",
+        document_number=purchase_order.po_number,
+        supplier_name=purchase_order.supplier.name if purchase_order.supplier else None,
+        document_date=purchase_order.issued_at,
+        delivery_date=purchase_order.expected_delivery_date,
+        source_document_name=f"{purchase_order.po_number}.pdf",
+        source_notes="Lista esperada activada al enviar la orden de compra al proveedor.",
+        status="open",
+    )
+    db.add(expected_list)
+    db.flush()
+    for po_item in purchase_order.items:
+        db.add(
+            ExpectedMaterialItem(
+                company_id=purchase_order.company_id,
+                expected_list_id=expected_list.id,
+                material_id=po_item.material_id,
+                house_model_id=po_item.house_model_id,
+                house_model_material_requirement_id=po_item.house_model_material_requirement_id,
+                purchase_order_item_id=po_item.id,
+                description=po_item.description,
+                unit=po_item.unit,
+                expected_quantity=po_item.quantity_ordered,
+                unit_price=po_item.unit_price,
+                line_total=po_item.line_total,
+                received_quantity=Decimal("0"),
+                status="pending",
+                notes=po_item.notes,
+            )
+        )
+    db.flush()
+    return expected_list
+
+
+@router.post(
+    "/supplier-rfqs/{rfq_id}/purchase-order",
+    response_model=PurchaseOrderRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_purchase_order_from_approved_quote(
+    rfq_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("purchase_orders", "send")),
+) -> PurchaseOrder:
+    quote = db.scalar(
+        select(SupplierQuote)
+        .where(SupplierQuote.rfq_id == rfq_id, SupplierQuote.status == "approved")
+        .options(
+            selectinload(SupplierQuote.supplier),
+            selectinload(SupplierQuote.items).selectinload(SupplierQuoteItem.rfq_item),
+            selectinload(SupplierQuote.purchase_order),
+            selectinload(SupplierQuote.approval),
+            selectinload(SupplierQuote.rfq),
+        )
+    )
+    if quote is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La solicitud aun no tiene una cotizacion aprobada por Gerencia.",
+        )
+    ensure_same_company(current_user, quote, db=db)
+    if quote.purchase_order is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La solicitud ya tiene una orden de compra.",
+        )
+    if quote.approval is None or quote.approval.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La aprobacion gerencial no esta completa.",
+        )
+    rfq = quote.rfq
+    if rfq.status != "approved_for_order":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La solicitud no esta lista para generar la orden de compra.",
+        )
+
+    project = _project_for_user(db, rfq.project_id, current_user)
+    warehouse = _warehouse_for_project(db, rfq.warehouse_id, project)
+    purchase_order = PurchaseOrder(
+        company_id=quote.company_id,
+        project_id=project.id,
+        warehouse_id=warehouse.id if warehouse else None,
+        supplier_id=quote.supplier_id,
+        supplier_quote_id=quote.id,
+        po_number=_next_number(db, PurchaseOrder, "po_number", "OC", quote.company_id),
+        status="issued",
+        issued_at=date.today(),
+        payment_terms_days=quote.payment_terms_days,
+        subtotal=quote.subtotal,
+        notes=quote.notes,
+        approved_by=quote.approval.decided_by,
+        approved_at=quote.approval.decided_at,
+    )
+    db.add(purchase_order)
+    db.flush()
+    for quote_item in quote.items:
+        rfq_item = quote_item.rfq_item
+        db.add(
+            PurchaseOrderItem(
+                purchase_order_id=purchase_order.id,
+                rfq_item_id=quote_item.rfq_item_id,
+                house_model_id=rfq_item.house_model_id if rfq_item else None,
+                house_model_material_requirement_id=(
+                    rfq_item.house_model_material_requirement_id if rfq_item else None
+                ),
+                material_id=quote_item.material_id,
+                description=quote_item.description,
+                unit=quote_item.unit,
+                quantity_ordered=quote_item.quantity,
+                unit_price=quote_item.unit_price,
+                line_total=quote_item.line_total,
+                received_quantity=Decimal("0"),
+                status="pending",
+                notes=quote_item.notes,
+            )
+        )
+    rfq.status = "purchase_order_ready"
+    record_create(db, current_user, module="ordenes_compra", item=purchase_order)
+    record_event(
+        db,
+        current_user,
+        module="compras",
+        action="prepare_purchase_order",
+        entity_type="SupplierRFQ",
+        entity_id=rfq.id,
+        company_id=rfq.company_id,
+        label=rfq.rfq_number,
+        description=f"{current_user.full_name} preparo la orden {purchase_order.po_number}",
+        metadata={"purchase_order_id": purchase_order.id, "supplier_id": quote.supplier_id},
+    )
+    db.commit()
+    return get_purchase_order(purchase_order.id, db, current_user)
+
+
 @router.get("/purchase-orders", response_model=list[PurchaseOrderRead])
 def list_purchase_orders(
     skip: int = 0,
@@ -2524,9 +2801,75 @@ def send_purchase_order(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Solo se pueden enviar ordenes de compra emitidas.",
         )
+    first_send = purchase_order.status == "issued"
     queued_email = _queue_purchase_order_email(db, purchase_order, requested_by=current_user.id)
-    if purchase_order.status == "issued":
+    if first_send:
+        _create_expected_list_for_purchase_order(db, purchase_order)
         purchase_order.status = "sent"
+        quote = db.scalar(
+            select(SupplierQuote)
+            .where(SupplierQuote.id == purchase_order.supplier_quote_id)
+            .options(selectinload(SupplierQuote.rfq))
+        )
+        if quote is not None:
+            rfq = quote.rfq
+            rfq.status = "awarded"
+            material_requisition = db.scalar(
+                select(MaterialRequisition)
+                .where(
+                    MaterialRequisition.converted_rfq_id == rfq.id,
+                    MaterialRequisition.company_id == rfq.company_id,
+                )
+                .options(selectinload(MaterialRequisition.items))
+            )
+            if material_requisition is not None:
+                material_requisition.status = "ordered_to_suppliers"
+                material_requisition.review_notes = (
+                    f"Compras realizo el pedido a proveedores mediante {purchase_order.po_number}."
+                )
+                for requisition_item in material_requisition.items:
+                    requisition_item.status = "ordered"
+                notify_user_id(
+                    db,
+                    user_id=material_requisition.requested_by_user_id,
+                    company_id=purchase_order.company_id,
+                    notification_type="material_requisition_ordered",
+                    title="Compras realizo el pedido",
+                    body=(
+                        f"El requerimiento {material_requisition.requisition_number} avanzo con "
+                        f"la orden {purchase_order.po_number}."
+                    ),
+                    category="info",
+                    priority="normal",
+                    source_module="obra",
+                    entity_type="MaterialRequisition",
+                    entity_id=material_requisition.id,
+                    entity_label=material_requisition.requisition_number,
+                    action_url=f"/work/material-requisitions?requisition_id={material_requisition.id}",
+                    project_id=purchase_order.project_id,
+                    metadata={"purchase_order_id": purchase_order.id, "rfq_id": rfq.id},
+                )
+            notify_permission(
+                db,
+                company_id=purchase_order.company_id,
+                module="inventory_receiving",
+                action="receive",
+                notification_type="purchase_order_ready_to_receive",
+                title="Material esperado por orden de compra",
+                body=(
+                    f"{purchase_order.po_number} fue enviada al proveedor y ya esta disponible "
+                    "para seguimiento de recepcion."
+                ),
+                category="task",
+                priority="normal",
+                source_module="inventario",
+                entity_type="PurchaseOrder",
+                entity_id=purchase_order.id,
+                entity_label=purchase_order.po_number,
+                action_url="/inventory/material-receiving?type=oc",
+                project_id=purchase_order.project_id,
+                metadata={"supplier_id": purchase_order.supplier_id, "rfq_id": rfq.id},
+            )
     record_event(
         db,
         current_user,

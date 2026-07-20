@@ -276,11 +276,10 @@ export default function PurchasingApprovalsPage() {
     setError('')
     setMessage('')
     try {
-      const result = await apiRequest<{ purchase_order: { po_number: string } }>(
-        `/purchasing/supplier-quotes/${selectedQuote.id}/approve`,
-        { method: 'POST' },
-      )
-      notifySuccess(`Aprobacion registrada. Se genero la orden ${result.purchase_order.po_number}.`)
+      await apiRequest<SupplierQuoteApproval>(`/purchasing/supplier-quotes/${selectedQuote.id}/approve`, {
+        method: 'POST',
+      })
+      notifySuccess('Cotizacion aprobada. Compras ya puede preparar la orden de compra.')
       await loadApprovals()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible aprobar la cotizacion')
@@ -887,7 +886,7 @@ export default function PurchasingApprovalsPage() {
                       className="inline-flex h-10 items-center gap-2 rounded-xl bg-acsm-green px-4 text-sm font-bold text-white hover:bg-acsm-green-hover disabled:opacity-60"
                     >
                       <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                      Aprobar cotizacion seleccionada y generar OC
+                      Aprobar cotizacion seleccionada
                     </button>
                     <button
                       type="button"

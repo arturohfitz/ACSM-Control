@@ -103,6 +103,7 @@ type SupplierQuote = {
 
 type PurchaseOrder = {
   id: number
+  supplier_quote_id: number
   project_id: number
   warehouse_id: number
   po_number: string
@@ -302,6 +303,94 @@ async function mockApi(page: Page, currentUser = user) {
       }),
     )
 
+  const purchaseCases = () => {
+    const stageLabels: Record<string, string> = {
+      origin: 'Origen validado',
+      providers: 'Proveedores convocados',
+      documents: 'Respuesta de proveedores',
+      capture: 'Cotizaciones capturadas',
+      comparison: 'Comparativo listo',
+      approval: 'Aprobacion gerencial',
+      order: 'Orden de compra',
+      receiving: 'Recepcion de material',
+      payment: 'Facturacion y pago',
+      closed: 'Proceso concluido',
+    }
+    const stageOrder = ['origin', 'providers', 'documents', 'capture', 'comparison', 'approval', 'order', 'receiving', 'payment']
+
+    return rfqState.map((rfq) => {
+      const quotes = quotesByRfq[rfq.id] ?? []
+      const approval = approvals.find((entry) => entry.rfq_id === rfq.id)
+      const approvedQuote = quotes.find((entry) => entry.status === 'approved')
+      const order = approvedQuote
+        ? purchaseOrders.find((entry) => entry.supplier_quote_id === approvedQuote.id)
+        : undefined
+      const requiredQuotes = 3
+      const completeQuotes = quotes.filter((quote) => quote.items.length === rfq.items.length)
+      let stage = 'documents'
+      if (order?.status === 'closed') stage = 'closed'
+      else if (order && ['received', 'factured'].includes(order.status)) stage = 'payment'
+      else if (order && ['sent', 'partially_received'].includes(order.status)) stage = 'receiving'
+      else if (['approved_for_order', 'purchase_order_ready'].includes(rfq.status) || order?.status === 'issued') stage = 'order'
+      else if (approval?.status === 'requested') stage = 'approval'
+      else if (completeQuotes.length >= requiredQuotes) stage = 'comparison'
+      else if (quotes.length) stage = 'capture'
+
+      const currentIndex = stage === 'closed' ? stageOrder.length : stageOrder.indexOf(stage)
+      const nextActions: Record<string, [string, string]> = {
+        documents: ['Revisar respuestas', `/purchasing/operations?rfq_id=${rfq.id}&focus=uploads`],
+        capture: ['Capturar cotizaciones', `/purchasing/operations?rfq_id=${rfq.id}&focus=uploads`],
+        comparison: ['Revisar comparativo', `/purchasing/operations?rfq_id=${rfq.id}&focus=comparison`],
+        approval: ['Consultar aprobacion', '/purchasing/approvals'],
+        order: ['Preparar orden de compra', `/purchasing/cases/${rfq.id}`],
+        receiving: ['Consultar recepcion', '/inventory/material-receiving'],
+        payment: ['Consultar facturas y pagos', '/supplier-payments'],
+        closed: ['Consultar expediente', `/purchasing/cases/${rfq.id}`],
+      }
+      const [nextActionLabel, nextActionUrl] = nextActions[stage]
+
+      return {
+        id: rfq.id,
+        rfq_id: rfq.id,
+        rfq_number: rfq.rfq_number,
+        title: rfq.title,
+        status: rfq.status,
+        project_id: rfq.project_id,
+        project_name: projects.find((project) => project.id === rfq.project_id)?.name ?? 'Sin proyecto',
+        requisition_id: null,
+        requisition_number: null,
+        owner_name: rfq.creator.full_name,
+        required_by: rfq.required_by,
+        response_deadline: rfq.response_deadline,
+        supplier_count: rfq.supplier_links.length,
+        item_count: rfq.items.length,
+        upload_count: 0,
+        quote_count: quotes.filter((quote) => quote.status !== 'discarded').length,
+        complete_quote_count: completeQuotes.length,
+        required_quote_count: requiredQuotes,
+        approval_status: approval?.status ?? null,
+        approved_supplier_name: approvedQuote?.supplier.name ?? null,
+        approved_total: approvedQuote?.subtotal ?? null,
+        purchase_order_id: order?.id ?? null,
+        purchase_order_number: order?.po_number ?? null,
+        purchase_order_status: order?.status ?? null,
+        current_stage: stage,
+        current_stage_label: stageLabels[stage],
+        next_action_label: nextActionLabel,
+        next_action_url: nextActionUrl,
+        needs_attention: false,
+        steps: stageOrder.map((key, index) => ({
+          key,
+          label: stageLabels[key],
+          status: index < currentIndex ? 'complete' : index === currentIndex ? 'current' : 'pending',
+          detail: '',
+        })),
+        created_at: rfq.created_at,
+        updated_at: rfq.created_at,
+      }
+    })
+  }
+
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -323,6 +412,8 @@ async function mockApi(page: Page, currentUser = user) {
     if (path === '/projects') return json(projects)
     if (path === '/materials') return json(materials)
     if (path === '/purchasing/suppliers') return json(suppliers)
+    if (pathname === '/material-requisitions' && method === 'GET') return json([])
+    if (pathname === '/purchasing/purchase-cases' && method === 'GET') return json(purchaseCases())
     if (pathname === '/purchasing/supplier-rfqs' && method === 'GET') return json(rfqState)
     if (path.startsWith('/purchasing/supplier-rfq-exceptions')) return json([])
     if (pathname === '/purchasing/purchase-orders' && method === 'GET') return json(purchaseOrders)
@@ -371,6 +462,12 @@ async function mockApi(page: Page, currentUser = user) {
       rfqState = [created, ...rfqState]
       quotesByRfq[created.id] = []
       return json(created)
+    }
+
+    const rfqDetailMatch = pathname.match(/^\/purchasing\/supplier-rfqs\/(\d+)$/)
+    if (rfqDetailMatch && method === 'GET') {
+      const rfq = rfqState.find((entry) => entry.id === Number(rfqDetailMatch[1]))
+      return rfq ? json(rfq) : json({ detail: 'RFQ no encontrada' }, 404)
     }
 
     const quotesMatch = pathname.match(/^\/purchasing\/supplier-rfqs\/(\d+)\/quotes$/)
@@ -458,9 +555,36 @@ async function mockApi(page: Page, currentUser = user) {
         .flat()
         .find((entry) => entry.id === quoteId)
       if (!quote) return json({ detail: 'Cotizacion no encontrada' }, 404)
-      upsertRfq(quote.rfq_id, { status: 'awarded' })
+      Object.values(quotesByRfq).forEach((quotes) => {
+        quotes.forEach((entry) => {
+          if (entry.rfq_id === quote.rfq_id) entry.status = entry.id === quote.id ? 'approved' : 'discarded'
+        })
+      })
+      const requestedApproval = approvals.find((entry) => entry.rfq_id === quote.rfq_id)
+      if (!requestedApproval) return json({ detail: 'Aprobacion no encontrada' }, 404)
+      upsertRfq(quote.rfq_id, { status: 'approved_for_order' })
+      const approvedApproval: Approval = {
+        ...requestedApproval,
+        supplier_quote_id: quote.id,
+        supplier_quote: quote,
+        status: 'approved',
+        decision_notes: null,
+        decided_at: '2026-06-04T12:00:00-06:00',
+        decider: user,
+        rfq: { ...requestedApproval.rfq, status: 'approved_for_order' },
+      }
+      approvals = []
+      return json(approvedApproval)
+    }
+
+    const createOrderMatch = pathname.match(/^\/purchasing\/supplier-rfqs\/(\d+)\/purchase-order$/)
+    if (createOrderMatch && method === 'POST') {
+      const rfqId = Number(createOrderMatch[1])
+      const quote = (quotesByRfq[rfqId] ?? []).find((entry) => entry.status === 'approved')
+      if (!quote) return json({ detail: 'Cotizacion aprobada no encontrada' }, 404)
       const order: PurchaseOrder = {
         id: 800,
+        supplier_quote_id: quote.id,
         project_id: 1,
         warehouse_id: 1,
         po_number: 'OC-202606-0001',
@@ -482,17 +606,31 @@ async function mockApi(page: Page, currentUser = user) {
         })),
       }
       purchaseOrders = [order]
+      upsertRfq(rfqId, { status: 'purchase_order_ready' })
+      return json(order, 201)
+    }
+
+    const sendOrderMatch = pathname.match(/^\/purchasing\/purchase-orders\/(\d+)\/send$/)
+    if (sendOrderMatch && method === 'POST') {
+      const orderId = Number(sendOrderMatch[1])
+      purchaseOrders = purchaseOrders.map((order) =>
+        order.id === orderId ? { ...order, status: 'sent' } : order,
+      )
+      const sentOrder = purchaseOrders.find((order) => order.id === orderId)
+      if (!sentOrder) return json({ detail: 'Orden no encontrada' }, 404)
+      const quote = Object.values(quotesByRfq).flat().find((entry) => entry.id === sentOrder.supplier_quote_id)
+      if (quote) upsertRfq(quote.rfq_id, { status: 'awarded' })
       expectedLists = [
         {
           id: 810,
           warehouse_id: 1,
-          purchase_order_id: order.id,
-          name: `Lista esperada ${order.po_number}`,
-          document_number: order.po_number,
-          supplier_name: order.supplier.name,
+          purchase_order_id: sentOrder.id,
+          name: `Lista esperada ${sentOrder.po_number}`,
+          document_number: sentOrder.po_number,
+          supplier_name: sentOrder.supplier.name,
           source_document_name: null,
           source_document_hash: null,
-          items: order.items.map((item) => ({
+          items: sentOrder.items.map((item) => ({
             id: 1000 + item.id,
             purchase_order_item_id: item.id,
             description: item.description,
@@ -504,17 +642,7 @@ async function mockApi(page: Page, currentUser = user) {
           })),
         },
       ]
-      approvals = []
-      return json({ purchase_order: order, expected_list: { id: 1 } })
-    }
-
-    const sendOrderMatch = pathname.match(/^\/purchasing\/purchase-orders\/(\d+)\/send$/)
-    if (sendOrderMatch && method === 'POST') {
-      const orderId = Number(sendOrderMatch[1])
-      purchaseOrders = purchaseOrders.map((order) =>
-        order.id === orderId ? { ...order, status: 'sent' } : order,
-      )
-      return json(purchaseOrders.find((order) => order.id === orderId))
+      return json(sentOrder)
     }
 
     if (pathname === '/purchasing/supplier-invoices' && method === 'POST') {
@@ -689,6 +817,25 @@ async function authenticate(page: Page) {
   })
 }
 
+async function approveAndPrepareOrder(page: Page, sendToSupplier = false) {
+  await page.getByRole('button', { name: 'Solicitar aprobacion' }).click()
+  await expect(page.getByText('Solicitud de aprobacion enviada.')).toBeVisible()
+
+  await page.getByRole('link', { name: /Aprobaciones/i }).click()
+  await page.getByRole('button', { name: /Aprobar cotizacion seleccionada/i }).click()
+  await expect(page.getByText('Cotizacion aprobada. Compras ya puede preparar la orden de compra.')).toBeVisible()
+
+  await page.goto('/purchasing')
+  await expect(page.getByRole('heading', { name: 'Bandeja de compras' })).toBeVisible()
+  await page.getByRole('button', { name: 'Generar orden de compra' }).click()
+  await expect(page.getByText('Orden OC-202606-0001 preparada. Revisa y confirma su envio al proveedor.')).toBeVisible()
+
+  if (sendToSupplier) {
+    await page.getByRole('button', { name: 'Enviar OC al proveedor' }).click()
+    await expect(page.getByText('Orden OC-202606-0001 enviada. Inventario ya tiene el material esperado.')).toBeVisible()
+  }
+}
+
 test('login muestra el dashboard con sesion activa', async ({ page }) => {
   await mockApi(page)
   await page.goto('/login')
@@ -705,7 +852,8 @@ test('menu principal despliega y contrae submenus por modulo', async ({ page }) 
   await authenticate(page)
   await page.goto('/purchasing')
 
-  await expect(page.getByRole('link', { name: /Solicitudes/i })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Bandeja de compras/i })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Captura y cotizaciones/i })).toBeVisible()
   await expect(page.getByRole('link', { name: /Aprobaciones/i })).toBeVisible()
   await expect(page.getByRole('link', { name: /Ordenes de compra/i })).toBeVisible()
 
@@ -735,7 +883,7 @@ test('menu oculta modulos sin permiso para usuarios operativos', async ({ page }
 test('compras separa detalle de solicitud y captura de cotizacion', async ({ page }) => {
   await mockApi(page)
   await authenticate(page)
-  await page.goto('/purchasing')
+  await page.goto('/purchasing/operations')
 
   await expect(page.getByRole('heading', { name: 'Solicitudes de cotizacion' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Ver detalle/i }).first()).toBeVisible()
@@ -761,7 +909,7 @@ test('compras separa detalle de solicitud y captura de cotizacion', async ({ pag
 test('compras crea solicitud de cotizacion con materiales y tres proveedores', async ({ page }) => {
   await mockApi(page)
   await authenticate(page)
-  await page.goto('/purchasing')
+  await page.goto('/purchasing/operations')
 
   await page.getByLabel('Nombre de solicitud').fill('Cemento para prototipo')
   await page.getByLabel('Fecha requerida').fill('2026-06-20')
@@ -779,24 +927,15 @@ test('compras crea solicitud de cotizacion con materiales y tres proveedores', a
   await expect(page.getByText('3 proveedores · 1 partidas').first()).toBeVisible()
 })
 
-test('compras envia comparativo a aprobacion y gerencia genera orden de compra', async ({ page }) => {
+test('compras aprueba cotizacion y prepara la orden como pasos separados', async ({ page }) => {
   await mockApi(page)
   await authenticate(page)
-  await page.goto('/purchasing')
+  await page.goto('/purchasing/operations')
 
   await expect(page.getByText(/Solicitud activa: Cemento/)).toBeVisible()
   await expect(page.getByText('3 cotizaciones completas de 3 requeridas')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Solicitar aprobacion' }).click()
-  await expect(page.getByText('Solicitud de aprobacion enviada.')).toBeVisible()
-
-  await page.getByRole('link', { name: /Aprobaciones/i }).click()
-  await expect(page.getByRole('heading', { name: 'Aprobaciones de cotizacion' })).toBeVisible()
-  await expect(page.getByText('Cemento').first()).toBeVisible()
-  await expect(page.getByRole('button', { name: /Aprobar cotizacion seleccionada y generar OC/i })).toBeVisible()
-
-  await page.getByRole('button', { name: /Aprobar cotizacion seleccionada y generar OC/i }).click()
-  await expect(page.getByText('Aprobacion registrada. Se genero la orden OC-202606-0001.')).toBeVisible()
+  await approveAndPrepareOrder(page)
 
   await page.getByRole('link', { name: /Ordenes de compra/i }).click()
   await expect(page.getByRole('heading', { name: 'Ordenes de compra', level: 2 })).toBeVisible()
@@ -807,14 +946,8 @@ test('compras envia comparativo a aprobacion y gerencia genera orden de compra',
 test('inventario recibe parcialmente una orden de compra generada desde compras', async ({ page }) => {
   await mockApi(page)
   await authenticate(page)
-  await page.goto('/purchasing')
-
-  await page.getByRole('button', { name: 'Solicitar aprobacion' }).click()
-  await expect(page.getByText('Solicitud de aprobacion enviada.')).toBeVisible()
-
-  await page.getByRole('link', { name: /Aprobaciones/i }).click()
-  await page.getByRole('button', { name: /Aprobar cotizacion seleccionada y generar OC/i }).click()
-  await expect(page.getByText('Aprobacion registrada. Se genero la orden OC-202606-0001.')).toBeVisible()
+  await page.goto('/purchasing/operations')
+  await approveAndPrepareOrder(page, true)
 
   await page.goto('/inventory/purchase-order-receiving')
   await expect(page.getByRole('heading', { name: 'Recepcion contra orden de compra' })).toBeVisible()
@@ -844,14 +977,8 @@ test('inventario recibe parcialmente una orden de compra generada desde compras'
 test('pagos bloquea factura con faltantes y permite pagar al completar recepcion', async ({ page }) => {
   await mockApi(page)
   await authenticate(page)
-  await page.goto('/purchasing')
-
-  await page.getByRole('button', { name: 'Solicitar aprobacion' }).click()
-  await expect(page.getByText('Solicitud de aprobacion enviada.')).toBeVisible()
-
-  await page.getByRole('link', { name: /Aprobaciones/i }).click()
-  await page.getByRole('button', { name: /Aprobar cotizacion seleccionada y generar OC/i }).click()
-  await expect(page.getByText('Aprobacion registrada. Se genero la orden OC-202606-0001.')).toBeVisible()
+  await page.goto('/purchasing/operations')
+  await approveAndPrepareOrder(page, true)
 
   await page.goto('/inventory/purchase-order-receiving')
   await page.getByLabel('Orden de compra').selectOption('800')

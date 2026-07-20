@@ -388,6 +388,8 @@ function statusLabel(status: string) {
     partially_quoted: 'Parcial',
     quoted: 'Cotizada',
     approval_pending: 'Pendiente aprobacion',
+    approved_for_order: 'Aprobada para OC',
+    purchase_order_ready: 'OC lista para enviar',
     awarded: 'Aprobada',
     cancelled: 'Cancelada',
     received: 'Recibida',
@@ -426,7 +428,15 @@ type PurchaseJourney = {
   steps: PurchaseJourneyStep[]
 }
 
-const rfqSentStatuses = new Set(['sent', 'partially_quoted', 'quoted', 'approval_pending', 'awarded'])
+const rfqSentStatuses = new Set([
+  'sent',
+  'partially_quoted',
+  'quoted',
+  'approval_pending',
+  'approved_for_order',
+  'purchase_order_ready',
+  'awarded',
+])
 
 function completeQuoteRows(rows: ComparisonRow[]) {
   return rows.filter((row) => row.complete_items === row.total_items && row.total_items > 0)
@@ -462,10 +472,14 @@ function buildPurchaseJourney({
   const quoteTarget = rfq.request_type === 'agreement' ? 1 : 3
   const completedQuotes = completeQuoteRows(comparison)
   const hasAnyQuote = comparison.length > 0 || quoteUploads.length > 0
-  const quotesCaptured = completedQuotes.length >= quoteTarget || ['quoted', 'approval_pending', 'awarded'].includes(rfq.status)
+  const quotesCaptured =
+    completedQuotes.length >= quoteTarget ||
+    ['quoted', 'approval_pending', 'approved_for_order', 'purchase_order_ready', 'awarded'].includes(rfq.status)
   const approvalRequested =
     rfq.status === 'approval_pending' || comparison.some((row) => row.status === 'approval_requested')
-  const approved = rfq.status === 'awarded' || comparison.some((row) => row.status === 'approved')
+  const approved =
+    ['approved_for_order', 'purchase_order_ready', 'awarded'].includes(rfq.status) ||
+    comparison.some((row) => row.status === 'approved')
   const hasOrderReady = approved && readyOrders.length > 0
 
   const requestTypeText =

@@ -5,7 +5,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.schemas.common import NonNegativeDecimal, ORMModel, PositiveDecimal, TimestampRead
-from app.schemas.inventory import ExpectedMaterialListRead
 
 
 SupplierStatus = Literal["active", "suspended", "blocked"]
@@ -19,6 +18,8 @@ RFQStatus = Literal[
     "partially_quoted",
     "quoted",
     "approval_pending",
+    "approved_for_order",
+    "purchase_order_ready",
     "awarded",
     "cancelled",
 ]
@@ -442,6 +443,48 @@ class SupplierRFQComparisonRow(BaseModel):
     total_items: int
 
 
+class PurchaseCaseStepRead(BaseModel):
+    key: str
+    label: str
+    status: Literal["complete", "current", "pending", "attention"]
+    detail: str
+
+
+class PurchaseCaseRead(BaseModel):
+    id: int
+    rfq_id: int
+    rfq_number: str
+    title: str
+    status: RFQStatus
+    project_id: int
+    project_name: str
+    requisition_id: int | None = None
+    requisition_number: str | None = None
+    owner_name: str | None = None
+    required_by: date | None = None
+    response_deadline: date | None = None
+    supplier_count: int
+    item_count: int
+    upload_count: int
+    quote_count: int
+    complete_quote_count: int
+    required_quote_count: int
+    approval_status: SupplierQuoteApprovalStatus | None = None
+    approved_supplier_name: str | None = None
+    approved_total: Decimal | None = None
+    purchase_order_id: int | None = None
+    purchase_order_number: str | None = None
+    purchase_order_status: PurchaseOrderStatus | None = None
+    current_stage: str
+    current_stage_label: str
+    next_action_label: str
+    next_action_url: str
+    needs_attention: bool = False
+    steps: list[PurchaseCaseStepRead]
+    created_at: datetime
+    updated_at: datetime
+
+
 class PurchaseOrderItemRead(ORMModel):
     id: int
     purchase_order_id: int
@@ -574,11 +617,6 @@ class SupplierInvoiceValidation(BaseModel):
     status: SupplierInvoiceStatus
     pending_items: int
     message: str
-
-
-class PurchaseOrderApprovalRead(BaseModel):
-    purchase_order: PurchaseOrderRead
-    expected_list: ExpectedMaterialListRead
 
 
 def invoice_due_date(invoice_date: date, payment_terms_days: int) -> date:

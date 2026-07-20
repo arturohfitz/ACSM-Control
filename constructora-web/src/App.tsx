@@ -22,6 +22,7 @@ import ProjectsPage from './pages/ProjectsPage'
 import PurchasingApprovalsPage from './pages/PurchasingApprovalsPage'
 import PurchasingOrdersPage from './pages/PurchasingOrdersPage'
 import PurchasingPage from './pages/PurchasingPage'
+import PurchasingWorkspacePage from './pages/PurchasingWorkspacePage'
 import SettingsPage from './pages/SettingsPage'
 import SupplierAgreementsPage from './pages/SupplierAgreementsPage'
 import SupplierPaymentsPage from './pages/SupplierPaymentsPage'
@@ -64,7 +65,9 @@ export default function App() {
             path="/construction-concepts"
             element={protect(<ConstructionConceptsPage />, 'construction_concepts:view')}
           />
-          <Route path="/purchasing" element={protect(<PurchasingPage />, 'supplier_rfq:view')} />
+          <Route path="/purchasing" element={protect(<PurchasingWorkspacePage />, 'supplier_rfq:view')} />
+          <Route path="/purchasing/cases/:caseId" element={protect(<PurchasingWorkspacePage />, 'supplier_rfq:view')} />
+          <Route path="/purchasing/operations" element={protect(<PurchasingPage />, 'supplier_rfq:view')} />
           <Route
             path="/purchasing/material-requisitions"
             element={protect(<MaterialRequisitionsPage mode="purchasing" />, 'material_requisitions:review')}

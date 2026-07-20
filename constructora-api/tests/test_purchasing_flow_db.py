@@ -15,11 +15,14 @@ from app.api.v1.endpoints.purchasing import (
     create_supplier_agreement,
     create_supplier_quote,
     create_supplier_rfq,
+    create_purchase_order_from_approved_quote,
     create_supplier_invoice,
     create_supplier_payment,
+    list_purchase_cases,
     list_supplier_agreement_approvals,
     list_supplier_quote_approvals,
     request_supplier_rfq_approval,
+    send_purchase_order,
     supplier_rfq_comparison,
     update_purchase_order_billing_mode,
     validate_supplier_invoice,
@@ -350,16 +353,53 @@ class PurchasingFlowDBTest(unittest.TestCase):
 
         selected_quote_id = quote_ids[-1]
         approval_result = approve_supplier_quote(selected_quote_id, self.db, self.user)
-        purchase_order = approval_result["purchase_order"]
-        expected_list = approval_result["expected_list"]
+        self.assertEqual(approval_result.status, "approved")
+        self.assertEqual(approval_result.rfq.status, "approved_for_order")
+        purchase_case = next(item for item in list_purchase_cases(db=self.db, current_user=self.user) if item.rfq_id == rfq.id)
+        self.assertEqual(purchase_case.current_stage, "order")
+        self.assertIsNone(purchase_case.purchase_order_id)
+
+        purchase_order = create_purchase_order_from_approved_quote(rfq.id, self.db, self.user)
+        self.assertEqual(purchase_order.status, "issued")
+        self.assertIsNone(
+            self.db.scalar(
+                select(ExpectedMaterialList).where(
+                    ExpectedMaterialList.purchase_order_id == purchase_order.id
+                )
+            )
+        )
+        purchase_case = next(item for item in list_purchase_cases(db=self.db, current_user=self.user) if item.rfq_id == rfq.id)
+        self.assertEqual(purchase_case.current_stage, "order")
+        self.assertEqual(purchase_case.purchase_order_status, "issued")
+        purchase_order = send_purchase_order(
+            purchase_order.id,
+            BackgroundTasks(),
+            self.db,
+            self.user,
+        )
+        expected_list = self.db.scalar(
+            select(ExpectedMaterialList)
+            .where(ExpectedMaterialList.purchase_order_id == purchase_order.id)
+            .options(selectinload(ExpectedMaterialList.items))
+        )
+        assert expected_list is not None
 
         self.assertEqual(purchase_order.supplier_quote_id, selected_quote_id)
-        self.assertEqual(purchase_order.status, "issued")
+        self.assertEqual(purchase_order.status, "sent")
         self.assertEqual(expected_list.purchase_order_id, purchase_order.id)
         self.assertEqual(len(expected_list.items), 2)
+        purchase_case = next(item for item in list_purchase_cases(db=self.db, current_user=self.user) if item.rfq_id == rfq.id)
+        self.assertEqual(purchase_case.current_stage, "receiving")
+        self.assertEqual(purchase_case.purchase_order_status, "sent")
 
         purchase_order = self._get_purchase_order(purchase_order.id)
         first_item, second_item = purchase_order.items
+        first_expected_item = next(
+            item for item in expected_list.items if item.purchase_order_item_id == first_item.id
+        )
+        second_expected_item = next(
+            item for item in expected_list.items if item.purchase_order_item_id == second_item.id
+        )
         create_reception(
             self.project.id,
             MaterialReceptionCreate(
@@ -369,7 +409,7 @@ class PurchasingFlowDBTest(unittest.TestCase):
                 received_by="Almacen CI",
                 items=[
                     MaterialReceptionItemCreate(
-                        expected_item_id=expected_list.items[0].id,
+                        expected_item_id=first_expected_item.id,
                         received_quantity=first_item.quantity_ordered / Decimal("2"),
                     )
                 ],
@@ -380,8 +420,9 @@ class PurchasingFlowDBTest(unittest.TestCase):
 
         purchase_order = self._get_purchase_order(purchase_order.id)
         self.assertEqual(purchase_order.status, "partially_received")
-        self.assertEqual(purchase_order.items[0].status, "partial")
-        self.assertEqual(purchase_order.items[1].status, "pending")
+        item_statuses = {item.id: item.status for item in purchase_order.items}
+        self.assertEqual(item_statuses[first_item.id], "partial")
+        self.assertEqual(item_statuses[second_item.id], "pending")
 
         invoice = create_supplier_invoice(
             SupplierInvoiceCreate(
@@ -417,12 +458,12 @@ class PurchasingFlowDBTest(unittest.TestCase):
                 received_by="Almacen CI",
                 items=[
                     MaterialReceptionItemCreate(
-                        expected_item_id=expected_list.items[0].id,
-                        received_quantity=purchase_order.items[0].quantity_ordered
-                        - purchase_order.items[0].received_quantity,
+                        expected_item_id=first_expected_item.id,
+                        received_quantity=first_item.quantity_ordered
+                        - first_item.received_quantity,
                     ),
                     MaterialReceptionItemCreate(
-                        expected_item_id=expected_list.items[1].id,
+                        expected_item_id=second_expected_item.id,
                         received_quantity=second_item.quantity_ordered,
                     ),
                 ],
@@ -532,8 +573,20 @@ class PurchasingFlowDBTest(unittest.TestCase):
             self.user,
         )
         approval_result = approve_supplier_quote(quote.id, self.db, self.user)
-        purchase_order = approval_result["purchase_order"]
-        expected_list = approval_result["expected_list"]
+        self.assertEqual(approval_result.rfq.status, "approved_for_order")
+        purchase_order = create_purchase_order_from_approved_quote(rfq.id, self.db, self.user)
+        purchase_order = send_purchase_order(
+            purchase_order.id,
+            BackgroundTasks(),
+            self.db,
+            self.user,
+        )
+        expected_list = self.db.scalar(
+            select(ExpectedMaterialList)
+            .where(ExpectedMaterialList.purchase_order_id == purchase_order.id)
+            .options(selectinload(ExpectedMaterialList.items))
+        )
+        assert expected_list is not None
 
         purchase_order = update_purchase_order_billing_mode(
             purchase_order.id,
