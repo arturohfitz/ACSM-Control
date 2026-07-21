@@ -1109,6 +1109,7 @@ test('pagos bloquea factura con faltantes y permite pagar al completar recepcion
   await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
 
   await page.goto('/supplier-payments')
+  await page.getByRole('tab', { name: /Facturas/ }).click()
   const invoiceSection = page.locator('section', {
     has: page.getByRole('heading', { name: 'Facturas de proveedores' }),
   })
@@ -1139,6 +1140,7 @@ test('pagos bloquea factura con faltantes y permite pagar al completar recepcion
   await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
 
   await page.goto('/supplier-payments')
+  await page.getByRole('tab', { name: /Facturas/ }).click()
   const refreshedInvoiceSection = page.locator('section', {
     has: page.getByRole('heading', { name: 'Facturas de proveedores' }),
   })
@@ -1148,6 +1150,7 @@ test('pagos bloquea factura con faltantes y permite pagar al completar recepcion
     refreshedInvoiceSection.locator('tr', { hasText: 'FAC-001' }).getByText('Aprobada para pago'),
   ).toBeVisible()
 
+  await page.getByRole('tab', { name: /Pagos/ }).click()
   const paymentSection = page.locator('section', {
     has: page.getByRole('heading', { name: 'Programar pago' }),
   })

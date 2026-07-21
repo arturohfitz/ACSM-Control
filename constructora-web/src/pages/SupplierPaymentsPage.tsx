@@ -1,14 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
+  ArrowRight,
   BarChart3,
   Building2,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  CircleDollarSign,
+  ClipboardCheck,
+  Clock3,
   CreditCard,
   Download,
   FileCheck2,
   FileText,
+  ListChecks,
+  PackageCheck,
   RefreshCw,
+  Search,
   Upload,
 } from 'lucide-react'
 
@@ -150,6 +159,16 @@ type ProjectFinancialResponse = {
   materials: ProjectFinancialMaterial[]
 }
 
+type PaymentWorkspaceTab = 'pending' | 'invoices' | 'reconciliations' | 'payments' | 'progress'
+
+const workspaceTabs = new Set<PaymentWorkspaceTab>([
+  'pending',
+  'invoices',
+  'reconciliations',
+  'payments',
+  'progress',
+])
+
 const money = new Intl.NumberFormat('es-MX', {
   style: 'currency',
   currency: 'MXN',
@@ -231,6 +250,16 @@ export default function SupplierPaymentsPage() {
     () => new URLSearchParams(window.location.search).get('project_id') ?? '',
   )
   const [approvingBudget, setApprovingBudget] = useState(false)
+  const [activeView, setActiveView] = useState<PaymentWorkspaceTab>(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('reconciliation_id')) return 'reconciliations'
+    const requestedView = params.get('view') as PaymentWorkspaceTab | null
+    return requestedView && workspaceTabs.has(requestedView) ? requestedView : 'pending'
+  })
+  const [materialSearch, setMaterialSearch] = useState('')
+  const [materialStatus, setMaterialStatus] = useState('all')
+  const [showMaterialDetail, setShowMaterialDetail] = useState(false)
+  const [showAllMaterials, setShowAllMaterials] = useState(false)
 
   const [purchaseOrderId, setPurchaseOrderId] = useState('')
   const [invoiceNumber, setInvoiceNumber] = useState('')
@@ -396,6 +425,65 @@ export default function SupplierPaymentsPage() {
     () => financialData.projects.find((project) => String(project.project_id) === selectedProjectId) ?? null,
     [financialData.projects, selectedProjectId],
   )
+  const selectedProjectInvoices = useMemo(() => {
+    if (!selectedProjectId) return invoices
+    return invoices.filter((invoice) => {
+      const projectId = invoice.purchase_order?.project_id
+        ?? orders.find((order) => order.id === invoice.purchase_order_id)?.project_id
+      return String(projectId ?? '') === selectedProjectId
+    })
+  }, [invoices, orders, selectedProjectId])
+  const selectedProjectInvoiceIds = useMemo(
+    () => new Set(selectedProjectInvoices.map((invoice) => invoice.id)),
+    [selectedProjectInvoices],
+  )
+  const selectedProjectPayments = useMemo(
+    () => payments.filter((payment) => selectedProjectInvoiceIds.has(payment.supplier_invoice_id)),
+    [payments, selectedProjectInvoiceIds],
+  )
+  const invoiceAttentionCount = selectedProjectInvoices.filter((invoice) =>
+    ['document_pending', 'fiscal_review', 'blocked'].includes(invoice.status),
+  ).length
+  const projectPayableCount = selectedProjectInvoices.filter((invoice) =>
+    invoice.status === 'approved_for_payment',
+  ).length
+  const projectScheduledCount = selectedProjectPayments.filter((payment) => payment.status === 'scheduled').length
+  const projectPaidCount = selectedProjectPayments.filter((payment) => payment.status === 'paid').length
+  const reconciliationIssueCount = selectedProjectFinancial?.integrity_issues.length ?? 0
+  const hasPendingReception = Boolean(
+    selectedProjectFinancial
+    && Number(selectedProjectFinancial.committed_amount) > Number(selectedProjectFinancial.received_amount),
+  )
+  const pendingActionCount =
+    (selectedProjectFinancial && !selectedProjectFinancial.baseline_id ? 1 : 0)
+    + (hasPendingReception ? 1 : 0)
+    + invoiceAttentionCount
+    + reconciliationIssueCount
+    + projectPayableCount
+    + projectScheduledCount
+  const filteredFinancialMaterials = useMemo(() => {
+    const query = materialSearch.trim().toLocaleLowerCase('es-MX')
+    return financialData.materials.filter((material) => {
+      const matchesSearch = !query || [material.description, material.source_code, material.house_model_name]
+        .some((value) => value?.toLocaleLowerCase('es-MX').includes(query))
+      const matchesStatus = materialStatus === 'all' || material.status === materialStatus
+      return matchesSearch && matchesStatus
+    })
+  }, [financialData.materials, materialSearch, materialStatus])
+  const visibleFinancialMaterials = showAllMaterials
+    ? filteredFinancialMaterials
+    : filteredFinancialMaterials.slice(0, 10)
+
+  function openWorkspace(view: PaymentWorkspaceTab) {
+    setActiveView(view)
+    const url = new URL(window.location.href)
+    url.searchParams.set('view', view)
+    if (selectedProjectId) url.searchParams.set('project_id', selectedProjectId)
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+    window.requestAnimationFrame(() => {
+      document.getElementById(`payments-view-${view}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
 
   async function loadData() {
     setLoading(true)
@@ -436,12 +524,20 @@ export default function SupplierPaymentsPage() {
 
   useEffect(() => {
     if (!canViewProjectFinancials || !selectedProjectId) return
+    setShowAllMaterials(false)
     void apiRequest<ProjectFinancialResponse>(
       `/purchasing/project-financial-progress?project_id=${selectedProjectId}`,
     )
       .then(setFinancialData)
       .catch((err) => setError(err instanceof Error ? err.message : 'No fue posible cargar el avance financiero'))
   }, [canViewProjectFinancials, selectedProjectId])
+
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (selectedProjectId) url.searchParams.set('project_id', selectedProjectId)
+    else url.searchParams.delete('project_id')
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [selectedProjectId])
 
   useEffect(() => {
     if (!selectedOrder) {
@@ -747,8 +843,299 @@ export default function SupplierPaymentsPage() {
         </div>
       )}
 
-      {canViewProjectFinancials && (
-        <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-acsm-line px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
+              <CircleDollarSign className="h-4 w-4" aria-hidden="true" />
+            </div>
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-acsm-muted">
+                Control financiero
+              </div>
+              <h2 className="font-semibold text-acsm-ink">Pagos a proveedores</h2>
+              <p className="text-xs text-acsm-muted">Selecciona un desarrollo y atiende el siguiente paso del proceso.</p>
+            </div>
+          </div>
+          <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto">
+            {canViewProjectFinancials && (
+              <select
+                aria-label="Desarrollo financiero"
+                value={selectedProjectId}
+                onChange={(event) => setSelectedProjectId(event.target.value)}
+                className="h-9 min-w-0 flex-1 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink sm:min-w-[320px]"
+              >
+                <option value="">Seleccionar desarrollo</option>
+                {financialData.projects.map((project) => (
+                  <option key={project.project_id} value={project.project_id}>
+                    {project.project_name} · {project.client_name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={() => void loadData()}
+              disabled={loading}
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper disabled:opacity-60"
+              title="Actualizar centro financiero"
+            >
+              <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} aria-hidden="true" />
+              Actualizar
+            </button>
+          </div>
+        </div>
+
+        {selectedProjectFinancial ? (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line bg-acsm-paper px-4 py-3">
+              <div>
+                <div className="font-bold text-acsm-ink">{selectedProjectFinancial.project_name}</div>
+                <div className="text-xs text-acsm-muted">
+                  {selectedProjectFinancial.client_name} · {formatQuantity(Number(selectedProjectFinancial.houses_count))} viviendas ·{' '}
+                  {selectedProjectFinancial.models_count} modelo(s)
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="rounded-full border border-acsm-line bg-white px-2 py-1 font-semibold text-acsm-muted">
+                  {selectedProjectFinancial.purchase_orders_count} OC
+                </span>
+                <span className="rounded-full border border-acsm-line bg-white px-2 py-1 font-semibold text-acsm-muted">
+                  {selectedProjectFinancial.invoices_count} facturas
+                </span>
+                <span className="rounded-full border border-acsm-line bg-white px-2 py-1 font-semibold text-acsm-muted">
+                  {selectedProjectFinancial.payments_count} pagos
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 border-b border-acsm-line sm:grid-cols-3 xl:grid-cols-6">
+              {[
+                {
+                  label: 'Recepcion',
+                  detail: `${selectedProjectFinancial.received_percent}% recibido`,
+                  icon: PackageCheck,
+                  attention: hasPendingReception,
+                  action: () => window.location.assign(`/inventory/material-receiving?project_id=${selectedProjectId}`),
+                },
+                {
+                  label: 'Factura',
+                  detail: `${selectedProjectInvoices.length} registrada(s)`,
+                  icon: FileText,
+                  attention: selectedProjectInvoices.length === 0 && Number(selectedProjectFinancial.received_amount) > 0,
+                  action: () => openWorkspace('invoices'),
+                },
+                {
+                  label: 'Validacion',
+                  detail: invoiceAttentionCount ? `${invoiceAttentionCount} por revisar` : 'Sin bloqueos',
+                  icon: ClipboardCheck,
+                  attention: invoiceAttentionCount > 0,
+                  action: () => openWorkspace('invoices'),
+                },
+                {
+                  label: 'Conciliacion',
+                  detail: reconciliationIssueCount ? `${reconciliationIssueCount} diferencia(s)` : 'Sin diferencias',
+                  icon: ListChecks,
+                  attention: reconciliationIssueCount > 0,
+                  action: () => openWorkspace('reconciliations'),
+                },
+                {
+                  label: 'Programacion',
+                  detail: projectPayableCount ? `${projectPayableCount} lista(s)` : `${projectScheduledCount} programado(s)`,
+                  icon: Clock3,
+                  attention: projectPayableCount > 0,
+                  action: () => openWorkspace('payments'),
+                },
+                {
+                  label: 'Pagado',
+                  detail: `${selectedProjectFinancial.paid_percent}% · ${projectPaidCount} pago(s)`,
+                  icon: CheckCircle2,
+                  attention: false,
+                  action: () => openWorkspace('payments'),
+                },
+              ].map((stage, index) => {
+                const StageIcon = stage.icon
+                return (
+                  <button
+                    key={stage.label}
+                    type="button"
+                    onClick={stage.action}
+                    className="group flex min-h-20 items-center gap-3 border-b border-acsm-line px-4 py-3 text-left hover:bg-acsm-paper sm:border-r xl:border-b-0"
+                  >
+                    <span className={[
+                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-bold',
+                      stage.attention
+                        ? 'border-amber-300 bg-amber-50 text-amber-800'
+                        : 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                    ].join(' ')}>
+                      <StageIcon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[10px] font-bold uppercase text-acsm-muted">Etapa {index + 1}</span>
+                      <span className="block text-sm font-bold text-acsm-ink">{stage.label}</span>
+                      <span className={stage.attention ? 'block text-xs font-semibold text-amber-800' : 'block text-xs text-acsm-muted'}>
+                        {stage.detail}
+                      </span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        ) : (
+          <div className="border-b border-acsm-line px-4 py-6 text-center text-sm text-acsm-muted">
+            Selecciona o registra un desarrollo para consultar su proceso financiero.
+          </div>
+        )}
+
+        <div className="overflow-x-auto border-b border-acsm-line bg-white px-2 pt-2">
+          <div className="flex min-w-max gap-1" role="tablist" aria-label="Vistas de pagos a proveedores">
+            {[
+              { id: 'pending' as const, label: 'Pendientes', count: pendingActionCount, icon: AlertTriangle, allowed: true },
+              { id: 'invoices' as const, label: 'Facturas', count: selectedProjectInvoices.length, icon: FileCheck2, allowed: canViewInvoices },
+              { id: 'reconciliations' as const, label: 'Conciliaciones', count: reconciliationIssueCount, icon: ListChecks, allowed: canViewReconciliations },
+              { id: 'payments' as const, label: 'Pagos', count: selectedProjectPayments.length, icon: CreditCard, allowed: canViewPayments },
+              { id: 'progress' as const, label: 'Avance del proyecto', count: financialData.materials.length, icon: BarChart3, allowed: canViewProjectFinancials },
+            ].filter((tab) => tab.allowed).map((tab) => {
+              const TabIcon = tab.icon
+              const active = activeView === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => openWorkspace(tab.id)}
+                  className={[
+                    'inline-flex h-10 items-center gap-2 border-b-2 px-3 text-sm font-semibold',
+                    active
+                      ? 'border-acsm-green text-acsm-green'
+                      : 'border-transparent text-acsm-muted hover:border-acsm-line hover:text-acsm-ink',
+                  ].join(' ')}
+                >
+                  <TabIcon className="h-4 w-4" aria-hidden="true" />
+                  {tab.label}
+                  <span className={active ? 'rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700' : 'rounded-full bg-acsm-paper px-2 py-0.5 text-xs'}>
+                    {tab.count}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {activeView === 'pending' && (
+          <div id="payments-view-pending" role="tabpanel">
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <div>
+                <h3 className="font-semibold text-acsm-ink">Siguiente paso</h3>
+                <p className="text-xs text-acsm-muted">Atiende primero los registros que detienen el flujo de pago.</p>
+              </div>
+              <span className={pendingActionCount ? 'rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800' : 'rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700'}>
+                {pendingActionCount ? `${pendingActionCount} por atender` : 'Sin pendientes'}
+              </span>
+            </div>
+            <div className="border-t border-acsm-line">
+              {selectedProjectFinancial && !selectedProjectFinancial.baseline_id && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" aria-hidden="true" />
+                    <div>
+                      <div className="text-sm font-bold text-acsm-ink">Aprobar presupuesto de materiales</div>
+                      <div className="text-xs text-acsm-muted">Define la linea base antes de medir compras y pagos del desarrollo.</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => openWorkspace('progress')} className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line px-3 text-sm font-semibold hover:bg-acsm-paper">
+                    Revisar avance <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              {hasPendingReception && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <PackageCheck className="mt-0.5 h-4 w-4 text-blue-700" aria-hidden="true" />
+                    <div>
+                      <div className="text-sm font-bold text-acsm-ink">Material pendiente de recibir</div>
+                      <div className="text-xs text-acsm-muted">Inventarios debe registrar las entregas antes de validar la factura.</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => window.location.assign(`/inventory/material-receiving?project_id=${selectedProjectId}`)} className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line px-3 text-sm font-semibold hover:bg-acsm-paper">
+                    Ir a recepcion <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              {invoiceAttentionCount > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <FileCheck2 className="mt-0.5 h-4 w-4 text-amber-700" aria-hidden="true" />
+                    <div>
+                      <div className="text-sm font-bold text-acsm-ink">{invoiceAttentionCount} factura(s) requieren revision</div>
+                      <div className="text-xs text-acsm-muted">Completa documentos, validacion fiscal o faltantes de recepcion.</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => openWorkspace('invoices')} className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line px-3 text-sm font-semibold hover:bg-acsm-paper">
+                    Revisar facturas <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              {reconciliationIssueCount > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-red-100 bg-red-50 px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 text-red-700" aria-hidden="true" />
+                    <div>
+                      <div className="text-sm font-bold text-red-900">{reconciliationIssueCount} diferencia(s) requieren conciliacion</div>
+                      <div className="text-xs text-red-800">Corrige el documento o solicita un ajuste controlado antes de pagar.</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => openWorkspace('reconciliations')} className="inline-flex h-9 items-center gap-2 rounded-md border border-red-200 bg-white px-3 text-sm font-semibold text-red-800 hover:bg-red-100">
+                    Conciliar <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              {projectPayableCount > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <CreditCard className="mt-0.5 h-4 w-4 text-emerald-700" aria-hidden="true" />
+                    <div>
+                      <div className="text-sm font-bold text-acsm-ink">{projectPayableCount} factura(s) listas para programar</div>
+                      <div className="text-xs text-acsm-muted">La validacion concluyo; define fecha, monto y referencia del pago.</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => openWorkspace('payments')} className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line px-3 text-sm font-semibold hover:bg-acsm-paper">
+                    Programar pago <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              {projectScheduledCount > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <Clock3 className="mt-0.5 h-4 w-4 text-blue-700" aria-hidden="true" />
+                    <div>
+                      <div className="text-sm font-bold text-acsm-ink">{projectScheduledCount} pago(s) esperan confirmacion</div>
+                      <div className="text-xs text-acsm-muted">Confirma el pago realizado para cerrar la etapa financiera.</div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => openWorkspace('payments')} className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line px-3 text-sm font-semibold hover:bg-acsm-paper">
+                    Ver pagos <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+              {!pendingActionCount && (
+                <div className="flex items-center gap-3 px-4 py-6">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-700" aria-hidden="true" />
+                  <div>
+                    <div className="text-sm font-bold text-acsm-ink">El desarrollo no tiene acciones financieras pendientes</div>
+                    <div className="text-xs text-acsm-muted">Consulta pagos realizados o el avance del presupuesto desde las pestañas superiores.</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {canViewProjectFinancials && activeView === 'progress' && (
+        <section id="payments-view-progress" className="scroll-mt-4 overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
@@ -917,7 +1304,7 @@ export default function SupplierPaymentsPage() {
                     {canRequestReconciliations && (
                       <button
                         type="button"
-                        onClick={() => document.getElementById('financial-reconciliations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                        onClick={() => openWorkspace('reconciliations')}
                         className="shrink-0 rounded-md border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-800 hover:bg-red-100"
                       >
                         Iniciar correccion
@@ -928,41 +1315,113 @@ export default function SupplierPaymentsPage() {
               )}
 
               {!!financialData.materials.length && (
-                <div className="overflow-x-auto">
-                  <table className="min-w-[1100px] w-full text-xs">
-                    <thead className="bg-acsm-paper uppercase text-acsm-muted">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Material</th>
-                        <th className="px-3 py-3 text-right">Presupuesto</th>
-                        <th className="px-3 py-3 text-right">Ordenado</th>
-                        <th className="px-3 py-3 text-right">Recibido</th>
-                        <th className="px-3 py-3 text-right">Facturado</th>
-                        <th className="px-3 py-3 text-right">Pagado</th>
-                        <th className="px-4 py-3 text-right">Disponible</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {financialData.materials.map((material) => (
-                        <tr key={material.baseline_item_id} className="border-t border-acsm-line">
-                          <td className="px-4 py-3">
-                            <div className="font-semibold text-acsm-ink">{material.description}</div>
-                            <div className="text-acsm-muted">
-                              {material.source_code || 'Sin codigo'} · {material.house_model_name} ·{' '}
-                              {formatQuantity(Number(material.ordered_quantity))} de {formatQuantity(Number(material.budget_quantity))} {material.unit}
-                            </div>
-                          </td>
-                          <td className="px-3 py-3 text-right font-semibold">{formatMoney(material.budget_amount)}</td>
-                          <td className="px-3 py-3 text-right">{formatMoney(material.committed_amount)}</td>
-                          <td className="px-3 py-3 text-right">{formatQuantity(Number(material.received_quantity))} {material.unit}</td>
-                          <td className="px-3 py-3 text-right">{formatMoney(material.invoiced_amount)}</td>
-                          <td className="px-3 py-3 text-right">{formatMoney(material.paid_amount)}</td>
-                          <td className={material.status === 'over_budget' ? 'px-4 py-3 text-right font-bold text-red-700' : 'px-4 py-3 text-right font-semibold'}>
-                            {formatMoney(material.available_amount)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="border-t border-acsm-line">
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-acsm-ink">Detalle por material</h4>
+                      <p className="text-xs text-acsm-muted">
+                        {financialData.materials.length} partidas de la linea base. Se muestran 10 al abrir el detalle.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowMaterialDetail((current) => !current)}
+                      aria-expanded={showMaterialDetail}
+                      className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
+                    >
+                      {showMaterialDetail ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+                      {showMaterialDetail ? 'Ocultar detalle' : 'Mostrar detalle'}
+                    </button>
+                  </div>
+
+                  {showMaterialDetail && (
+                    <div className="border-t border-acsm-line">
+                      <div className="grid gap-2 bg-acsm-paper px-4 py-3 md:grid-cols-[minmax(240px,1fr)_220px_auto]">
+                        <label className="relative">
+                          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-acsm-muted" aria-hidden="true" />
+                          <input
+                            value={materialSearch}
+                            onChange={(event) => {
+                              setMaterialSearch(event.target.value)
+                              setShowAllMaterials(false)
+                            }}
+                            placeholder="Buscar material, codigo o modelo"
+                            className="h-9 w-full rounded-md border border-acsm-line bg-white pl-9 pr-3 text-sm"
+                          />
+                        </label>
+                        <select
+                          aria-label="Estado financiero del material"
+                          value={materialStatus}
+                          onChange={(event) => {
+                            setMaterialStatus(event.target.value)
+                            setShowAllMaterials(false)
+                          }}
+                          className="h-9 rounded-md border border-acsm-line bg-white px-3 text-sm"
+                        >
+                          <option value="all">Todos los estados</option>
+                          <option value="pending">Pendiente</option>
+                          <option value="in_progress">En proceso</option>
+                          <option value="complete">Completo</option>
+                          <option value="over_budget">Excedido</option>
+                        </select>
+                        <div className="flex h-9 items-center text-xs font-semibold text-acsm-muted">
+                          {filteredFinancialMaterials.length} resultado(s)
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-[1100px] w-full text-xs">
+                          <thead className="bg-acsm-paper uppercase text-acsm-muted">
+                            <tr>
+                              <th className="px-4 py-3 text-left">Material</th>
+                              <th className="px-3 py-3 text-right">Presupuesto</th>
+                              <th className="px-3 py-3 text-right">Ordenado</th>
+                              <th className="px-3 py-3 text-right">Recibido</th>
+                              <th className="px-3 py-3 text-right">Facturado</th>
+                              <th className="px-3 py-3 text-right">Pagado</th>
+                              <th className="px-4 py-3 text-right">Disponible</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {visibleFinancialMaterials.map((material) => (
+                              <tr key={material.baseline_item_id} className="border-t border-acsm-line">
+                                <td className="px-4 py-3">
+                                  <div className="font-semibold text-acsm-ink">{material.description}</div>
+                                  <div className="text-acsm-muted">
+                                    {material.source_code || 'Sin codigo'} · {material.house_model_name} ·{' '}
+                                    {formatQuantity(Number(material.ordered_quantity))} de {formatQuantity(Number(material.budget_quantity))} {material.unit}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3 text-right font-semibold">{formatMoney(material.budget_amount)}</td>
+                                <td className="px-3 py-3 text-right">{formatMoney(material.committed_amount)}</td>
+                                <td className="px-3 py-3 text-right">{formatQuantity(Number(material.received_quantity))} {material.unit}</td>
+                                <td className="px-3 py-3 text-right">{formatMoney(material.invoiced_amount)}</td>
+                                <td className="px-3 py-3 text-right">{formatMoney(material.paid_amount)}</td>
+                                <td className={material.status === 'over_budget' ? 'px-4 py-3 text-right font-bold text-red-700' : 'px-4 py-3 text-right font-semibold'}>
+                                  {formatMoney(material.available_amount)}
+                                </td>
+                              </tr>
+                            ))}
+                            {!visibleFinancialMaterials.length && (
+                              <tr>
+                                <td colSpan={7} className="px-4 py-8 text-center text-acsm-muted">No hay materiales con estos filtros.</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                      {filteredFinancialMaterials.length > 10 && (
+                        <div className="flex justify-center border-t border-acsm-line px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => setShowAllMaterials((current) => !current)}
+                            className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
+                          >
+                            {showAllMaterials ? 'Mostrar solo 10' : `Ver todos (${filteredFinancialMaterials.length})`}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -970,17 +1429,21 @@ export default function SupplierPaymentsPage() {
         </section>
       )}
 
-      <FinancialReconciliationPanel
-        invoices={invoices}
-        payments={payments}
-        selectedProjectId={selectedProjectId}
-        canView={canViewReconciliations}
-        canRequest={canRequestReconciliations}
-        canApprove={canApproveReconciliations}
-        onApplied={loadData}
-      />
+      {activeView === 'reconciliations' && (
+        <div id="payments-view-reconciliations" className="scroll-mt-4">
+          <FinancialReconciliationPanel
+            invoices={invoices}
+            payments={payments}
+            selectedProjectId={selectedProjectId}
+            canView={canViewReconciliations}
+            canRequest={canRequestReconciliations}
+            canApprove={canApproveReconciliations}
+            onApplied={loadData}
+          />
+        </div>
+      )}
 
-      <section className={canViewInvoices ? 'overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel' : 'hidden'}>
+      <section id="payments-view-invoices" className={canViewInvoices && activeView === 'invoices' ? 'scroll-mt-4 overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel' : 'hidden'}>
         <div className="flex items-center justify-between border-b border-acsm-line px-4 py-3">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
@@ -1552,7 +2015,7 @@ export default function SupplierPaymentsPage() {
         </div>
       </section>
 
-      <section className={canViewPayments ? 'grid gap-5 lg:grid-cols-[420px_minmax(0,1fr)]' : 'hidden'}>
+      <section id="payments-view-payments" className={canViewPayments && activeView === 'payments' ? 'scroll-mt-4 grid gap-5 lg:grid-cols-[420px_minmax(0,1fr)]' : 'hidden'}>
         <div className={canSchedulePayments ? 'rounded-md border border-acsm-line bg-white p-4 shadow-panel' : 'hidden'}>
           <div className="mb-3 flex items-center gap-3">
             <CreditCard className="h-4 w-4 text-acsm-green" aria-hidden="true" />
