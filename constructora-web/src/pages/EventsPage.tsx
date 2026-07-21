@@ -31,6 +31,7 @@ const moduleLabels: Record<string, string> = {
   modelos: 'Modelos',
   ordenes_compra: 'Ordenes de compra',
   pagos_proveedores: 'Pagos proveedores',
+  conciliaciones_financieras: 'Conciliaciones financieras',
   proveedores: 'Proveedores',
 }
 
@@ -39,6 +40,8 @@ const actionLabels: Record<string, string> = {
   create: 'Creacion',
   delete: 'Eliminacion',
   pay: 'Pago',
+  request: 'Solicitud',
+  reject: 'Rechazo',
   schedule: 'Programacion',
   send: 'Envio',
   update: 'Edicion',

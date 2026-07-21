@@ -55,8 +55,16 @@ SupplierInvoiceStatus = Literal[
     "scheduled",
     "paid",
     "rejected",
+    "cancelled",
 ]
-SupplierPaymentStatus = Literal["scheduled", "paid", "cancelled"]
+SupplierPaymentStatus = Literal["scheduled", "paid", "cancelled", "reversed"]
+FinancialReconciliationResolution = Literal[
+    "correct_invoice",
+    "amend_purchase_order",
+    "reverse_payment",
+    "cancel_invoice",
+]
+FinancialReconciliationStatus = Literal["requested", "applied", "rejected"]
 
 
 class SupplierBase(BaseModel):
@@ -669,6 +677,54 @@ class SupplierInvoiceValidation(BaseModel):
     status: SupplierInvoiceStatus
     pending_items: int
     message: str
+
+
+class FinancialReconciliationCreate(BaseModel):
+    supplier_invoice_id: int
+    supplier_payment_id: int | None = None
+    issue_type: str = Field(default="amount_mismatch", min_length=3, max_length=60)
+    resolution_type: FinancialReconciliationResolution
+    reason: str = Field(min_length=10, max_length=2000)
+    corrected_subtotal: PositiveDecimal | None = None
+    corrected_total: PositiveDecimal | None = None
+    corrected_discount: NonNegativeDecimal | None = None
+    corrected_transferred_taxes: NonNegativeDecimal | None = None
+    corrected_withheld_taxes: NonNegativeDecimal | None = None
+    amended_purchase_order_subtotal: PositiveDecimal | None = None
+
+
+class FinancialReconciliationDecision(BaseModel):
+    decision: Literal["approved", "rejected"]
+    notes: str = Field(min_length=5, max_length=2000)
+
+
+class FinancialReconciliationRead(TimestampRead):
+    id: int
+    company_id: int
+    project_id: int
+    project_name: str
+    purchase_order_id: int
+    purchase_order_number: str
+    supplier_invoice_id: int
+    invoice_number: str
+    supplier_payment_id: int | None = None
+    payment_reference: str | None = None
+    case_number: str
+    issue_type: str
+    resolution_type: FinancialReconciliationResolution
+    status: FinancialReconciliationStatus
+    reason: str
+    proposed_data: dict
+    original_snapshot: dict
+    decision_notes: str | None = None
+    requested_by: int | None = None
+    requester_name: str | None = None
+    requested_at: datetime
+    decided_by: int | None = None
+    decider_name: str | None = None
+    decided_at: datetime | None = None
+    applied_by: int | None = None
+    applied_at: datetime | None = None
 
 
 class ProjectMaterialBudgetApproval(BaseModel):

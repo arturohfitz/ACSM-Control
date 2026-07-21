@@ -19,6 +19,7 @@ from app.models import (
     Company,
     ExpectedMaterialItem,
     ExpectedMaterialList,
+    FinancialReconciliationCase,
     HouseModel,
     Material,
     MaterialRequisition,
@@ -47,6 +48,9 @@ from app.models import (
     User,
 )
 from app.schemas.purchasing import (
+    FinancialReconciliationCreate,
+    FinancialReconciliationDecision,
+    FinancialReconciliationRead,
     PurchaseCaseRead,
     PurchaseCaseStepRead,
     PurchaseOrderBillingModeUpdate,
@@ -95,6 +99,12 @@ from app.services.email_outbox import (
     queue_email,
 )
 from app.services.emailer import purchase_order_email_content, rfq_email_content
+from app.services.financial_reconciliations import (
+    apply_reconciliation_case,
+    create_reconciliation_case,
+    get_reconciliation_case,
+    reconciliation_case_read,
+)
 from app.services.invoice_documents import (
     InvoiceDocumentError,
     ValidatedInvoiceFile,
@@ -3352,7 +3362,7 @@ def _create_supplier_invoice_record(
                 )
                 .where(
                     SupplierInvoiceItem.purchase_order_item_id == po_item.id,
-                    SupplierInvoice.status != "rejected",
+                    SupplierInvoice.status.notin_(("rejected", "cancelled")),
                 )
             )
             or 0
@@ -3394,7 +3404,7 @@ def _create_supplier_invoice_record(
             select(SupplierInvoice)
             .where(
                 SupplierInvoice.purchase_order_id == purchase_order.id,
-                SupplierInvoice.status != "rejected",
+                SupplierInvoice.status.notin_(("rejected", "cancelled")),
             )
             .options(selectinload(SupplierInvoice.items))
         ).all()
@@ -3936,6 +3946,19 @@ def update_supplier_payment(
     payment = get_or_404(db, SupplierPayment, payment_id)
     ensure_same_company(current_user, payment, db=db)
     data = payload.model_dump(exclude_unset=True)
+    if payment.status in {"paid", "reversed"} and data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Un pago realizado o revertido es inmutable; "
+                "solicita cualquier ajuste mediante una conciliacion autorizada."
+            ),
+        )
+    if data.get("status") == "reversed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La reversion debe solicitarse desde Conciliaciones financieras.",
+        )
     before = snapshot(payment, list(data.keys()) + ["status"])
     for field, value in data.items():
         setattr(payment, field, value)
@@ -3961,3 +3984,175 @@ def update_supplier_payment(
     db.commit()
     db.refresh(updated)
     return updated
+
+
+@router.get(
+    "/financial-reconciliations",
+    response_model=list[FinancialReconciliationRead],
+)
+def list_financial_reconciliations(
+    project_id: int | None = None,
+    case_status: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("financial_reconciliations", "view")),
+) -> list[dict]:
+    statement = (
+        select(FinancialReconciliationCase)
+        .where(FinancialReconciliationCase.company_id == get_user_company_id(current_user))
+        .options(
+            selectinload(FinancialReconciliationCase.project),
+            selectinload(FinancialReconciliationCase.purchase_order),
+            selectinload(FinancialReconciliationCase.supplier_invoice).selectinload(
+                SupplierInvoice.payments
+            ),
+            selectinload(FinancialReconciliationCase.supplier_invoice).selectinload(
+                SupplierInvoice.items
+            ),
+            selectinload(FinancialReconciliationCase.supplier_payment),
+            selectinload(FinancialReconciliationCase.requester),
+            selectinload(FinancialReconciliationCase.decider),
+        )
+        .order_by(FinancialReconciliationCase.requested_at.desc())
+    )
+    if project_id is not None:
+        ensure_project_access(db, current_user, project_id)
+        statement = statement.where(FinancialReconciliationCase.project_id == project_id)
+    if case_status:
+        statement = statement.where(FinancialReconciliationCase.status == case_status)
+    cases = list(db.scalars(statement).unique().all())
+    if project_id is None:
+        accessible: list[FinancialReconciliationCase] = []
+        for case in cases:
+            try:
+                ensure_project_access(db, current_user, case.project_id)
+            except HTTPException:
+                continue
+            accessible.append(case)
+        cases = accessible
+    return [reconciliation_case_read(case) for case in cases]
+
+
+@router.post(
+    "/financial-reconciliations",
+    response_model=FinancialReconciliationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_financial_reconciliation(
+    payload: FinancialReconciliationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("financial_reconciliations", "request")),
+) -> dict:
+    invoice = db.scalar(
+        select(SupplierInvoice)
+        .where(SupplierInvoice.id == payload.supplier_invoice_id)
+        .options(
+            selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+            selectinload(SupplierInvoice.items),
+            selectinload(SupplierInvoice.payments),
+        )
+    )
+    if invoice is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Factura no encontrada")
+    ensure_same_company(current_user, invoice, db=db)
+    ensure_project_access(db, current_user, invoice.purchase_order.project_id)
+    case = create_reconciliation_case(db, payload=payload, invoice=invoice, requested_by=current_user)
+    record_event(
+        db,
+        current_user,
+        module="conciliaciones_financieras",
+        action="request",
+        entity_type="FinancialReconciliationCase",
+        entity_id=case.id,
+        company_id=case.company_id,
+        label=case.case_number,
+        description=f"{current_user.full_name} solicito la conciliacion {case.case_number}",
+        metadata={"resolution_type": case.resolution_type, "invoice_id": case.supplier_invoice_id},
+    )
+    notify_permission(
+        db,
+        company_id=case.company_id,
+        module="financial_reconciliations",
+        action="approve",
+        include_master_admin=True,
+        notification_type="financial_reconciliation_requested",
+        title="Conciliacion financiera por autorizar",
+        body=f"{case.case_number} solicita corregir la factura {invoice.invoice_number}.",
+        category="exception",
+        priority="high",
+        source_module="pagos_proveedores",
+        project_id=case.project_id,
+        entity_type="FinancialReconciliationCase",
+        entity_id=case.id,
+        entity_label=case.case_number,
+        action_url=f"/supplier-payments?project_id={case.project_id}&reconciliation_id={case.id}",
+        metadata={"invoice_id": invoice.id, "resolution_type": case.resolution_type},
+    )
+    db.commit()
+    return reconciliation_case_read(get_reconciliation_case(db, case.id))
+
+
+@router.post(
+    "/financial-reconciliations/{case_id}/decision",
+    response_model=FinancialReconciliationRead,
+)
+def decide_financial_reconciliation(
+    case_id: int,
+    payload: FinancialReconciliationDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("financial_reconciliations", "approve")),
+) -> dict:
+    case = get_reconciliation_case(db, case_id)
+    ensure_same_company(current_user, case, db=db)
+    ensure_project_access(db, current_user, case.project_id)
+    case = apply_reconciliation_case(
+        db,
+        case=case,
+        decided_by=current_user,
+        approved=payload.decision == "approved",
+        notes=payload.notes,
+    )
+    action = "approve" if payload.decision == "approved" else "reject"
+    record_event(
+        db,
+        current_user,
+        module="conciliaciones_financieras",
+        action=action,
+        entity_type="FinancialReconciliationCase",
+        entity_id=case.id,
+        company_id=case.company_id,
+        label=case.case_number,
+        description=(
+            f"{current_user.full_name} "
+            f"{'aplico' if case.status == 'applied' else 'rechazo'} {case.case_number}"
+        ),
+        metadata={"status": case.status, "resolution_type": case.resolution_type},
+    )
+    resolve_notifications(
+        db,
+        company_id=case.company_id,
+        notification_type="financial_reconciliation_requested",
+        entity_type="FinancialReconciliationCase",
+        entity_id=case.id,
+    )
+    notify_user_id(
+        db,
+        user_id=case.requested_by,
+        company_id=case.company_id,
+        notification_type="financial_reconciliation_resolved",
+        title="Conciliacion financiera resuelta",
+        body=(
+            f"{case.case_number} fue "
+            f"{'aplicada' if case.status == 'applied' else 'rechazada'} por Administracion."
+        ),
+        category="task" if case.status == "applied" else "warning",
+        priority="high",
+        source_module="pagos_proveedores",
+        project_id=case.project_id,
+        entity_type="FinancialReconciliationCase",
+        entity_id=case.id,
+        entity_label=case.case_number,
+        action_url=f"/supplier-payments?project_id={case.project_id}&reconciliation_id={case.id}",
+        metadata={"status": case.status, "resolution_type": case.resolution_type},
+    )
+    db.commit()
+    return reconciliation_case_read(get_reconciliation_case(db, case.id))

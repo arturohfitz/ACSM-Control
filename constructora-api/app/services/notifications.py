@@ -259,7 +259,7 @@ def _sync_invoice_due_notifications(db: Session, *, company_id: int) -> None:
         select(SupplierInvoice)
         .where(
             SupplierInvoice.company_id == company_id,
-            SupplierInvoice.status.notin_(("paid", "rejected")),
+            SupplierInvoice.status.notin_(("paid", "rejected", "cancelled")),
             SupplierInvoice.due_date <= warning_day,
         )
         .options(selectinload(SupplierInvoice.supplier), selectinload(SupplierInvoice.purchase_order))

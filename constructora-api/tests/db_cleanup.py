@@ -20,6 +20,14 @@ def cleanup_company_data(db: Session, company_id: int) -> None:
     _delete_company_rows(
         db,
         company_id,
+        "supplier_payment_reversals",
+        "purchase_order_amendments",
+        "supplier_invoice_corrections",
+        "financial_reconciliation_cases",
+    )
+    _delete_company_rows(
+        db,
+        company_id,
         "inventory_movements",
         "notifications",
         "audit_events",

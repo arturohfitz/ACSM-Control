@@ -318,7 +318,7 @@ def project_financial_progress(
                     * Decimal(po_item.unit_price)
                 )
             for invoice in order.invoices:
-                if invoice.status == "rejected":
+                if invoice.status in {"rejected", "cancelled"}:
                     continue
                 invoice_count += 1
                 net, issue = _invoice_net(invoice)

@@ -495,3 +495,96 @@ class SupplierPayment(TimestampMixin, Base):
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
     invoice: Mapped[SupplierInvoice] = relationship(back_populates="payments")
+
+
+class FinancialReconciliationCase(TimestampMixin, Base):
+    __tablename__ = "financial_reconciliation_cases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id"), nullable=False, index=True
+    )
+    supplier_invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_invoices.id"), nullable=False, index=True
+    )
+    supplier_payment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("supplier_payments.id"), index=True
+    )
+    case_number: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
+    issue_type: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    resolution_type: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="requested", nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    proposed_data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    original_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    decision_notes: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    applied_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    project: Mapped["Project"] = relationship()
+    purchase_order: Mapped[PurchaseOrder] = relationship()
+    supplier_invoice: Mapped[SupplierInvoice] = relationship()
+    supplier_payment: Mapped[SupplierPayment | None] = relationship()
+    requester: Mapped["User | None"] = relationship(foreign_keys=[requested_by])
+    decider: Mapped["User | None"] = relationship(foreign_keys=[decided_by])
+    applier: Mapped["User | None"] = relationship(foreign_keys=[applied_by])
+
+
+class SupplierInvoiceCorrection(TimestampMixin, Base):
+    __tablename__ = "supplier_invoice_corrections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    supplier_invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_invoices.id"), nullable=False, index=True
+    )
+    reconciliation_case_id: Mapped[int] = mapped_column(
+        ForeignKey("financial_reconciliation_cases.id"), nullable=False, unique=True, index=True
+    )
+    before_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    after_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    applied_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PurchaseOrderAmendment(TimestampMixin, Base):
+    __tablename__ = "purchase_order_amendments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id"), nullable=False, index=True
+    )
+    reconciliation_case_id: Mapped[int] = mapped_column(
+        ForeignKey("financial_reconciliation_cases.id"), nullable=False, unique=True, index=True
+    )
+    previous_subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    new_subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    difference: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    applied_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SupplierPaymentReversal(TimestampMixin, Base):
+    __tablename__ = "supplier_payment_reversals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    supplier_payment_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_payments.id"), nullable=False, unique=True, index=True
+    )
+    reconciliation_case_id: Mapped[int] = mapped_column(
+        ForeignKey("financial_reconciliation_cases.id"), nullable=False, unique=True, index=True
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    applied_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

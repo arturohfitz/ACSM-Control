@@ -15,6 +15,7 @@ import {
 import { API_BASE_URL, apiRequest, getStoredToken } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
 import { useAuth } from '../auth/AuthContext'
+import FinancialReconciliationPanel from '../components/FinancialReconciliationPanel'
 
 type Supplier = {
   id: number
@@ -23,6 +24,7 @@ type Supplier = {
 
 type PurchaseOrder = {
   id: number
+  project_id: number
   po_number: string
   status: string
   billing_mode: 'single' | 'partial'
@@ -173,6 +175,7 @@ function statusLabel(status: string) {
     approved_for_payment: 'Aprobada para pago',
     scheduled: 'Pago programado',
     paid: 'Pagada',
+    reversed: 'Revertida',
     rejected: 'Rechazada',
     pending: 'Pendiente',
     pending_manual: 'Revision manual',
@@ -200,7 +203,7 @@ function statusPillClass(status: string) {
   }
   if (['partially_received', 'blocked'].includes(status)) return 'border-amber-200 bg-amber-50 text-amber-700'
   if (['document_pending', 'fiscal_review'].includes(status)) return 'border-amber-200 bg-amber-50 text-amber-700'
-  if (['cancelled', 'rejected'].includes(status)) return 'border-red-200 bg-red-50 text-red-700'
+  if (['cancelled', 'rejected', 'reversed'].includes(status)) return 'border-red-200 bg-red-50 text-red-700'
   return 'border-acsm-line bg-white text-acsm-muted'
 }
 
@@ -214,6 +217,9 @@ export default function SupplierPaymentsPage() {
   const canMarkPaymentsPaid = hasPermission('supplier_payments:pay')
   const canViewProjectFinancials = hasPermission('project_financials:view')
   const canApproveMaterialBudget = hasPermission('project_material_budgets:approve')
+  const canViewReconciliations = hasPermission('financial_reconciliations:view')
+  const canRequestReconciliations = hasPermission('financial_reconciliations:request')
+  const canApproveReconciliations = hasPermission('financial_reconciliations:approve')
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [invoices, setInvoices] = useState<SupplierInvoice[]>([])
   const [payments, setPayments] = useState<SupplierPayment[]>([])
@@ -902,12 +908,21 @@ export default function SupplierPaymentsPage() {
                 <div className="border-b border-red-200 bg-red-50 px-4 py-3">
                   <div className="flex items-start gap-3">
                     <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-700" aria-hidden="true" />
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-bold text-red-900">Requiere conciliacion</div>
                       {selectedProjectFinancial.integrity_issues.map((issue) => (
                         <p key={issue} className="mt-1 text-xs text-red-800">{issue}</p>
                       ))}
                     </div>
+                    {canRequestReconciliations && (
+                      <button
+                        type="button"
+                        onClick={() => document.getElementById('financial-reconciliations')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                        className="shrink-0 rounded-md border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-800 hover:bg-red-100"
+                      >
+                        Iniciar correccion
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -954,6 +969,16 @@ export default function SupplierPaymentsPage() {
           )}
         </section>
       )}
+
+      <FinancialReconciliationPanel
+        invoices={invoices}
+        payments={payments}
+        selectedProjectId={selectedProjectId}
+        canView={canViewReconciliations}
+        canRequest={canRequestReconciliations}
+        canApprove={canApproveReconciliations}
+        onApplied={loadData}
+      />
 
       <section className={canViewInvoices ? 'overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel' : 'hidden'}>
         <div className="flex items-center justify-between border-b border-acsm-line px-4 py-3">
@@ -1614,7 +1639,7 @@ export default function SupplierPaymentsPage() {
                         {canMarkPaymentsPaid ? <button
                           type="button"
                           onClick={() => void markPaid(payment)}
-                          disabled={payment.status === 'paid'}
+                          disabled={payment.status !== 'scheduled'}
                           className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper disabled:opacity-60"
                         >
                           <CheckCircle2 className="h-4 w-4" aria-hidden="true" />

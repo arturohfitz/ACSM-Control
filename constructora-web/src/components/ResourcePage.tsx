@@ -124,6 +124,9 @@ const permissionModuleLabels: Record<string, string> = {
   purchase_orders: 'Ordenes de compra',
   supplier_invoices: 'Facturas de proveedores',
   supplier_payments: 'Pagos a proveedores',
+  project_material_budgets: 'Presupuesto de materiales',
+  project_financials: 'Avance financiero por desarrollo',
+  financial_reconciliations: 'Conciliaciones financieras',
 }
 
 const permissionActionLabels: Record<string, string> = {
@@ -140,6 +143,7 @@ const permissionActionLabels: Record<string, string> = {
   reject: 'Rechazar',
   schedule: 'Programar pago',
   pay: 'Pagar',
+  request: 'Solicitar',
   receive: 'Recibir material',
   view_costs: 'Ver costos',
   view_profit: 'Ver utilidad',

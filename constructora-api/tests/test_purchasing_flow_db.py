@@ -26,6 +26,7 @@ from app.api.v1.endpoints.purchasing import (
     create_purchase_order_from_approved_quote,
     create_supplier_invoice,
     create_supplier_payment,
+    list_financial_reconciliations,
     list_purchase_cases,
     list_supplier_agreement_approvals,
     list_supplier_quote_approvals,
@@ -33,6 +34,7 @@ from app.api.v1.endpoints.purchasing import (
     request_supplier_rfq_approval,
     send_purchase_order,
     supplier_rfq_comparison,
+    update_supplier_payment,
     update_purchase_order_billing_mode,
     validate_supplier_invoice,
 )
@@ -57,6 +59,7 @@ from app.models import (
     SupplierInvoiceItem,
     Supplier,
     SupplierInvoice,
+    SupplierPayment,
     SupplierRFQ,
     User,
     WarehouseStock,
@@ -73,6 +76,8 @@ from app.schemas.purchasing import (
     SupplierInvoiceCreate,
     SupplierInvoiceItemCreate,
     SupplierPaymentCreate,
+    SupplierPaymentUpdate,
+    FinancialReconciliationCreate,
     SupplierQuoteCreate,
     SupplierQuoteItemCreate,
     SupplierRFQApprovalRequest,
@@ -83,6 +88,10 @@ from app.schemas.purchasing import (
 from app.services.project_financials import (
     approve_project_material_budget,
     project_financial_progress,
+)
+from app.services.financial_reconciliations import (
+    apply_reconciliation_case,
+    create_reconciliation_case,
 )
 from tests.db_cleanup import cleanup_company_data
 
@@ -151,6 +160,136 @@ class PurchasingFlowDBTest(unittest.TestCase):
     def tearDown(self) -> None:
         cleanup_company_data(self.db, self.company.id)
         self.db.close()
+
+    def test_financial_reconciliation_requires_approval_and_preserves_payment_history(self) -> None:
+        order = PurchaseOrder(
+            company_id=self.company.id,
+            project_id=self.project.id,
+            warehouse_id=self.warehouse.id,
+            supplier_id=self.suppliers[0].id,
+            po_number=f"OC-CF-{self.suffix}",
+            status="closed",
+            billing_mode="single",
+            issued_at=date.today(),
+            payment_terms_days=30,
+            subtotal=Decimal("100.00"),
+        )
+        invoice = SupplierInvoice(
+            company_id=self.company.id,
+            supplier_id=self.suppliers[0].id,
+            purchase_order=order,
+            invoice_number=f"FAC-CF-{self.suffix}",
+            invoice_date=date.today(),
+            due_date=date.today() + timedelta(days=30),
+            subtotal=Decimal("150.00"),
+            discount=Decimal("0"),
+            transferred_taxes=Decimal("24.00"),
+            withheld_taxes=Decimal("0"),
+            total=Decimal("174.00"),
+            currency="MXN",
+            status="paid",
+            fiscal_status="manual_validated",
+        )
+        self.db.add_all([order, invoice])
+        self.db.flush()
+        payment = SupplierPayment(
+            company_id=self.company.id,
+            supplier_invoice_id=invoice.id,
+            amount=Decimal("174.00"),
+            paid_at=date.today(),
+            status="paid",
+            reference=f"PAGO-{self.suffix}",
+        )
+        self.db.add(payment)
+        self.db.commit()
+        invoice = self.db.scalar(
+            select(SupplierInvoice)
+            .where(SupplierInvoice.id == invoice.id)
+            .options(
+                selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+                selectinload(SupplierInvoice.items),
+                selectinload(SupplierInvoice.payments),
+            )
+        )
+        self.assertIsNotNone(invoice)
+
+        with self.assertRaises(HTTPException) as immutable_payment:
+            update_supplier_payment(
+                payment.id,
+                SupplierPaymentUpdate(amount=Decimal("100.00")),
+                self.db,
+                self.user,
+            )
+        self.assertEqual(immutable_payment.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as active_payment:
+            create_reconciliation_case(
+                self.db,
+                payload=FinancialReconciliationCreate(
+                    supplier_invoice_id=invoice.id,
+                    resolution_type="correct_invoice",
+                    reason="El subtotal historico fue capturado incorrectamente.",
+                    corrected_subtotal=Decimal("100"),
+                    corrected_total=Decimal("116"),
+                ),
+                invoice=invoice,
+                requested_by=self.user,
+            )
+        self.assertEqual(active_payment.exception.status_code, 400)
+
+        reversal = create_reconciliation_case(
+            self.db,
+            payload=FinancialReconciliationCreate(
+                supplier_invoice_id=invoice.id,
+                supplier_payment_id=payment.id,
+                resolution_type="reverse_payment",
+                reason="El pago se aplico a una factura con importes incorrectos.",
+            ),
+            invoice=invoice,
+            requested_by=self.user,
+        )
+        self.assertEqual(payment.status, "paid")
+        listed_cases = list_financial_reconciliations(
+            project_id=self.project.id,
+            case_status="requested",
+            db=self.db,
+            current_user=self.user,
+        )
+        self.assertEqual([item["case_number"] for item in listed_cases], [reversal.case_number])
+        apply_reconciliation_case(
+            self.db,
+            case=reversal,
+            decided_by=self.user,
+            approved=True,
+            notes="Reversion autorizada con evidencia bancaria.",
+        )
+        self.db.commit()
+        self.db.refresh(payment)
+        self.assertEqual(payment.status, "reversed")
+        self.assertEqual(invoice.status, "approved_for_payment")
+
+        amendment = create_reconciliation_case(
+            self.db,
+            payload=FinancialReconciliationCreate(
+                supplier_invoice_id=invoice.id,
+                resolution_type="amend_purchase_order",
+                reason="La orden autorizada no incluyo el ajuste comercial documentado.",
+                amended_purchase_order_subtotal=Decimal("150"),
+            ),
+            invoice=invoice,
+            requested_by=self.user,
+        )
+        self.assertEqual(order.subtotal, Decimal("100.00"))
+        apply_reconciliation_case(
+            self.db,
+            case=amendment,
+            decided_by=self.user,
+            approved=True,
+            notes="Adenda validada contra autorizacion de gerencia.",
+        )
+        self.db.commit()
+        self.db.refresh(order)
+        self.assertEqual(order.subtotal, Decimal("150.00"))
 
     def test_inventory_document_requires_explicit_warehouse_selection(self) -> None:
         warehouse_count = self.db.scalar(
