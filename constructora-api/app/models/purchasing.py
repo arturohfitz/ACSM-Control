@@ -383,6 +383,9 @@ class PurchaseOrderItem(Base):
 
 class SupplierInvoice(TimestampMixin, Base):
     __tablename__ = "supplier_invoices"
+    __table_args__ = (
+        UniqueConstraint("company_id", "fiscal_uuid", name="uq_supplier_invoices_company_fiscal_uuid"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
@@ -394,8 +397,21 @@ class SupplierInvoice(TimestampMixin, Base):
     invoice_date: Mapped[date] = mapped_column(Date, nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
     subtotal: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    discount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    transferred_taxes: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    withheld_taxes: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
-    status: Mapped[str] = mapped_column(String(40), default="received", nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="MXN", nullable=False)
+    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
+    fiscal_uuid: Mapped[str | None] = mapped_column(String(40), index=True)
+    series: Mapped[str | None] = mapped_column(String(40))
+    issuer_tax_id: Mapped[str | None] = mapped_column(String(20), index=True)
+    receiver_tax_id: Mapped[str | None] = mapped_column(String(20), index=True)
+    payment_method: Mapped[str | None] = mapped_column(String(10))
+    payment_form: Mapped[str | None] = mapped_column(String(10))
+    fiscal_status: Mapped[str] = mapped_column(String(40), default="pending", nullable=False)
+    fiscal_validation_message: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="document_pending", nullable=False)
     document_name: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -407,6 +423,35 @@ class SupplierInvoice(TimestampMixin, Base):
         back_populates="supplier_invoice", cascade="all, delete-orphan"
     )
     payments: Mapped[list["SupplierPayment"]] = relationship(back_populates="invoice")
+    documents: Mapped[list["SupplierInvoiceDocument"]] = relationship(
+        back_populates="invoice", cascade="all, delete-orphan"
+    )
+
+
+class SupplierInvoiceDocument(TimestampMixin, Base):
+    __tablename__ = "supplier_invoice_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    supplier_invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_invoices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    original_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(700), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    extension: Mapped[str] = mapped_column(String(20), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    validation_status: Mapped[str] = mapped_column(String(40), default="uploaded", nullable=False)
+    validation_message: Mapped[str | None] = mapped_column(Text)
+    parsed_data: Mapped[dict | None] = mapped_column(JSON)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    invoice: Mapped[SupplierInvoice] = relationship(back_populates="documents")
 
 
 class SupplierInvoiceItem(Base):

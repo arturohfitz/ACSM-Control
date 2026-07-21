@@ -19,6 +19,7 @@ TABLES_TO_CLEAR = (
     "email_outbox_messages",
     "supplier_payments",
     "supplier_invoice_items",
+    "supplier_invoice_documents",
     "supplier_invoices",
     "material_reception_items",
     "material_receptions",
@@ -70,7 +71,7 @@ PRESERVED_TABLES = (
     "system_notification_settings",
 )
 
-STORAGE_DIRS_TO_CLEAR = ("house_model_documents",)
+STORAGE_DIRS_TO_CLEAR = ("house_model_documents", "supplier_invoice_documents")
 
 
 def _count_rows(table_names: tuple[str, ...]) -> dict[str, int]:

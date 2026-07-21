@@ -5,8 +5,9 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -15,6 +16,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models import (
     Client,
+    Company,
     ExpectedMaterialItem,
     ExpectedMaterialList,
     HouseModel,
@@ -29,6 +31,7 @@ from app.models import (
     SupplierAgreement,
     SupplierAgreementItem,
     SupplierInvoice,
+    SupplierInvoiceDocument,
     SupplierInvoiceItem,
     SupplierPayment,
     SupplierQuote,
@@ -56,6 +59,7 @@ from app.schemas.purchasing import (
     SupplierCreate,
     SupplierInvoiceCreate,
     SupplierInvoiceRead,
+    SupplierInvoiceXMLAnalysis,
     SupplierInvoiceValidation,
     SupplierPaymentCreate,
     SupplierPaymentRead,
@@ -86,6 +90,13 @@ from app.services.email_outbox import (
     queue_email,
 )
 from app.services.emailer import purchase_order_email_content, rfq_email_content
+from app.services.invoice_documents import (
+    InvoiceDocumentError,
+    ValidatedInvoiceFile,
+    normalize_tax_id,
+    store_invoice_file,
+    validate_invoice_file,
+)
 from app.services.notifications import notify_permission, notify_user_id, resolve_notifications
 from app.services.permissions import user_has_permission
 from app.services.tenancy import company_id_for_write, ensure_same_company, get_user_company_id, scoped_select
@@ -494,6 +505,150 @@ def _invoice_status(invoice: SupplierInvoice, db: Session) -> tuple[str, int, st
     return _invoice_status_for_po(invoice.purchase_order)
 
 
+def _fiscal_review_for_xml(
+    db: Session,
+    *,
+    purchase_order: PurchaseOrder,
+    payload: SupplierInvoiceCreate,
+    parsed_data: dict[str, str],
+    exclude_invoice_id: int | None = None,
+) -> tuple[str, str]:
+    fiscal_uuid = parsed_data["fiscal_uuid"].upper()
+    duplicate_statement = select(SupplierInvoice.id).where(
+        SupplierInvoice.company_id == purchase_order.company_id,
+        SupplierInvoice.fiscal_uuid == fiscal_uuid,
+    )
+    if exclude_invoice_id is not None:
+        duplicate_statement = duplicate_statement.where(SupplierInvoice.id != exclude_invoice_id)
+    if db.scalar(duplicate_statement.limit(1)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El UUID fiscal ya esta registrado en otra factura.",
+        )
+
+    xml_total = Decimal(parsed_data["total"])
+    if abs(xml_total - payload.total) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El total capturado no coincide con el total del XML CFDI.",
+        )
+    if payload.subtotal is not None and parsed_data.get("subtotal"):
+        xml_subtotal = Decimal(parsed_data["subtotal"])
+        if abs(xml_subtotal - payload.subtotal) > Decimal("0.01"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El subtotal capturado no coincide con el subtotal del XML CFDI.",
+            )
+    issue_date = parsed_data.get("issue_datetime", "")[:10]
+    if issue_date and issue_date != payload.invoice_date.isoformat():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La fecha capturada no coincide con la fecha de emision del XML CFDI.",
+        )
+
+    supplier_tax_id = normalize_tax_id(purchase_order.supplier.tax_id)
+    company = db.get(Company, purchase_order.company_id)
+    company_tax_id = normalize_tax_id(company.tax_id if company else None)
+    issuer_tax_id = normalize_tax_id(parsed_data.get("issuer_tax_id"))
+    receiver_tax_id = normalize_tax_id(parsed_data.get("receiver_tax_id"))
+    if supplier_tax_id and issuer_tax_id != supplier_tax_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El RFC emisor del XML no corresponde al proveedor de la orden de compra.",
+        )
+    if company_tax_id and receiver_tax_id != company_tax_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El RFC receptor del XML no corresponde a la constructora.",
+        )
+    missing_master_data: list[str] = []
+    if not supplier_tax_id:
+        missing_master_data.append("RFC del proveedor")
+    if not company_tax_id:
+        missing_master_data.append("RFC de la constructora")
+    if missing_master_data:
+        return (
+            "review_required",
+            "XML valido; falta confirmar " + " y ".join(missing_master_data) + ".",
+        )
+    return "valid", "XML CFDI coincide con proveedor, constructora, fecha y total capturado."
+
+
+def _apply_fiscal_data(invoice: SupplierInvoice, parsed_data: dict[str, str]) -> None:
+    invoice.fiscal_uuid = parsed_data.get("fiscal_uuid")
+    invoice.series = parsed_data.get("series")
+    invoice.issuer_tax_id = parsed_data.get("issuer_tax_id")
+    invoice.receiver_tax_id = parsed_data.get("receiver_tax_id")
+    invoice.currency = parsed_data.get("currency") or "MXN"
+    invoice.exchange_rate = Decimal(parsed_data["exchange_rate"]) if parsed_data.get("exchange_rate") else None
+    invoice.discount = Decimal(parsed_data["discount"]) if parsed_data.get("discount") else None
+    invoice.transferred_taxes = (
+        Decimal(parsed_data["transferred_taxes"]) if parsed_data.get("transferred_taxes") else None
+    )
+    invoice.withheld_taxes = (
+        Decimal(parsed_data["withheld_taxes"]) if parsed_data.get("withheld_taxes") else None
+    )
+    invoice.payment_method = parsed_data.get("payment_method")
+    invoice.payment_form = parsed_data.get("payment_form")
+
+
+def _store_supplier_invoice_document(
+    db: Session,
+    *,
+    invoice: SupplierInvoice,
+    validated: ValidatedInvoiceFile,
+    current_user: User,
+) -> SupplierInvoiceDocument:
+    for existing in invoice.documents:
+        if existing.document_type == validated.document_type and existing.is_active:
+            existing.is_active = False
+    try:
+        stored_path = store_invoice_file(
+            validated,
+            company_id=invoice.company_id,
+            invoice_id=invoice.id,
+        )
+    except InvoiceDocumentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    document = SupplierInvoiceDocument(
+        company_id=invoice.company_id,
+        supplier_invoice_id=invoice.id,
+        document_type=validated.document_type,
+        original_file_name=validated.original_file_name,
+        stored_file_name=stored_path.name,
+        storage_path=str(stored_path),
+        content_type=validated.content_type,
+        extension=validated.extension,
+        file_size=len(validated.content),
+        sha256=validated.sha256,
+        validation_status=validated.validation_status,
+        validation_message=validated.validation_message,
+        parsed_data=validated.parsed_data,
+        is_active=True,
+        uploaded_by=current_user.id,
+        uploaded_at=_now(),
+    )
+    db.add(document)
+    invoice.document_name = validated.original_file_name
+    return document
+
+
+def _invoice_with_documents(db: Session, invoice_id: int) -> SupplierInvoice:
+    invoice = db.scalar(
+        select(SupplierInvoice)
+        .where(SupplierInvoice.id == invoice_id)
+        .options(
+            selectinload(SupplierInvoice.supplier),
+            selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+            selectinload(SupplierInvoice.items),
+            selectinload(SupplierInvoice.documents),
+        )
+    )
+    if invoice is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    return invoice
+
+
 def _sync_purchase_order_after_payment(db: Session, purchase_order: PurchaseOrder) -> None:
     db.flush()
     if purchase_order.billing_mode == "partial":
@@ -517,6 +672,54 @@ def _sync_purchase_order_after_payment(db: Session, purchase_order: PurchaseOrde
     )
     if paid_invoice_exists and _po_is_complete(purchase_order):
         purchase_order.status = "closed"
+
+
+def _payment_totals(
+    db: Session,
+    invoice_id: int,
+    *,
+    exclude_payment_id: int | None = None,
+) -> tuple[Decimal, Decimal]:
+    statement = select(SupplierPayment.status, func.coalesce(func.sum(SupplierPayment.amount), 0)).where(
+        SupplierPayment.supplier_invoice_id == invoice_id,
+        SupplierPayment.status.in_(("scheduled", "paid")),
+    )
+    if exclude_payment_id is not None:
+        statement = statement.where(SupplierPayment.id != exclude_payment_id)
+    statement = statement.group_by(SupplierPayment.status)
+    totals = {payment_status: Decimal(amount) for payment_status, amount in db.execute(statement).all()}
+    return totals.get("scheduled", Decimal("0")), totals.get("paid", Decimal("0"))
+
+
+def _ensure_payment_fits_invoice(
+    db: Session,
+    *,
+    invoice: SupplierInvoice,
+    amount: Decimal,
+    payment_status: str,
+    exclude_payment_id: int | None = None,
+) -> None:
+    if payment_status == "cancelled":
+        return
+    scheduled, paid = _payment_totals(db, invoice.id, exclude_payment_id=exclude_payment_id)
+    remaining = invoice.total - scheduled - paid
+    if amount > remaining:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"El pago excede el saldo disponible de la factura ({remaining:.2f}).",
+        )
+
+
+def _sync_invoice_after_payments(db: Session, invoice: SupplierInvoice) -> None:
+    db.flush()
+    scheduled, paid = _payment_totals(db, invoice.id)
+    if paid >= invoice.total:
+        invoice.status = "paid"
+        _sync_purchase_order_after_payment(db, invoice.purchase_order)
+    elif scheduled + paid > 0:
+        invoice.status = "scheduled"
+    else:
+        invoice.status = "approved_for_payment"
 
 
 @router.get("/suppliers", response_model=list[SupplierRead])
@@ -2945,6 +3148,7 @@ def list_supplier_invoices(
                 selectinload(SupplierInvoice.purchase_order)
                 .selectinload(PurchaseOrder.items),
                 selectinload(SupplierInvoice.items),
+                selectinload(SupplierInvoice.documents),
             )
             .order_by(SupplierInvoice.due_date, SupplierInvoice.created_at.desc())
             .offset(skip)
@@ -2953,11 +3157,12 @@ def list_supplier_invoices(
     )
 
 
-@router.post("/supplier-invoices", response_model=SupplierInvoiceRead, status_code=status.HTTP_201_CREATED)
-def create_supplier_invoice(
+def _create_supplier_invoice_record(
     payload: SupplierInvoiceCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("supplier_invoices", "upload")),
+    db: Session,
+    current_user: User,
+    *,
+    commit: bool,
 ) -> SupplierInvoice:
     purchase_order = get_purchase_order(payload.purchase_order_id, db, current_user)
     supplier = purchase_order.supplier
@@ -3000,7 +3205,8 @@ def create_supplier_invoice(
                 notes=item_payload.notes,
             )
         )
-    if invoice_items and abs(items_total - payload.total) > Decimal("0.01"):
+    expected_items_total = payload.subtotal if payload.subtotal is not None else payload.total
+    if invoice_items and abs(items_total - expected_items_total) > Decimal("0.01"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El total de la factura no coincide con las partidas capturadas.",
@@ -3012,13 +3218,24 @@ def create_supplier_invoice(
         invoice_number=payload.invoice_number,
         invoice_date=payload.invoice_date,
         due_date=due_date,
-        subtotal=items_total if invoice_items else payload.subtotal,
+        subtotal=payload.subtotal if payload.subtotal is not None else (items_total if invoice_items else None),
+        discount=payload.discount,
+        transferred_taxes=payload.transferred_taxes,
+        withheld_taxes=payload.withheld_taxes,
         total=payload.total,
-        status="received",
+        currency=payload.currency.upper(),
+        exchange_rate=payload.exchange_rate,
+        fiscal_uuid=payload.fiscal_uuid.upper() if payload.fiscal_uuid else None,
+        series=payload.series,
+        issuer_tax_id=normalize_tax_id(payload.issuer_tax_id),
+        receiver_tax_id=normalize_tax_id(payload.receiver_tax_id),
+        payment_method=payload.payment_method,
+        payment_form=payload.payment_form,
+        fiscal_status="pending",
+        fiscal_validation_message="Adjunta PDF o XML y valida la factura antes de programar el pago.",
+        status="document_pending",
         document_name=payload.document_name,
         notes=payload.notes,
-        validated_at=_now(),
-        validated_by=current_user.id,
     )
     db.add(invoice)
     db.flush()
@@ -3032,59 +3249,224 @@ def create_supplier_invoice(
         .options(
             selectinload(SupplierInvoice.items).selectinload(SupplierInvoiceItem.purchase_order_item),
             selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+            selectinload(SupplierInvoice.documents),
         )
     )
     if invoice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    invoice_status, _pending, message = _invoice_status(invoice, db)
-    invoice.status = invoice_status
-    invoice.notes = payload.notes or message
-    if invoice_status == "approved_for_payment":
-        if not invoice.items:
-            invoice.purchase_order.status = "factured"
     db.flush()
     record_create(db, current_user, module="facturas_proveedor", item=invoice)
-    if invoice_status == "approved_for_payment":
-        notify_permission(
-            db,
-            company_id=invoice.company_id,
-            module="supplier_payments",
-            action="view",
-            notification_type="supplier_invoice_ready_to_pay",
-            title="Factura lista para pago",
-            body=f"La factura {invoice.invoice_number} esta validada y lista para gestion de pago.",
-            category="task",
-            priority="normal",
-            source_module="pagos_proveedores",
-            entity_type="SupplierInvoice",
-            entity_id=invoice.id,
-            entity_label=invoice.invoice_number,
-            action_url="/supplier-payments",
-            project_id=purchase_order.project_id,
-            metadata={"purchase_order_id": purchase_order.id, "total": str(invoice.total)},
-        )
-    else:
-        notify_permission(
-            db,
-            company_id=invoice.company_id,
-            module="inventory",
-            action="receive",
-            notification_type="supplier_invoice_blocked",
-            title="Factura bloqueada por material pendiente",
-            body=f"La factura {invoice.invoice_number} no puede pagarse hasta completar la recepcion.",
-            category="warning",
-            priority="high",
-            source_module="inventario",
-            entity_type="SupplierInvoice",
-            entity_id=invoice.id,
-            entity_label=invoice.invoice_number,
-            action_url="/inventory/material-receiving?type=oc",
-            project_id=purchase_order.project_id,
-            metadata={"purchase_order_id": purchase_order.id, "total": str(invoice.total)},
-        )
-    db.commit()
-    db.refresh(invoice)
+    if commit:
+        db.commit()
+        return _invoice_with_documents(db, invoice.id)
     return invoice
+
+
+@router.post("/supplier-invoices", response_model=SupplierInvoiceRead, status_code=status.HTTP_201_CREATED)
+def create_supplier_invoice(
+    payload: SupplierInvoiceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_invoices", "upload")),
+) -> SupplierInvoice:
+    return _create_supplier_invoice_record(payload, db, current_user, commit=True)
+
+
+async def _validated_invoice_upload(file: UploadFile, document_type: str) -> ValidatedInvoiceFile:
+    max_mb = (
+        settings.supplier_invoice_pdf_max_mb
+        if document_type == "pdf"
+        else settings.supplier_invoice_xml_max_mb
+    )
+    content = await file.read(max_mb * 1024 * 1024 + 1)
+    try:
+        return validate_invoice_file(
+            file_name=file.filename,
+            content_type=file.content_type,
+            content=content,
+            expected_type=document_type,
+        )
+    except InvoiceDocumentError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post(
+    "/supplier-invoice-documents/analyze-xml",
+    response_model=SupplierInvoiceXMLAnalysis,
+)
+async def analyze_supplier_invoice_xml(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_permission("supplier_invoices", "upload")),
+) -> SupplierInvoiceXMLAnalysis:
+    del current_user
+    validated = await _validated_invoice_upload(file, "xml")
+    return SupplierInvoiceXMLAnalysis(
+        validation_status=validated.validation_status,
+        validation_message=validated.validation_message,
+        parsed_data=validated.parsed_data or {},
+    )
+
+
+@router.post(
+    "/supplier-invoices/register",
+    response_model=SupplierInvoiceRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register_supplier_invoice(
+    payload_json: str = Form(...),
+    pdf_file: UploadFile | None = File(default=None),
+    xml_file: UploadFile | None = File(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_invoices", "upload")),
+) -> SupplierInvoice:
+    if pdf_file is None and xml_file is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Adjunta al menos el PDF o el XML de la factura.",
+        )
+    try:
+        payload = SupplierInvoiceCreate.model_validate_json(payload_json)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=json.loads(exc.json()),
+        ) from exc
+
+    validated_pdf = await _validated_invoice_upload(pdf_file, "pdf") if pdf_file else None
+    validated_xml = await _validated_invoice_upload(xml_file, "xml") if xml_file else None
+    purchase_order = get_purchase_order(payload.purchase_order_id, db, current_user)
+    fiscal_status = "pending_manual"
+    fiscal_message = "Factura capturada con PDF; requiere validacion fiscal manual."
+    if validated_xml and validated_xml.parsed_data:
+        fiscal_status, fiscal_message = _fiscal_review_for_xml(
+            db,
+            purchase_order=purchase_order,
+            payload=payload,
+            parsed_data=validated_xml.parsed_data,
+        )
+
+    invoice = _create_supplier_invoice_record(payload, db, current_user, commit=False)
+    invoice = _invoice_with_documents(db, invoice.id)
+    stored_paths: list[Path] = []
+    try:
+        if validated_pdf:
+            document = _store_supplier_invoice_document(
+                db,
+                invoice=invoice,
+                validated=validated_pdf,
+                current_user=current_user,
+            )
+            stored_paths.append(Path(document.storage_path))
+        if validated_xml:
+            document = _store_supplier_invoice_document(
+                db,
+                invoice=invoice,
+                validated=validated_xml,
+                current_user=current_user,
+            )
+            stored_paths.append(Path(document.storage_path))
+            _apply_fiscal_data(invoice, validated_xml.parsed_data or {})
+        invoice.fiscal_status = fiscal_status
+        invoice.fiscal_validation_message = fiscal_message
+        invoice.status = "received" if fiscal_status == "valid" else "fiscal_review"
+        record_event(
+            db,
+            current_user,
+            module="facturas_proveedor",
+            action="upload_documents",
+            entity_type="SupplierInvoice",
+            entity_id=invoice.id,
+            company_id=invoice.company_id,
+            label=invoice.invoice_number,
+            description=f"{current_user.full_name} adjunto documentos de la factura {invoice.invoice_number}",
+            metadata={
+                "pdf": bool(validated_pdf),
+                "xml": bool(validated_xml),
+                "fiscal_status": fiscal_status,
+            },
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        for stored_path in stored_paths:
+            stored_path.unlink(missing_ok=True)
+        raise
+    return _invoice_with_documents(db, invoice.id)
+
+
+@router.post(
+    "/supplier-invoices/{invoice_id}/documents",
+    response_model=SupplierInvoiceRead,
+)
+async def upload_supplier_invoice_document(
+    invoice_id: int,
+    document_type: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_invoices", "upload")),
+) -> SupplierInvoice:
+    if document_type not in {"pdf", "xml"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tipo de documento no permitido")
+    invoice = _invoice_with_documents(db, invoice_id)
+    ensure_same_company(current_user, invoice, db=db)
+    if invoice.status in {"scheduled", "paid"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se pueden reemplazar documentos de una factura con pagos programados o realizados.",
+        )
+    validated = await _validated_invoice_upload(file, document_type)
+    fiscal_status = invoice.fiscal_status
+    fiscal_message = invoice.fiscal_validation_message
+    if document_type == "xml" and validated.parsed_data:
+        payload = SupplierInvoiceCreate(
+            purchase_order_id=invoice.purchase_order_id,
+            invoice_number=invoice.invoice_number,
+            invoice_date=invoice.invoice_date,
+            due_date=invoice.due_date,
+            subtotal=invoice.subtotal,
+            total=invoice.total,
+            currency=invoice.currency,
+        )
+        fiscal_status, fiscal_message = _fiscal_review_for_xml(
+            db,
+            purchase_order=invoice.purchase_order,
+            payload=payload,
+            parsed_data=validated.parsed_data,
+            exclude_invoice_id=invoice.id,
+        )
+    _store_supplier_invoice_document(
+        db,
+        invoice=invoice,
+        validated=validated,
+        current_user=current_user,
+    )
+    if document_type == "xml":
+        _apply_fiscal_data(invoice, validated.parsed_data or {})
+        invoice.fiscal_status = fiscal_status
+        invoice.fiscal_validation_message = fiscal_message
+    elif not any(document.document_type == "xml" and document.is_active for document in invoice.documents):
+        invoice.fiscal_status = "pending_manual"
+        invoice.fiscal_validation_message = "Factura capturada con PDF; requiere validacion fiscal manual."
+    invoice.status = "received" if invoice.fiscal_status == "valid" else "fiscal_review"
+    db.commit()
+    return _invoice_with_documents(db, invoice.id)
+
+
+@router.get("/supplier-invoice-documents/{document_id}/download")
+def download_supplier_invoice_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_invoices", "view")),
+) -> FileResponse:
+    document = get_or_404(db, SupplierInvoiceDocument, document_id)
+    ensure_same_company(current_user, document, db=db)
+    file_path = Path(document.storage_path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo no encontrado")
+    return FileResponse(
+        path=file_path,
+        media_type=document.content_type,
+        filename=document.original_file_name,
+    )
 
 
 @router.post("/supplier-invoices/{invoice_id}/validate", response_model=SupplierInvoiceValidation)
@@ -3099,11 +3481,29 @@ def validate_supplier_invoice(
         .options(
             selectinload(SupplierInvoice.items).selectinload(SupplierInvoiceItem.purchase_order_item),
             selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+            selectinload(SupplierInvoice.documents),
         )
     )
     if invoice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
     ensure_same_company(current_user, invoice, db=db)
+    active_documents = [document for document in invoice.documents if document.is_active]
+    if not active_documents and invoice.fiscal_status != "legacy_validated":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Adjunta al menos el PDF o el XML antes de validar la factura.",
+        )
+    if invoice.fiscal_status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La factura aun no tiene documentos fiscales revisados.",
+        )
+    if invoice.fiscal_status not in {"valid", "legacy_validated"}:
+        invoice.fiscal_status = "manual_validated"
+        invoice.fiscal_validation_message = (
+            f"Revision fiscal manual autorizada por {current_user.full_name}. "
+            + (invoice.fiscal_validation_message or "")
+        ).strip()
     next_status, pending_items, message = _invoice_status(invoice, db)
     invoice.status = next_status
     invoice.validated_at = _now()
@@ -3147,6 +3547,25 @@ def validate_supplier_invoice(
             project_id=invoice.purchase_order.project_id,
             metadata={"purchase_order_id": invoice.purchase_order_id, "total": str(invoice.total)},
         )
+    else:
+        notify_permission(
+            db,
+            company_id=invoice.company_id,
+            module="inventory_receiving",
+            action="receive",
+            notification_type="supplier_invoice_blocked",
+            title="Factura bloqueada por material pendiente",
+            body=f"La factura {invoice.invoice_number} requiere completar la recepcion asociada.",
+            category="warning",
+            priority="high",
+            source_module="pagos_proveedores",
+            entity_type="SupplierInvoice",
+            entity_id=invoice.id,
+            entity_label=invoice.invoice_number,
+            action_url="/inventory/material-receiving?type=oc",
+            project_id=invoice.purchase_order.project_id,
+            metadata={"purchase_order_id": invoice.purchase_order_id, "total": str(invoice.total)},
+        )
     db.commit()
     return SupplierInvoiceValidation(
         invoice_id=invoice.id,
@@ -3179,29 +3598,33 @@ def create_supplier_payment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("supplier_payments", "schedule")),
 ) -> SupplierPayment:
-    invoice = get_or_404(db, SupplierInvoice, payload.supplier_invoice_id)
+    invoice = db.scalar(
+        select(SupplierInvoice)
+        .where(SupplierInvoice.id == payload.supplier_invoice_id)
+        .options(selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items))
+    )
+    if invoice is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
     ensure_same_company(current_user, invoice, db=db)
     if invoice.status not in {"approved_for_payment", "scheduled"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La factura no esta aprobada para pago",
         )
+    _ensure_payment_fits_invoice(
+        db,
+        invoice=invoice,
+        amount=payload.amount,
+        payment_status=payload.status,
+    )
     payment = SupplierPayment(
         company_id=invoice.company_id,
         approved_by=current_user.id,
         **payload.model_dump(),
     )
     db.add(payment)
-    invoice.status = "paid" if payment.status == "paid" else "scheduled"
-    if invoice.status == "paid":
-        purchase_order = db.scalar(
-            select(PurchaseOrder)
-            .where(PurchaseOrder.id == invoice.purchase_order_id)
-            .options(selectinload(PurchaseOrder.items))
-        )
-        if purchase_order is not None:
-            _sync_purchase_order_after_payment(db, purchase_order)
     db.flush()
+    _sync_invoice_after_payments(db, invoice)
     record_event(
         db,
         current_user,
@@ -3244,11 +3667,14 @@ def update_supplier_payment(
     )
     if invoice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
-    if updated.status == "paid":
-        invoice.status = "paid"
-        _sync_purchase_order_after_payment(db, invoice.purchase_order)
-    elif updated.status == "scheduled":
-        invoice.status = "scheduled"
+    _ensure_payment_fits_invoice(
+        db,
+        invoice=invoice,
+        amount=updated.amount,
+        payment_status=updated.status,
+        exclude_payment_id=updated.id,
+    )
+    _sync_invoice_after_payments(db, invoice)
     record_update(db, current_user, module="pagos_proveedores", item=updated, before=before)
     db.commit()
     db.refresh(updated)

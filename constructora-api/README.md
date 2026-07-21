@@ -45,6 +45,9 @@ SECRET_KEY=change-this-secret-key
 CORS_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 ADMIN_EMAIL=admin@acsm-control.local
 ADMIN_PASSWORD=Admin12345!
+SUPPLIER_INVOICE_UPLOAD_DIR=storage/supplier_invoice_documents
+SUPPLIER_INVOICE_PDF_MAX_MB=15
+SUPPLIER_INVOICE_XML_MAX_MB=6
 ```
 
 Para produccion el sistema bloquea el arranque si detecta valores inseguros. Define:
@@ -221,7 +224,10 @@ Especiales:
 - `POST /api/v1/purchasing/supplier-quotes/{quote_id}/approve`
 - `GET /api/v1/purchasing/purchase-orders`
 - `POST /api/v1/purchasing/purchase-orders/{purchase_order_id}/send`
-- `POST /api/v1/purchasing/supplier-invoices`
+- `POST /api/v1/purchasing/supplier-invoices/register`
+- `POST /api/v1/purchasing/supplier-invoice-documents/analyze-xml`
+- `POST /api/v1/purchasing/supplier-invoices/{invoice_id}/documents`
+- `GET /api/v1/purchasing/supplier-invoice-documents/{document_id}/download`
 - `POST /api/v1/purchasing/supplier-invoices/{invoice_id}/validate`
 - `POST /api/v1/purchasing/supplier-payments`
 
@@ -235,9 +241,12 @@ El sistema controla el proceso:
 4. El comparativo permite aprobar una cotizacion.
 5. Al aprobar, se genera una orden de compra y una lista esperada en inventario.
 6. Inventario recibe material contra esa lista y actualiza el avance de la orden.
-7. La factura del proveedor se valida contra la orden de compra.
-8. Si hay material pendiente, la factura queda bloqueada; si esta completa, pasa a pago.
-9. Pagos a proveedores programa y registra el pago.
+7. Cuentas por pagar registra la factura con al menos un PDF o XML. El XML CFDI cruza UUID, RFC, fecha e importes contra la orden, el proveedor y la constructora; una captura solo con PDF requiere revision fiscal manual.
+8. La factura se valida contra las cantidades recibidas. Si hay material pendiente queda bloqueada; cuando la recepcion es suficiente pasa a pago.
+9. Una orden puede tener varias facturas y cada factura puede pagarse en una o varias exhibiciones sin superar su saldo.
+10. Al completar los pagos de todas las cantidades facturadas y recibidas se cierra la orden de compra.
+
+Los archivos se guardan fuera del directorio publico, con nombre aleatorio, permisos privados, validacion de firma o estructura y escaneo con ClamAV cuando esta instalado. Para habilitar la validacion automatica del XML deben estar capturados el RFC de la constructora y el RFC del proveedor.
 
 ## Alta de constructora con licencia
 

@@ -169,11 +169,29 @@ type SupplierInvoice = {
   invoice_date: string
   due_date: string
   total: string
+  currency: string
+  fiscal_status: string
+  fiscal_validation_message: string | null
   status: string
   document_name: string | null
   notes: string | null
   supplier: Supplier
   purchase_order: PurchaseOrder
+  items: Array<{
+    id: number
+    purchase_order_item_id: number
+    quantity: string
+    unit_price: string
+    line_total: string
+  }>
+  documents: Array<{
+    id: number
+    document_type: string
+    original_file_name: string
+    file_size: number
+    validation_status: string
+    is_active: boolean
+  }>
 }
 
 type SupplierPayment = {
@@ -670,11 +688,13 @@ async function mockApi(
       return json(sentOrder)
     }
 
-    if (pathname === '/purchasing/supplier-invoices' && method === 'POST') {
-      const payload = await request.postDataJSON()
+    if (pathname === '/purchasing/supplier-invoices/register' && method === 'POST') {
+      const multipartBody = request.postData() ?? ''
+      const payloadMatch = multipartBody.match(/name="payload_json"\r\n\r\n([\s\S]*?)\r\n--/)
+      if (!payloadMatch) return json({ detail: 'Datos de factura no encontrados' }, 422)
+      const payload = JSON.parse(payloadMatch[1])
       const order = purchaseOrders.find((entry) => entry.id === Number(payload.purchase_order_id))
       if (!order) return json({ detail: 'Orden de compra no encontrada' }, 404)
-      const status = invoiceStateForOrder(order)
       const invoice: SupplierInvoice = {
         id: nextInvoiceId++,
         supplier_id: order.supplier_id,
@@ -683,11 +703,25 @@ async function mockApi(
         invoice_date: payload.invoice_date,
         due_date: '2026-07-05',
         total: String(payload.total),
-        status: status.status,
-        document_name: payload.document_name,
-        notes: status.message,
+        currency: 'MXN',
+        fiscal_status: 'pending_manual',
+        fiscal_validation_message: 'Factura capturada con PDF; requiere validacion fiscal manual.',
+        status: 'fiscal_review',
+        document_name: 'FAC-001.pdf',
+        notes: null,
         supplier: order.supplier,
         purchase_order: order,
+        items: [],
+        documents: [
+          {
+            id: 9900,
+            document_type: 'pdf',
+            original_file_name: 'FAC-001.pdf',
+            file_size: 51,
+            validation_status: 'valid',
+            is_active: true,
+          },
+        ],
       }
       supplierInvoices = [invoice, ...supplierInvoices]
       return json(invoice, 201)
@@ -703,7 +737,13 @@ async function mockApi(
       const status = invoiceStateForOrder(order)
       supplierInvoices = supplierInvoices.map((entry) =>
         entry.id === invoiceId
-          ? { ...entry, status: status.status, notes: status.message, purchase_order: order }
+          ? {
+              ...entry,
+              status: status.status,
+              fiscal_status: 'manual_validated',
+              notes: status.message,
+              purchase_order: order,
+            }
           : entry,
       )
       return json({
@@ -1040,14 +1080,20 @@ test('pagos bloquea factura con faltantes y permite pagar al completar recepcion
   await invoiceSection.locator('select').first().selectOption('800')
   await invoiceSection.getByPlaceholder('Folio factura').fill('FAC-001')
   await invoiceSection.locator('input[type="date"]').fill('2026-06-05')
+  await invoiceSection.locator('input[type="file"]').first().setInputFiles({
+    name: 'FAC-001.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n%%EOF'),
+  })
   await invoiceSection.getByPlaceholder('Total factura').fill('2200')
   await invoiceSection.getByRole('button', { name: 'Guardar factura' }).click()
 
-  await expect(page.getByText('Factura FAC-001 registrada como Bloqueada por faltantes.')).toBeVisible()
-  await expect(invoiceSection.locator('tr', { hasText: 'FAC-001' }).getByText('Bloqueada por faltantes')).toBeVisible()
+  await expect(page.getByText('Factura FAC-001 registrada como Revision fiscal.')).toBeVisible()
+  await expect(invoiceSection.locator('tr', { hasText: 'FAC-001' }).getByText('Revision fiscal')).toBeVisible()
 
-  await invoiceSection.locator('tr', { hasText: 'FAC-001' }).getByRole('button', { name: 'Validar' }).click()
+  await invoiceSection.locator('tr', { hasText: 'FAC-001' }).getByRole('button', { name: 'Revisar' }).click()
   await expect(page.getByText('Factura bloqueada: 1 partida(s) pendiente(s) por recibir.')).toBeVisible()
+  await expect(invoiceSection.locator('tr', { hasText: 'FAC-001' }).getByText('Bloqueada por faltantes')).toBeVisible()
 
   await page.goto('/inventory/purchase-order-receiving')
   await page.getByLabel('Orden de compra').selectOption('800')
@@ -1060,7 +1106,7 @@ test('pagos bloquea factura con faltantes y permite pagar al completar recepcion
   const refreshedInvoiceSection = page.locator('section', {
     has: page.getByRole('heading', { name: 'Facturas de proveedores' }),
   })
-  await refreshedInvoiceSection.locator('tr', { hasText: 'FAC-001' }).getByRole('button', { name: 'Validar' }).click()
+  await refreshedInvoiceSection.locator('tr', { hasText: 'FAC-001' }).getByRole('button', { name: 'Revisar' }).click()
   await expect(page.getByText('Factura validada y aprobada para pago.')).toBeVisible()
   await expect(
     refreshedInvoiceSection.locator('tr', { hasText: 'FAC-001' }).getByText('Aprobada para pago'),

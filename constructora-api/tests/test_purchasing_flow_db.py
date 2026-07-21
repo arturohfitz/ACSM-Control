@@ -1,10 +1,13 @@
+import asyncio
 import os
 import unittest
 from datetime import date, timedelta
 from decimal import Decimal
+from io import BytesIO
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -26,12 +29,14 @@ from app.api.v1.endpoints.purchasing import (
     list_purchase_cases,
     list_supplier_agreement_approvals,
     list_supplier_quote_approvals,
+    register_supplier_invoice,
     request_supplier_rfq_approval,
     send_purchase_order,
     supplier_rfq_comparison,
     update_purchase_order_billing_mode,
     validate_supplier_invoice,
 )
+from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
 from app.models import (
@@ -595,15 +600,13 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.assertEqual(item_statuses[first_item.id], "partial")
         self.assertEqual(item_statuses[second_item.id], "pending")
 
-        invoice = create_supplier_invoice(
+        invoice = self._create_validated_invoice(
             SupplierInvoiceCreate(
                 purchase_order_id=purchase_order.id,
                 invoice_number=f"FAC-BLOQ-{self.suffix}",
                 invoice_date=date.today(),
                 total=purchase_order.subtotal,
-            ),
-            self.db,
-            self.user,
+            )
         )
         self.assertEqual(invoice.status, "blocked")
 
@@ -676,6 +679,26 @@ class PurchasingFlowDBTest(unittest.TestCase):
         )
         assert purchase_order is not None
         return purchase_order
+
+    def _create_validated_invoice(self, payload: SupplierInvoiceCreate) -> SupplierInvoice:
+        invoice = create_supplier_invoice(payload, self.db, self.user)
+        invoice = self.db.get(SupplierInvoice, invoice.id)
+        assert invoice is not None
+        invoice.fiscal_status = "legacy_validated"
+        invoice.fiscal_validation_message = "Factura historica validada por prueba de integracion."
+        invoice.status = "received"
+        self.db.commit()
+        validate_supplier_invoice(invoice.id, self.db, self.user)
+        validated = self.db.scalar(
+            select(SupplierInvoice)
+            .where(SupplierInvoice.id == invoice.id)
+            .options(
+                selectinload(SupplierInvoice.items),
+                selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+            )
+        )
+        assert validated is not None
+        return validated
 
     def _assert_core_audit_events(self) -> None:
         events = list(
@@ -789,27 +812,67 @@ class PurchasingFlowDBTest(unittest.TestCase):
 
         purchase_order = self._get_purchase_order(purchase_order.id)
         self.assertEqual(purchase_order.status, "partially_received")
-        first_invoice = create_supplier_invoice(
-            SupplierInvoiceCreate(
-                purchase_order_id=purchase_order.id,
-                invoice_number=f"FAC-PARCIAL-1-{self.suffix}",
-                invoice_date=date.today(),
-                total=Decimal("1250.00"),
-                items=[
-                    SupplierInvoiceItemCreate(
-                        purchase_order_item_id=po_item.id,
-                        quantity=Decimal("50"),
-                        unit_price=Decimal("25"),
-                    )
-                ],
-            ),
-            self.db,
-            self.user,
+        invoice_payload = SupplierInvoiceCreate(
+            purchase_order_id=purchase_order.id,
+            invoice_number=f"FAC-PARCIAL-1-{self.suffix}",
+            invoice_date=date.today(),
+            subtotal=Decimal("1250.00"),
+            total=Decimal("1250.00"),
+            items=[
+                SupplierInvoiceItemCreate(
+                    purchase_order_item_id=po_item.id,
+                    quantity=Decimal("50"),
+                    unit_price=Decimal("25"),
+                )
+            ],
         )
+        supplier = self.db.get(Supplier, purchase_order.supplier_id)
+        assert supplier is not None
+        supplier.tax_id = "AAA010101AAA"
+        self.company.tax_id = "BBB010101BBB"
+        self.db.commit()
+        cfdi = f'''<?xml version="1.0" encoding="UTF-8"?>
+<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Version="4.0"
+    Serie="CI" Folio="{self.suffix}" Fecha="{date.today().isoformat()}T10:30:00"
+    SubTotal="1250.00" Moneda="MXN" Total="1250.00" MetodoPago="PUE" FormaPago="03">
+  <cfdi:Emisor Rfc="AAA010101AAA" Nombre="Proveedor CI" />
+  <cfdi:Receptor Rfc="BBB010101BBB" Nombre="Constructora CI" />
+  <cfdi:Complemento>
+    <tfd:TimbreFiscalDigital xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital"
+        UUID="{str(uuid4()).upper()}" />
+  </cfdi:Complemento>
+</cfdi:Comprobante>'''.encode()
+        original_upload_dir = settings.supplier_invoice_upload_dir
+        with TemporaryDirectory() as upload_dir:
+            settings.supplier_invoice_upload_dir = upload_dir
+            try:
+                first_invoice = asyncio.run(
+                    register_supplier_invoice(
+                        payload_json=invoice_payload.model_dump_json(),
+                        pdf_file=None,
+                        xml_file=UploadFile(file=BytesIO(cfdi), filename="factura-ci.xml"),
+                        db=self.db,
+                        current_user=self.user,
+                    )
+                )
+            finally:
+                settings.supplier_invoice_upload_dir = original_upload_dir
+        self.assertEqual(first_invoice.fiscal_status, "valid")
+        self.assertEqual(len(first_invoice.documents), 1)
+        validate_supplier_invoice(first_invoice.id, self.db, self.user)
+        first_invoice = self.db.scalar(
+            select(SupplierInvoice)
+            .where(SupplierInvoice.id == first_invoice.id)
+            .options(
+                selectinload(SupplierInvoice.items),
+                selectinload(SupplierInvoice.purchase_order).selectinload(PurchaseOrder.items),
+            )
+        )
+        assert first_invoice is not None
         self.assertEqual(first_invoice.status, "approved_for_payment")
         self.assertEqual(first_invoice.purchase_order.status, "partially_received")
 
-        blocked_invoice = create_supplier_invoice(
+        blocked_invoice = self._create_validated_invoice(
             SupplierInvoiceCreate(
                 purchase_order_id=purchase_order.id,
                 invoice_number=f"FAC-EXCESO-{self.suffix}",
@@ -822,25 +885,40 @@ class PurchasingFlowDBTest(unittest.TestCase):
                         unit_price=Decimal("25"),
                     )
                 ],
-            ),
-            self.db,
-            self.user,
+            )
         )
         self.assertEqual(blocked_invoice.status, "blocked")
 
         first_payment = create_supplier_payment(
             SupplierPaymentCreate(
                 supplier_invoice_id=first_invoice.id,
-                amount=first_invoice.total,
+                amount=Decimal("625.00"),
                 scheduled_date=date.today(),
                 paid_at=date.today(),
                 status="paid",
-                reference=f"PAGO-PARCIAL-1-{self.suffix}",
+                reference=f"PAGO-PARCIAL-1A-{self.suffix}",
             ),
             self.db,
             self.user,
         )
         self.assertEqual(first_payment.status, "paid")
+        self.db.refresh(first_invoice)
+        self.assertEqual(first_invoice.status, "scheduled")
+        second_payment = create_supplier_payment(
+            SupplierPaymentCreate(
+                supplier_invoice_id=first_invoice.id,
+                amount=Decimal("625.00"),
+                scheduled_date=date.today(),
+                paid_at=date.today(),
+                status="paid",
+                reference=f"PAGO-PARCIAL-1B-{self.suffix}",
+            ),
+            self.db,
+            self.user,
+        )
+        self.assertEqual(second_payment.status, "paid")
+        self.db.refresh(first_invoice)
+        self.assertEqual(first_invoice.status, "paid")
         purchase_order = self._get_purchase_order(purchase_order.id)
         self.assertEqual(purchase_order.status, "partially_received")
 
@@ -879,7 +957,7 @@ class PurchasingFlowDBTest(unittest.TestCase):
         purchase_order = self._get_purchase_order(purchase_order.id)
         self.assertEqual(purchase_order.status, "received")
 
-        second_invoice = create_supplier_invoice(
+        second_invoice = self._create_validated_invoice(
             SupplierInvoiceCreate(
                 purchase_order_id=purchase_order.id,
                 invoice_number=f"FAC-PARCIAL-2-{self.suffix}",
@@ -892,9 +970,7 @@ class PurchasingFlowDBTest(unittest.TestCase):
                         unit_price=Decimal("25"),
                     )
                 ],
-            ),
-            self.db,
-            self.user,
+            )
         )
         self.assertEqual(second_invoice.status, "approved_for_payment")
         create_supplier_payment(

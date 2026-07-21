@@ -123,7 +123,10 @@ export default function App() {
           />
           <Route
             path="/supplier-payments"
-            element={protect(<SupplierPaymentsPage />, 'supplier_payments:view')}
+            element={protect(
+              <SupplierPaymentsPage />,
+              ['supplier_invoices:view', 'supplier_payments:view'],
+            )}
           />
           <Route path="/users" element={protect(<UsersPage />, 'users:view')} />
           <Route path="/roles" element={protect(<RolesPage />, 'roles:view')} />

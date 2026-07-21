@@ -70,7 +70,7 @@ const navItems = [
     to: '/supplier-payments',
     label: 'Pagos proveedores',
     icon: ReceiptText,
-    permission: 'supplier_payments:view',
+    permission: ['supplier_invoices:view', 'supplier_payments:view'],
   },
   { to: '/users', label: 'Usuarios', icon: Users, permission: 'users:view' },
   { to: '/roles', label: 'Roles', icon: Shield, permission: 'roles:view' },

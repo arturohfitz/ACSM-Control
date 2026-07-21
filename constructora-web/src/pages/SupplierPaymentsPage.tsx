@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, CheckCircle2, CreditCard, FileCheck2, RefreshCw } from 'lucide-react'
+import { BarChart3, CheckCircle2, CreditCard, Download, FileCheck2, FileText, RefreshCw, Upload } from 'lucide-react'
 
-import { apiRequest } from '../lib/api'
+import { API_BASE_URL, apiRequest, getStoredToken } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
+import { useAuth } from '../auth/AuthContext'
 
 type Supplier = {
   id: number
@@ -44,13 +45,36 @@ type SupplierInvoice = {
   invoice_number: string
   invoice_date: string
   due_date: string
+  subtotal?: string | null
   total: string
+  currency: string
   status: string
+  fiscal_uuid?: string | null
+  issuer_tax_id?: string | null
+  receiver_tax_id?: string | null
+  fiscal_status: string
+  fiscal_validation_message?: string | null
   document_name?: string | null
   notes?: string | null
   supplier?: Supplier | null
   purchase_order?: PurchaseOrder | null
   items: SupplierInvoiceItem[]
+  documents: SupplierInvoiceDocument[]
+}
+
+type SupplierInvoiceDocument = {
+  id: number
+  document_type: 'pdf' | 'xml' | string
+  original_file_name: string
+  file_size: number
+  validation_status: string
+  is_active: boolean
+}
+
+type XMLAnalysis = {
+  validation_status: string
+  validation_message?: string | null
+  parsed_data: Record<string, string>
 }
 
 type SupplierPayment = {
@@ -82,11 +106,19 @@ function statusLabel(status: string) {
     closed: 'Cerrada',
     cancelled: 'Cancelada',
     received_invoice: 'Factura recibida',
+    document_pending: 'Documentos pendientes',
+    fiscal_review: 'Revision fiscal',
     blocked: 'Bloqueada por faltantes',
     approved_for_payment: 'Aprobada para pago',
     scheduled: 'Pago programado',
     paid: 'Pagada',
     rejected: 'Rechazada',
+    pending: 'Pendiente',
+    pending_manual: 'Revision manual',
+    review_required: 'Requiere revision',
+    valid: 'XML validado',
+    manual_validated: 'Validada manualmente',
+    legacy_validated: 'Registro historico',
   }
   return labels[status] ?? status
 }
@@ -106,11 +138,19 @@ function statusPillClass(status: string) {
     return 'border-blue-200 bg-blue-50 text-blue-700'
   }
   if (['partially_received', 'blocked'].includes(status)) return 'border-amber-200 bg-amber-50 text-amber-700'
+  if (['document_pending', 'fiscal_review'].includes(status)) return 'border-amber-200 bg-amber-50 text-amber-700'
   if (['cancelled', 'rejected'].includes(status)) return 'border-red-200 bg-red-50 text-red-700'
   return 'border-acsm-line bg-white text-acsm-muted'
 }
 
 export default function SupplierPaymentsPage() {
+  const { hasPermission } = useAuth()
+  const canViewInvoices = hasPermission('supplier_invoices:view')
+  const canUploadInvoices = hasPermission('supplier_invoices:upload')
+  const canValidateInvoices = hasPermission('supplier_invoices:validate')
+  const canViewPayments = hasPermission('supplier_payments:view')
+  const canSchedulePayments = hasPermission('supplier_payments:schedule')
+  const canMarkPaymentsPaid = hasPermission('supplier_payments:pay')
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [invoices, setInvoices] = useState<SupplierInvoice[]>([])
   const [payments, setPayments] = useState<SupplierPayment[]>([])
@@ -121,18 +161,34 @@ export default function SupplierPaymentsPage() {
   const [purchaseOrderId, setPurchaseOrderId] = useState('')
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [invoiceDate, setInvoiceDate] = useState('')
-  const [documentName, setDocumentName] = useState('')
   const [total, setTotal] = useState('')
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
+  const [xmlFile, setXmlFile] = useState<File | null>(null)
+  const [xmlAnalysis, setXmlAnalysis] = useState<XMLAnalysis | null>(null)
+  const [analyzingXML, setAnalyzingXML] = useState(false)
+  const [uploadingDocumentKey, setUploadingDocumentKey] = useState('')
   const [invoiceRows, setInvoiceRows] = useState<Record<number, { quantity: string; unit_price: string }>>({})
 
   const [invoiceToPay, setInvoiceToPay] = useState('')
   const [scheduledDate, setScheduledDate] = useState('')
   const [reference, setReference] = useState('')
+  const [paymentAmount, setPaymentAmount] = useState('')
 
   const invoiceMap = useMemo(
     () => new Map(invoices.map((invoice) => [invoice.id, invoice])),
     [invoices],
   )
+  const committedPaymentByInvoice = useMemo(() => {
+    const totals = new Map<number, number>()
+    for (const payment of payments) {
+      if (!['scheduled', 'paid'].includes(payment.status)) continue
+      totals.set(
+        payment.supplier_invoice_id,
+        (totals.get(payment.supplier_invoice_id) ?? 0) + Number(payment.amount || 0),
+      )
+    }
+    return totals
+  }, [payments])
   const activeInvoiceStatuses = useMemo(
     () => new Set(['received', 'approved_for_payment', 'scheduled', 'paid']),
     [],
@@ -268,8 +324,12 @@ export default function SupplierPaymentsPage() {
     try {
       const [orderData, invoiceData, paymentData] = await Promise.all([
         apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders'),
-        apiRequest<SupplierInvoice[]>('/purchasing/supplier-invoices'),
-        apiRequest<SupplierPayment[]>('/purchasing/supplier-payments'),
+        canViewInvoices
+          ? apiRequest<SupplierInvoice[]>('/purchasing/supplier-invoices')
+          : Promise.resolve([] as SupplierInvoice[]),
+        canViewPayments
+          ? apiRequest<SupplierPayment[]>('/purchasing/supplier-payments')
+          : Promise.resolve([] as SupplierPayment[]),
       ])
       setOrders(orderData)
       setInvoices(invoiceData)
@@ -300,6 +360,19 @@ export default function SupplierPaymentsPage() {
     })
   }, [selectedOrder])
 
+  useEffect(() => {
+    const invoice = invoiceMap.get(Number(invoiceToPay))
+    if (!invoice) {
+      setPaymentAmount('')
+      return
+    }
+    const remaining = Math.max(
+      Number(invoice.total || 0) - (committedPaymentByInvoice.get(invoice.id) ?? 0),
+      0,
+    )
+    setPaymentAmount(remaining.toFixed(2))
+  }, [committedPaymentByInvoice, invoiceMap, invoiceToPay])
+
   function patchInvoiceRow(itemId: number, patch: Partial<{ quantity: string; unit_price: string }>) {
     setInvoiceRows((current) => ({
       ...current,
@@ -309,6 +382,83 @@ export default function SupplierPaymentsPage() {
         ...patch,
       },
     }))
+  }
+
+  async function analyzeXML(file: File | null) {
+    setXmlFile(file)
+    setXmlAnalysis(null)
+    if (!file) return
+    setAnalyzingXML(true)
+    setError('')
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const analysis = await apiRequest<XMLAnalysis>(
+        '/purchasing/supplier-invoice-documents/analyze-xml',
+        { method: 'POST', body: formData },
+      )
+      setXmlAnalysis(analysis)
+      const parsed = analysis.parsed_data
+      const fiscalFolio = [parsed.series, parsed.folio].filter(Boolean).join('-')
+      if (fiscalFolio) setInvoiceNumber(fiscalFolio)
+      if (parsed.issue_datetime) setInvoiceDate(parsed.issue_datetime.slice(0, 10))
+      if (parsed.total) setTotal(parsed.total)
+    } catch (err) {
+      setXmlFile(null)
+      setError(err instanceof Error ? err.message : 'No fue posible analizar el XML')
+    } finally {
+      setAnalyzingXML(false)
+    }
+  }
+
+  async function downloadInvoiceDocument(document: SupplierInvoiceDocument) {
+    setError('')
+    try {
+      const token = getStoredToken()
+      const response = await fetch(
+        `${API_BASE_URL}/purchasing/supplier-invoice-documents/${document.id}/download`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+      )
+      if (!response.ok) throw new Error('No fue posible descargar el documento')
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = window.document.createElement('a')
+      link.href = url
+      link.download = document.original_file_name
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible descargar el documento')
+    }
+  }
+
+  async function uploadInvoiceDocument(
+    invoice: SupplierInvoice,
+    documentType: 'pdf' | 'xml',
+    file: File | null,
+  ) {
+    if (!file) return
+    const uploadKey = `${invoice.id}:${documentType}`
+    setUploadingDocumentKey(uploadKey)
+    setMessage('')
+    setError('')
+    try {
+      const formData = new FormData()
+      formData.append('document_type', documentType)
+      formData.append('file', file)
+      const updated = await apiRequest<SupplierInvoice>(
+        `/purchasing/supplier-invoices/${invoice.id}/documents`,
+        { method: 'POST', body: formData },
+      )
+      const successMessage = `${documentType.toUpperCase()} de la factura ${updated.invoice_number} actualizado.`
+      setMessage(successMessage)
+      showActionNotice(successMessage)
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible adjuntar el documento')
+    } finally {
+      setUploadingDocumentKey('')
+    }
   }
 
   async function updateBillingMode(mode: 'single' | 'partial') {
@@ -346,23 +496,52 @@ export default function SupplierPaymentsPage() {
           quantity: Number(row.draft.quantity),
           unit_price: Number(row.draft.unit_price || row.unit_price || 0),
         }))
-      const created = await apiRequest<SupplierInvoice>('/purchasing/supplier-invoices', {
+      const invoiceSubtotal = selectedOrderIsPartial
+        ? Number(partialTotal.toFixed(2))
+        : xmlAnalysis?.parsed_data.subtotal
+          ? Number(xmlAnalysis.parsed_data.subtotal)
+          : null
+      const payload = {
+        purchase_order_id: Number(purchaseOrderId),
+        invoice_number: invoiceNumber,
+        invoice_date: invoiceDate,
+        subtotal: invoiceSubtotal,
+        discount: xmlAnalysis?.parsed_data.discount ? Number(xmlAnalysis.parsed_data.discount) : null,
+        transferred_taxes: xmlAnalysis?.parsed_data.transferred_taxes
+          ? Number(xmlAnalysis.parsed_data.transferred_taxes)
+          : null,
+        withheld_taxes: xmlAnalysis?.parsed_data.withheld_taxes
+          ? Number(xmlAnalysis.parsed_data.withheld_taxes)
+          : null,
+        total: Number(total || partialTotal.toFixed(2)),
+        currency: xmlAnalysis?.parsed_data.currency || 'MXN',
+        exchange_rate: xmlAnalysis?.parsed_data.exchange_rate
+          ? Number(xmlAnalysis.parsed_data.exchange_rate)
+          : null,
+        fiscal_uuid: xmlAnalysis?.parsed_data.fiscal_uuid || null,
+        series: xmlAnalysis?.parsed_data.series || null,
+        issuer_tax_id: xmlAnalysis?.parsed_data.issuer_tax_id || null,
+        receiver_tax_id: xmlAnalysis?.parsed_data.receiver_tax_id || null,
+        payment_method: xmlAnalysis?.parsed_data.payment_method || null,
+        payment_form: xmlAnalysis?.parsed_data.payment_form || null,
+        items: selectedOrderIsPartial ? partialItems : [],
+      }
+      const formData = new FormData()
+      formData.append('payload_json', JSON.stringify(payload))
+      if (pdfFile) formData.append('pdf_file', pdfFile)
+      if (xmlFile) formData.append('xml_file', xmlFile)
+      const created = await apiRequest<SupplierInvoice>('/purchasing/supplier-invoices/register', {
         method: 'POST',
-        body: JSON.stringify({
-          purchase_order_id: Number(purchaseOrderId),
-          invoice_number: invoiceNumber,
-          invoice_date: invoiceDate,
-          total: selectedOrderIsPartial ? Number(partialTotal.toFixed(2)) : Number(total),
-          document_name: documentName || null,
-          items: selectedOrderIsPartial ? partialItems : [],
-        }),
+        body: formData,
       })
       const successMessage = `Factura ${created.invoice_number} registrada como ${statusLabel(created.status)}.`
       setMessage(successMessage)
       showActionNotice(successMessage)
       setInvoiceNumber('')
-      setDocumentName('')
       setTotal('')
+      setPdfFile(null)
+      setXmlFile(null)
+      setXmlAnalysis(null)
       setInvoiceRows({})
       await loadData()
     } catch (err) {
@@ -396,7 +575,7 @@ export default function SupplierPaymentsPage() {
         method: 'POST',
         body: JSON.stringify({
           supplier_invoice_id: invoice.id,
-          amount: Number(invoice.total),
+          amount: Number(paymentAmount),
           scheduled_date: scheduledDate || null,
           status: 'scheduled',
           reference: reference || null,
@@ -407,6 +586,7 @@ export default function SupplierPaymentsPage() {
       showActionNotice(successMessage)
       setInvoiceToPay('')
       setReference('')
+      setPaymentAmount('')
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible programar el pago')
@@ -447,7 +627,7 @@ export default function SupplierPaymentsPage() {
         </div>
       )}
 
-      <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+      <section className={canViewInvoices ? 'overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel' : 'hidden'}>
         <div className="flex items-center justify-between border-b border-acsm-line px-4 py-3">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
@@ -470,8 +650,8 @@ export default function SupplierPaymentsPage() {
           </button>
         </div>
 
-        <div className="grid gap-4 p-4 lg:grid-cols-[420px_minmax(0,1fr)]">
-          <div className="rounded-md border border-acsm-line bg-acsm-paper p-3">
+        <div className={canUploadInvoices ? 'grid gap-4 p-4 lg:grid-cols-[420px_minmax(0,1fr)]' : 'p-4'}>
+          <div className={canUploadInvoices ? 'rounded-md border border-acsm-line bg-acsm-paper p-3' : 'hidden'}>
             <h3 className="mb-3 text-sm font-semibold text-acsm-ink">Registrar factura</h3>
             <div className="space-y-3">
               <select
@@ -530,12 +710,63 @@ export default function SupplierPaymentsPage() {
                 onChange={(event) => setInvoiceDate(event.target.value)}
                 className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
               />
-              <input
-                value={documentName}
-                onChange={(event) => setDocumentName(event.target.value)}
-                placeholder="Archivo o referencia"
-                className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
-              />
+              <div className="rounded-md border border-acsm-line bg-white p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-bold uppercase text-acsm-muted">Documentos fiscales</div>
+                    <div className="text-xs text-acsm-muted">Adjunta al menos PDF o XML.</div>
+                  </div>
+                  {xmlAnalysis && (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
+                      XML leido
+                    </span>
+                  )}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-md border border-dashed border-acsm-line bg-acsm-paper px-3 py-2 hover:border-blue-300">
+                    <FileText className="h-5 w-5 shrink-0 text-red-600" aria-hidden="true" />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-bold text-acsm-ink">Factura PDF</span>
+                      <span className="block truncate text-xs text-acsm-muted">
+                        {pdfFile?.name ?? 'Seleccionar PDF'}
+                      </span>
+                    </span>
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      onChange={(event) => setPdfFile(event.target.files?.[0] ?? null)}
+                      className="sr-only"
+                    />
+                  </label>
+                  <label className="flex min-h-16 cursor-pointer items-center gap-3 rounded-md border border-dashed border-acsm-line bg-acsm-paper px-3 py-2 hover:border-blue-300">
+                    <Upload className="h-5 w-5 shrink-0 text-blue-700" aria-hidden="true" />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-bold text-acsm-ink">Factura XML</span>
+                      <span className="block truncate text-xs text-acsm-muted">
+                        {analyzingXML ? 'Analizando...' : xmlFile?.name ?? 'Seleccionar XML'}
+                      </span>
+                    </span>
+                    <input
+                      type="file"
+                      accept="application/xml,text/xml,.xml"
+                      onChange={(event) => void analyzeXML(event.target.files?.[0] ?? null)}
+                      className="sr-only"
+                    />
+                  </label>
+                </div>
+                {xmlAnalysis && (
+                  <div className="mt-2 grid gap-2 rounded-md border border-blue-100 bg-blue-50 p-2 text-xs sm:grid-cols-2">
+                    <div>
+                      <span className="font-semibold text-blue-900">UUID:</span>{' '}
+                      <span className="break-all text-blue-800">{xmlAnalysis.parsed_data.fiscal_uuid}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-blue-900">RFC emisor:</span>{' '}
+                      <span className="text-blue-800">{xmlAnalysis.parsed_data.issuer_tax_id}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
               {selectedOrderIsPartial ? (
                 <div className="overflow-hidden rounded-md border border-acsm-line bg-white">
                   <div className="border-b border-acsm-line px-3 py-2 text-xs font-semibold uppercase text-acsm-muted">
@@ -597,6 +828,20 @@ export default function SupplierPaymentsPage() {
                   <div className="border-t border-acsm-line px-3 py-2 text-right text-sm font-bold text-acsm-ink">
                     Total parcial: {formatMoney(partialTotal)}
                   </div>
+                  <div className="border-t border-acsm-line p-3">
+                    <label className="mb-1 block text-xs font-semibold uppercase text-acsm-muted">
+                      Total fiscal de la factura
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={total}
+                      onChange={(event) => setTotal(event.target.value)}
+                      placeholder={`Base ${formatMoney(partialTotal)}; agrega impuestos si aplica`}
+                      className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
+                    />
+                  </div>
                 </div>
               ) : (
                 <input
@@ -616,6 +861,8 @@ export default function SupplierPaymentsPage() {
                   !purchaseOrderId ||
                   !invoiceNumber ||
                   !invoiceDate ||
+                  (!pdfFile && !xmlFile) ||
+                  analyzingXML ||
                   (selectedOrderIsPartial ? partialTotal <= 0 : !total)
                 }
                 className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
@@ -805,7 +1052,7 @@ export default function SupplierPaymentsPage() {
             )}
 
             <div className="overflow-x-auto rounded-md border border-acsm-line">
-              <table className="min-w-[920px] w-full text-sm">
+              <table className="min-w-[1080px] w-full text-sm">
                 <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
                   <tr>
                     <th className="px-4 py-3 text-left">Factura</th>
@@ -820,7 +1067,27 @@ export default function SupplierPaymentsPage() {
                 <tbody>
                   {invoices.map((invoice) => (
                     <tr key={invoice.id} className="border-t border-acsm-line">
-                      <td className="px-4 py-3 font-semibold">{invoice.invoice_number}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-acsm-ink">{invoice.invoice_number}</div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {(invoice.documents ?? [])
+                            .filter((document) => document.is_active)
+                            .map((document) => (
+                              <button
+                                key={document.id}
+                                type="button"
+                                onClick={() => void downloadInvoiceDocument(document)}
+                                className="inline-flex items-center gap-1 rounded-full border border-acsm-line bg-white px-2 py-1 text-[11px] font-bold uppercase text-blue-700 hover:bg-blue-50"
+                              >
+                                <Download className="h-3 w-3" aria-hidden="true" />
+                                {document.document_type}
+                              </button>
+                            ))}
+                        </div>
+                        <div className="mt-1 text-[11px] text-acsm-muted">
+                          Fiscal: {statusLabel(invoice.fiscal_status)}
+                        </div>
+                      </td>
                       <td className="px-4 py-3">{invoice.supplier?.name ?? invoice.supplier_id}</td>
                       <td className="px-4 py-3">{invoice.purchase_order?.po_number ?? invoice.purchase_order_id}</td>
                       <td className="px-4 py-3">{invoice.due_date}</td>
@@ -836,14 +1103,63 @@ export default function SupplierPaymentsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => void validateInvoice(invoice.id)}
-                          className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
-                        >
-                          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                          Validar
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          {canUploadInvoices && (['pdf', 'xml'] as const).map((documentType) => {
+                            const hasDocument = (invoice.documents ?? []).some(
+                              (document) => document.is_active && document.document_type === documentType,
+                            )
+                            const uploadKey = `${invoice.id}:${documentType}`
+                            const documentsLocked = ['scheduled', 'paid'].includes(invoice.status)
+                            return (
+                              <label
+                                key={documentType}
+                                title={`${hasDocument ? 'Reemplazar' : 'Adjuntar'} ${documentType.toUpperCase()}`}
+                                className={[
+                                  'inline-flex h-9 cursor-pointer items-center gap-1 rounded-md border px-2 text-xs font-bold uppercase',
+                                  hasDocument
+                                    ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                                    : 'border-acsm-line bg-white text-acsm-muted hover:bg-acsm-paper',
+                                  documentsLocked ? 'pointer-events-none cursor-not-allowed opacity-50' : '',
+                                ].join(' ')}
+                              >
+                                <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                                {uploadingDocumentKey === uploadKey ? 'Subiendo' : documentType}
+                                <input
+                                  type="file"
+                                  accept={
+                                    documentType === 'pdf'
+                                      ? 'application/pdf,.pdf'
+                                      : 'application/xml,text/xml,.xml'
+                                  }
+                                  disabled={documentsLocked || Boolean(uploadingDocumentKey)}
+                                  aria-label={`${hasDocument ? 'Reemplazar' : 'Adjuntar'} ${documentType.toUpperCase()} de ${invoice.invoice_number}`}
+                                  onChange={(event) => {
+                                    const selectedFile = event.target.files?.[0] ?? null
+                                    event.target.value = ''
+                                    void uploadInvoiceDocument(invoice, documentType, selectedFile)
+                                  }}
+                                  className="sr-only"
+                                />
+                              </label>
+                            )
+                          })}
+                          {canValidateInvoices && <button
+                            type="button"
+                            onClick={() => void validateInvoice(invoice.id)}
+                            disabled={
+                              !(invoice.documents ?? []).some((document) => document.is_active) ||
+                              ['approved_for_payment', 'scheduled', 'paid'].includes(invoice.status) ||
+                              Boolean(uploadingDocumentKey)
+                            }
+                            className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                            Revisar
+                          </button>}
+                          {!canUploadInvoices && !canValidateInvoices && (
+                            <span className="text-xs font-medium text-acsm-muted">Solo consulta</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -861,8 +1177,8 @@ export default function SupplierPaymentsPage() {
         </div>
       </section>
 
-      <section className="grid gap-5 lg:grid-cols-[420px_minmax(0,1fr)]">
-        <div className="rounded-md border border-acsm-line bg-white p-4 shadow-panel">
+      <section className={canViewPayments ? 'grid gap-5 lg:grid-cols-[420px_minmax(0,1fr)]' : 'hidden'}>
+        <div className={canSchedulePayments ? 'rounded-md border border-acsm-line bg-white p-4 shadow-panel' : 'hidden'}>
           <div className="mb-3 flex items-center gap-3">
             <CreditCard className="h-4 w-4 text-acsm-green" aria-hidden="true" />
             <div>
@@ -885,6 +1201,15 @@ export default function SupplierPaymentsPage() {
               ))}
             </select>
             <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={paymentAmount}
+              onChange={(event) => setPaymentAmount(event.target.value)}
+              placeholder="Monto a programar"
+              className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
+            />
+            <input
               type="date"
               value={scheduledDate}
               onChange={(event) => setScheduledDate(event.target.value)}
@@ -899,7 +1224,7 @@ export default function SupplierPaymentsPage() {
             <button
               type="button"
               onClick={() => void schedulePayment()}
-              disabled={!invoiceToPay}
+              disabled={!invoiceToPay || Number(paymentAmount) <= 0}
               className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
             >
               <CreditCard className="h-4 w-4" aria-hidden="true" />
@@ -936,7 +1261,7 @@ export default function SupplierPaymentsPage() {
                       <td className="px-4 py-3">{payment.scheduled_date ?? '-'}</td>
                       <td className="px-4 py-3">{statusLabel(payment.status)}</td>
                       <td className="px-4 py-3 text-right">
-                        <button
+                        {canMarkPaymentsPaid ? <button
                           type="button"
                           onClick={() => void markPaid(payment)}
                           disabled={payment.status === 'paid'}
@@ -944,7 +1269,7 @@ export default function SupplierPaymentsPage() {
                         >
                           <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                           Pagado
-                        </button>
+                        </button> : <span className="text-acsm-muted">-</span>}
                       </td>
                     </tr>
                   )

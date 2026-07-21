@@ -47,6 +47,8 @@ PurchaseOrderStatus = Literal[
     "cancelled",
 ]
 SupplierInvoiceStatus = Literal[
+    "document_pending",
+    "fiscal_review",
     "received",
     "blocked",
     "approved_for_payment",
@@ -551,7 +553,18 @@ class SupplierInvoiceCreate(BaseModel):
     invoice_date: date
     due_date: date | None = None
     subtotal: NonNegativeDecimal | None = None
+    discount: NonNegativeDecimal | None = None
+    transferred_taxes: NonNegativeDecimal | None = None
+    withheld_taxes: NonNegativeDecimal | None = None
     total: PositiveDecimal
+    currency: str = Field(default="MXN", min_length=3, max_length=10)
+    exchange_rate: PositiveDecimal | None = None
+    fiscal_uuid: str | None = Field(default=None, max_length=40)
+    series: str | None = Field(default=None, max_length=40)
+    issuer_tax_id: str | None = Field(default=None, max_length=20)
+    receiver_tax_id: str | None = Field(default=None, max_length=20)
+    payment_method: str | None = Field(default=None, max_length=10)
+    payment_form: str | None = Field(default=None, max_length=10)
     document_name: str | None = Field(default=None, max_length=255)
     notes: str | None = None
     items: list[SupplierInvoiceItemCreate] = Field(default_factory=list)
@@ -566,7 +579,20 @@ class SupplierInvoiceRead(TimestampRead):
     invoice_date: date
     due_date: date
     subtotal: Decimal | None = None
+    discount: Decimal | None = None
+    transferred_taxes: Decimal | None = None
+    withheld_taxes: Decimal | None = None
     total: Decimal
+    currency: str
+    exchange_rate: Decimal | None = None
+    fiscal_uuid: str | None = None
+    series: str | None = None
+    issuer_tax_id: str | None = None
+    receiver_tax_id: str | None = None
+    payment_method: str | None = None
+    payment_form: str | None = None
+    fiscal_status: str
+    fiscal_validation_message: str | None = None
     status: SupplierInvoiceStatus
     document_name: str | None = None
     notes: str | None = None
@@ -575,6 +601,32 @@ class SupplierInvoiceRead(TimestampRead):
     supplier: SupplierRead | None = None
     purchase_order: PurchaseOrderRead | None = None
     items: list[SupplierInvoiceItemRead] = Field(default_factory=list)
+    documents: list["SupplierInvoiceDocumentRead"] = Field(default_factory=list)
+
+
+class SupplierInvoiceDocumentRead(TimestampRead):
+    id: int
+    company_id: int
+    supplier_invoice_id: int
+    document_type: str
+    original_file_name: str
+    content_type: str
+    extension: str
+    file_size: int
+    sha256: str
+    validation_status: str
+    validation_message: str | None = None
+    parsed_data: dict | None = None
+    is_active: bool
+    uploaded_by: int | None = None
+    uploaded_at: datetime
+
+
+class SupplierInvoiceXMLAnalysis(BaseModel):
+    document_type: str = "xml"
+    validation_status: str
+    validation_message: str | None = None
+    parsed_data: dict
 
 
 class SupplierPaymentCreate(BaseModel):

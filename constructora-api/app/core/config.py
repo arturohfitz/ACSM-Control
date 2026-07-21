@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     supplier_quote_upload_dir: str = "storage/supplier_quote_uploads"
     supplier_quote_upload_max_mb: int = 15
     supplier_quote_token_expire_days: int = 14
+    supplier_invoice_upload_dir: str = "storage/supplier_invoice_documents"
+    supplier_invoice_pdf_max_mb: int = 15
+    supplier_invoice_xml_max_mb: int = 6
 
     admin_full_name: str = "Administrador Maestro"
     admin_email: str = "admin@acsm-control.local"
