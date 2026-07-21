@@ -24,6 +24,8 @@ from app.models import (
     MaterialRequisition,
     Project,
     ProjectHouseModel,
+    ProjectMaterialBudgetBaseline,
+    ProjectMaterialBudgetItem,
     ProjectWarehouse,
     PurchaseOrder,
     PurchaseOrderItem,
@@ -49,6 +51,9 @@ from app.schemas.purchasing import (
     PurchaseCaseStepRead,
     PurchaseOrderBillingModeUpdate,
     PurchaseOrderRead,
+    ProjectFinancialProgressResponse,
+    ProjectMaterialBudgetApproval,
+    ProjectMaterialBudgetBaselineRead,
     SupplierAgreementCreate,
     SupplierAgreementEligibility,
     SupplierAgreementItemCreate,
@@ -99,7 +104,18 @@ from app.services.invoice_documents import (
 )
 from app.services.notifications import notify_permission, notify_user_id, resolve_notifications
 from app.services.permissions import user_has_permission
-from app.services.tenancy import company_id_for_write, ensure_same_company, get_user_company_id, scoped_select
+from app.services.project_financials import (
+    approve_project_material_budget,
+    project_financial_progress,
+)
+from app.services.tenancy import (
+    allowed_client_ids,
+    company_id_for_write,
+    ensure_project_access,
+    ensure_same_company,
+    get_user_company_id,
+    scoped_select,
+)
 
 
 router = APIRouter()
@@ -3133,6 +3149,90 @@ def update_purchase_order_billing_mode(
     return get_purchase_order(purchase_order_id, db, current_user)
 
 
+@router.get("/project-financial-progress", response_model=ProjectFinancialProgressResponse)
+def get_project_financial_progress(
+    project_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("project_financials", "view")),
+) -> dict:
+    if project_id is not None:
+        project = _project_for_user(db, project_id, current_user)
+        company_id = project.company_id
+        ensure_project_access(db, current_user, project_id)
+    else:
+        company_id = get_user_company_id(current_user)
+    return project_financial_progress(
+        db,
+        company_id=company_id,
+        project_id=project_id,
+        allowed_client_ids=allowed_client_ids(db, current_user),
+    )
+
+
+@router.post(
+    "/projects/{project_id}/material-budget-baselines",
+    response_model=ProjectMaterialBudgetBaselineRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_project_material_budget_baseline(
+    project_id: int,
+    payload: ProjectMaterialBudgetApproval,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("project_material_budgets", "approve")),
+) -> dict:
+    project = _project_for_user(db, project_id, current_user)
+    ensure_project_access(db, current_user, project_id)
+    baseline = approve_project_material_budget(
+        db,
+        project=project,
+        approved_by=current_user.id,
+        notes=payload.notes,
+    )
+    record_event(
+        db,
+        current_user,
+        module="presupuesto_materiales",
+        action="approve",
+        entity_type="ProjectMaterialBudgetBaseline",
+        entity_id=baseline.id,
+        company_id=baseline.company_id,
+        label=f"{project.name} revision {baseline.revision}",
+        description=(
+            f"{current_user.full_name} aprobo la linea base de materiales de {project.name}"
+        ),
+        metadata={
+            "project_id": project.id,
+            "revision": baseline.revision,
+            "total_amount": str(baseline.total_amount),
+        },
+    )
+    db.commit()
+    db.refresh(baseline)
+    item_count = int(
+        db.scalar(
+            select(func.count()).select_from(ProjectMaterialBudgetItem).where(
+                ProjectMaterialBudgetItem.baseline_id == baseline.id
+            )
+        )
+        or 0
+    )
+    return {
+        "id": baseline.id,
+        "company_id": baseline.company_id,
+        "project_id": baseline.project_id,
+        "revision": baseline.revision,
+        "status": baseline.status,
+        "currency": baseline.currency,
+        "total_amount": baseline.total_amount,
+        "approved_at": baseline.approved_at,
+        "approved_by": baseline.approved_by,
+        "notes": baseline.notes,
+        "created_at": baseline.created_at,
+        "updated_at": baseline.updated_at,
+        "item_count": item_count,
+    }
+
+
 @router.get("/supplier-invoices", response_model=list[SupplierInvoiceRead])
 def list_supplier_invoices(
     skip: int = 0,
@@ -3155,6 +3255,58 @@ def list_supplier_invoices(
             .limit(limit)
         ).all()
     )
+
+
+def _invoice_payload_net_amount(
+    payload: SupplierInvoiceCreate,
+    *,
+    items_total: Decimal,
+) -> Decimal:
+    if payload.subtotal is not None:
+        return Decimal(payload.subtotal).quantize(Decimal("0.01"))
+    if items_total > Decimal("0"):
+        return items_total.quantize(Decimal("0.01"))
+    has_fiscal_adjustments = any(
+        value not in {None, Decimal("0")}
+        for value in (
+            payload.discount,
+            payload.transferred_taxes,
+            payload.withheld_taxes,
+        )
+    )
+    if has_fiscal_adjustments:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Captura el subtotal de la factura para validar el importe contra la orden de compra.",
+        )
+    return Decimal(payload.total).quantize(Decimal("0.01"))
+
+
+def _invoice_record_net_amount(invoice: SupplierInvoice) -> Decimal:
+    if invoice.subtotal is not None:
+        return Decimal(invoice.subtotal)
+    if invoice.items:
+        return sum((Decimal(item.line_total) for item in invoice.items), Decimal("0"))
+    return Decimal(invoice.total)
+
+
+def _invoice_amount_in_mxn(
+    amount: Decimal,
+    *,
+    currency: str,
+    exchange_rate: Decimal | None,
+    require_exchange_rate: bool,
+) -> Decimal:
+    if currency.upper() == "MXN":
+        return amount.quantize(Decimal("0.01"))
+    if exchange_rate is None:
+        if require_exchange_rate:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Captura el tipo de cambio para una factura en moneda distinta a MXN.",
+            )
+        exchange_rate = Decimal("1")
+    return (amount * Decimal(exchange_rate)).quantize(Decimal("0.01"))
 
 
 def _create_supplier_invoice_record(
@@ -3191,6 +3343,25 @@ def _create_supplier_invoice_record(
                 detail="Una partida de factura no pertenece a la orden de compra.",
             )
         unit_price = item_payload.unit_price if item_payload.unit_price is not None else po_item.unit_price
+        already_invoiced = Decimal(
+            db.scalar(
+                select(func.coalesce(func.sum(SupplierInvoiceItem.quantity), 0))
+                .join(
+                    SupplierInvoice,
+                    SupplierInvoice.id == SupplierInvoiceItem.supplier_invoice_id,
+                )
+                .where(
+                    SupplierInvoiceItem.purchase_order_item_id == po_item.id,
+                    SupplierInvoice.status != "rejected",
+                )
+            )
+            or 0
+        )
+        if already_invoiced + Decimal(item_payload.quantity) > Decimal(po_item.quantity_ordered):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"La cantidad facturada de {po_item.description} supera lo ordenado.",
+            )
         line_total = (item_payload.quantity * unit_price).quantize(Decimal("0.01"))
         items_total += line_total
         invoice_items.append(
@@ -3205,11 +3376,49 @@ def _create_supplier_invoice_record(
                 notes=item_payload.notes,
             )
         )
-    expected_items_total = payload.subtotal if payload.subtotal is not None else payload.total
+    invoice_net = _invoice_payload_net_amount(payload, items_total=items_total)
+    expected_items_total = invoice_net
     if invoice_items and abs(items_total - expected_items_total) > Decimal("0.01"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El total de la factura no coincide con las partidas capturadas.",
+        )
+    invoice_net_mxn = _invoice_amount_in_mxn(
+        invoice_net,
+        currency=payload.currency,
+        exchange_rate=payload.exchange_rate,
+        require_exchange_rate=True,
+    )
+    previous_invoices = list(
+        db.scalars(
+            select(SupplierInvoice)
+            .where(
+                SupplierInvoice.purchase_order_id == purchase_order.id,
+                SupplierInvoice.status != "rejected",
+            )
+            .options(selectinload(SupplierInvoice.items))
+        ).all()
+    )
+    previous_net_mxn = sum(
+        (
+            _invoice_amount_in_mxn(
+                _invoice_record_net_amount(existing),
+                currency=existing.currency,
+                exchange_rate=existing.exchange_rate,
+                require_exchange_rate=False,
+            )
+            for existing in previous_invoices
+        ),
+        Decimal("0"),
+    )
+    if previous_net_mxn + invoice_net_mxn > Decimal(purchase_order.subtotal) + Decimal("0.01"):
+        available = max(Decimal(purchase_order.subtotal) - previous_net_mxn, Decimal("0"))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "El subtotal acumulado de las facturas supera la orden de compra. "
+                f"Disponible por facturar: ${available.quantize(Decimal('0.01'))} MXN."
+            ),
         )
     invoice = SupplierInvoice(
         company_id=purchase_order.company_id,
@@ -3218,7 +3427,7 @@ def _create_supplier_invoice_record(
         invoice_number=payload.invoice_number,
         invoice_date=payload.invoice_date,
         due_date=due_date,
-        subtotal=payload.subtotal if payload.subtotal is not None else (items_total if invoice_items else None),
+        subtotal=invoice_net,
         discount=payload.discount,
         transferred_taxes=payload.transferred_taxes,
         withheld_taxes=payload.withheld_taxes,
@@ -3592,6 +3801,75 @@ def list_supplier_payments(
     )
 
 
+def _notify_project_budget_threshold(db: Session, invoice: SupplierInvoice) -> None:
+    purchase_order = invoice.purchase_order
+    if purchase_order is None or purchase_order.project_id is None:
+        return
+    db.flush()
+    progress = project_financial_progress(
+        db,
+        company_id=invoice.company_id,
+        project_id=purchase_order.project_id,
+    )
+    project_row = next(
+        (
+            item
+            for item in progress["projects"]
+            if item["project_id"] == purchase_order.project_id
+        ),
+        None,
+    )
+    if project_row is None or project_row["baseline_id"] is None:
+        return
+    paid_percent = Decimal(project_row["paid_percent"])
+    if paid_percent < Decimal("80"):
+        return
+    exceeded = Decimal(project_row["over_budget_amount"]) > Decimal("0")
+    if exceeded:
+        notification_type = "project_material_budget_exceeded"
+        title = "Presupuesto de materiales excedido"
+        body = (
+            f"{project_row['project_name']} supera la linea base por "
+            f"${Decimal(project_row['over_budget_amount']):,.2f}."
+        )
+        priority = "critical"
+    elif paid_percent >= Decimal("100"):
+        notification_type = "project_material_budget_consumed"
+        title = "Presupuesto de materiales ejercido"
+        body = f"{project_row['project_name']} alcanzo el 100% de su linea base pagada."
+        priority = "critical"
+    else:
+        notification_type = "project_material_budget_80"
+        title = "Presupuesto de materiales al 80%"
+        body = (
+            f"{project_row['project_name']} lleva {paid_percent}% de la linea base pagada."
+        )
+        priority = "high"
+    notify_permission(
+        db,
+        company_id=invoice.company_id,
+        module="project_material_budgets",
+        action="approve",
+        include_master_admin=True,
+        notification_type=notification_type,
+        title=title,
+        body=body,
+        source_module="pagos_proveedores",
+        project_id=purchase_order.project_id,
+        category="warning",
+        priority=priority,
+        entity_type="ProjectMaterialBudgetBaseline",
+        entity_id=project_row["baseline_id"],
+        entity_label=project_row["project_name"],
+        action_url=f"/supplier-payments?project_id={purchase_order.project_id}",
+        metadata={
+            "paid_percent": str(paid_percent),
+            "paid_amount": str(project_row["paid_amount"]),
+            "budget_amount": str(project_row["budget_amount"]),
+        },
+    )
+
+
 @router.post("/supplier-payments", response_model=SupplierPaymentRead, status_code=status.HTTP_201_CREATED)
 def create_supplier_payment(
     payload: SupplierPaymentCreate,
@@ -3641,6 +3919,8 @@ def create_supplier_payment(
         ),
         metadata={"amount": str(payment.amount), "status": payment.status},
     )
+    if payment.status == "paid":
+        _notify_project_budget_threshold(db, invoice)
     db.commit()
     db.refresh(payment)
     return payment
@@ -3675,6 +3955,8 @@ def update_supplier_payment(
         exclude_payment_id=updated.id,
     )
     _sync_invoice_after_payments(db, invoice)
+    if updated.status == "paid":
+        _notify_project_budget_threshold(db, invoice)
     record_update(db, current_user, module="pagos_proveedores", item=updated, before=before)
     db.commit()
     db.refresh(updated)

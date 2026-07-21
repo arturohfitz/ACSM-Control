@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -49,6 +49,9 @@ class Project(TimestampMixin, Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     quotes: Mapped[list["Quote"]] = relationship(back_populates="project")
+    material_budget_baselines: Mapped[list["ProjectMaterialBudgetBaseline"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
 
 
 class HouseModel(TimestampMixin, Base):
@@ -203,6 +206,69 @@ class ProjectHouseModel(Base):
     project: Mapped[Project] = relationship(back_populates="project_house_models")
     house_model: Mapped[HouseModel] = relationship(back_populates="project_house_models")
     quote_items: Mapped[list["QuoteItem"]] = relationship(back_populates="project_house_model")
+
+
+class ProjectMaterialBudgetBaseline(TimestampMixin, Base):
+    __tablename__ = "project_material_budget_baselines"
+    __table_args__ = (
+        UniqueConstraint("project_id", "revision", name="uq_project_material_budget_revision"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="approved", nullable=False, index=True)
+    currency: Mapped[str] = mapped_column(String(10), default="MXN", nullable=False)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    project: Mapped[Project] = relationship(back_populates="material_budget_baselines")
+    items: Mapped[list["ProjectMaterialBudgetItem"]] = relationship(
+        back_populates="baseline", cascade="all, delete-orphan"
+    )
+    approver: Mapped["User | None"] = relationship()
+
+
+class ProjectMaterialBudgetItem(Base):
+    __tablename__ = "project_material_budget_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    baseline_id: Mapped[int] = mapped_column(
+        ForeignKey("project_material_budget_baselines.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    house_model_id: Mapped[int | None] = mapped_column(
+        ForeignKey("house_models.id", ondelete="SET NULL"), index=True
+    )
+    source_document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("house_model_documents.id", ondelete="SET NULL"), index=True
+    )
+    material_requirement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("house_model_material_requirements.id", ondelete="SET NULL"), index=True
+    )
+    material_id: Mapped[int | None] = mapped_column(
+        ForeignKey("materials.id", ondelete="SET NULL"), index=True
+    )
+    source_code: Mapped[str | None] = mapped_column(String(80))
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    unit: Mapped[str] = mapped_column(String(40), nullable=False)
+    houses_quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    quantity_per_house: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False)
+    budget_quantity: Mapped[Decimal] = mapped_column(Numeric(16, 4), nullable=False)
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    line_total: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
+
+    baseline: Mapped[ProjectMaterialBudgetBaseline] = relationship(back_populates="items")
+    house_model: Mapped[HouseModel | None] = relationship()
+    source_document: Mapped[HouseModelDocument | None] = relationship()
+    material_requirement: Mapped[HouseModelMaterialRequirement | None] = relationship()
+    material: Mapped["Material | None"] = relationship()
 
 
 class ProjectMaterialPrice(TimestampMixin, Base):

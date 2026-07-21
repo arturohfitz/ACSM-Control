@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, CheckCircle2, CreditCard, Download, FileCheck2, FileText, RefreshCw, Upload } from 'lucide-react'
+import {
+  AlertTriangle,
+  BarChart3,
+  Building2,
+  CheckCircle2,
+  CreditCard,
+  Download,
+  FileCheck2,
+  FileText,
+  RefreshCw,
+  Upload,
+} from 'lucide-react'
 
 import { API_BASE_URL, apiRequest, getStoredToken } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
@@ -87,6 +98,56 @@ type SupplierPayment = {
   reference?: string | null
 }
 
+type ProjectFinancialProgress = {
+  project_id: number
+  project_name: string
+  client_name: string
+  houses_count: string
+  models_count: number
+  baseline_id?: number | null
+  baseline_revision?: number | null
+  baseline_approved_at?: string | null
+  budget_amount: string
+  committed_amount: string
+  received_amount: string
+  invoiced_amount: string
+  paid_amount: string
+  available_amount: string
+  over_budget_amount: string
+  committed_percent: string
+  received_percent: string
+  invoiced_percent: string
+  paid_percent: string
+  purchase_orders_count: number
+  invoices_count: number
+  payments_count: number
+  integrity_issues: string[]
+}
+
+type ProjectFinancialMaterial = {
+  baseline_item_id: number
+  house_model_name: string
+  source_code?: string | null
+  description: string
+  unit: string
+  budget_quantity: string
+  ordered_quantity: string
+  received_quantity: string
+  budget_amount: string
+  committed_amount: string
+  invoiced_amount: string
+  paid_amount: string
+  available_amount: string
+  committed_percent: string
+  status: string
+}
+
+type ProjectFinancialResponse = {
+  projects: ProjectFinancialProgress[]
+  selected_project_id?: number | null
+  materials: ProjectFinancialMaterial[]
+}
+
 const money = new Intl.NumberFormat('es-MX', {
   style: 'currency',
   currency: 'MXN',
@@ -151,16 +212,24 @@ export default function SupplierPaymentsPage() {
   const canViewPayments = hasPermission('supplier_payments:view')
   const canSchedulePayments = hasPermission('supplier_payments:schedule')
   const canMarkPaymentsPaid = hasPermission('supplier_payments:pay')
+  const canViewProjectFinancials = hasPermission('project_financials:view')
+  const canApproveMaterialBudget = hasPermission('project_material_budgets:approve')
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [invoices, setInvoices] = useState<SupplierInvoice[]>([])
   const [payments, setPayments] = useState<SupplierPayment[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [financialData, setFinancialData] = useState<ProjectFinancialResponse>({ projects: [], materials: [] })
+  const [selectedProjectId, setSelectedProjectId] = useState(
+    () => new URLSearchParams(window.location.search).get('project_id') ?? '',
+  )
+  const [approvingBudget, setApprovingBudget] = useState(false)
 
   const [purchaseOrderId, setPurchaseOrderId] = useState('')
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [invoiceDate, setInvoiceDate] = useState('')
+  const [subtotal, setSubtotal] = useState('')
   const [total, setTotal] = useState('')
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [xmlFile, setXmlFile] = useState<File | null>(null)
@@ -317,12 +386,16 @@ export default function SupplierPaymentsPage() {
       }
     })
   }, [invoicedQuantityByItem, paidQuantityByItem, selectedOrder])
+  const selectedProjectFinancial = useMemo(
+    () => financialData.projects.find((project) => String(project.project_id) === selectedProjectId) ?? null,
+    [financialData.projects, selectedProjectId],
+  )
 
   async function loadData() {
     setLoading(true)
     setError('')
     try {
-      const [orderData, invoiceData, paymentData] = await Promise.all([
+      const [orderData, invoiceData, paymentData, projectFinancialData] = await Promise.all([
         apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders'),
         canViewInvoices
           ? apiRequest<SupplierInvoice[]>('/purchasing/supplier-invoices')
@@ -330,11 +403,20 @@ export default function SupplierPaymentsPage() {
         canViewPayments
           ? apiRequest<SupplierPayment[]>('/purchasing/supplier-payments')
           : Promise.resolve([] as SupplierPayment[]),
+        canViewProjectFinancials
+          ? apiRequest<ProjectFinancialResponse>(
+              `/purchasing/project-financial-progress${selectedProjectId ? `?project_id=${selectedProjectId}` : ''}`,
+            )
+          : Promise.resolve({ projects: [], materials: [] } as ProjectFinancialResponse),
       ])
       setOrders(orderData)
       setInvoices(invoiceData)
       setPayments(paymentData)
+      setFinancialData(projectFinancialData)
       if (!purchaseOrderId && orderData[0]) setPurchaseOrderId(String(orderData[0].id))
+      if (!selectedProjectId && projectFinancialData.projects[0]) {
+        setSelectedProjectId(String(projectFinancialData.projects[0].project_id))
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar pagos')
     } finally {
@@ -345,6 +427,15 @@ export default function SupplierPaymentsPage() {
   useEffect(() => {
     void loadData()
   }, [])
+
+  useEffect(() => {
+    if (!canViewProjectFinancials || !selectedProjectId) return
+    void apiRequest<ProjectFinancialResponse>(
+      `/purchasing/project-financial-progress?project_id=${selectedProjectId}`,
+    )
+      .then(setFinancialData)
+      .catch((err) => setError(err instanceof Error ? err.message : 'No fue posible cargar el avance financiero'))
+  }, [canViewProjectFinancials, selectedProjectId])
 
   useEffect(() => {
     if (!selectedOrder) {
@@ -402,6 +493,7 @@ export default function SupplierPaymentsPage() {
       const fiscalFolio = [parsed.series, parsed.folio].filter(Boolean).join('-')
       if (fiscalFolio) setInvoiceNumber(fiscalFolio)
       if (parsed.issue_datetime) setInvoiceDate(parsed.issue_datetime.slice(0, 10))
+      if (parsed.subtotal) setSubtotal(parsed.subtotal)
       if (parsed.total) setTotal(parsed.total)
     } catch (err) {
       setXmlFile(null)
@@ -500,7 +592,7 @@ export default function SupplierPaymentsPage() {
         ? Number(partialTotal.toFixed(2))
         : xmlAnalysis?.parsed_data.subtotal
           ? Number(xmlAnalysis.parsed_data.subtotal)
-          : null
+          : Number(subtotal)
       const payload = {
         purchase_order_id: Number(purchaseOrderId),
         invoice_number: invoiceNumber,
@@ -538,6 +630,7 @@ export default function SupplierPaymentsPage() {
       setMessage(successMessage)
       showActionNotice(successMessage)
       setInvoiceNumber('')
+      setSubtotal('')
       setTotal('')
       setPdfFile(null)
       setXmlFile(null)
@@ -613,6 +706,27 @@ export default function SupplierPaymentsPage() {
     }
   }
 
+  async function approveMaterialBudget() {
+    if (!selectedProjectFinancial) return
+    setApprovingBudget(true)
+    setError('')
+    setMessage('')
+    try {
+      await apiRequest(
+        `/purchasing/projects/${selectedProjectFinancial.project_id}/material-budget-baselines`,
+        { method: 'POST', body: JSON.stringify({ notes: 'Linea base aprobada desde Pagos a proveedores' }) },
+      )
+      const successMessage = `Presupuesto de materiales aprobado para ${selectedProjectFinancial.project_name}.`
+      setMessage(successMessage)
+      showActionNotice(successMessage)
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible aprobar el presupuesto de materiales')
+    } finally {
+      setApprovingBudget(false)
+    }
+  }
+
   const payableInvoices = invoices.filter((invoice) =>
     ['approved_for_payment', 'scheduled'].includes(invoice.status),
   )
@@ -625,6 +739,220 @@ export default function SupplierPaymentsPage() {
         >
           {error}
         </div>
+      )}
+
+      {canViewProjectFinancials && (
+        <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
+                <Building2 className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-acsm-muted">
+                  Control financiero de materiales
+                </div>
+                <h2 className="font-semibold text-acsm-ink">Avance por desarrollo</h2>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={selectedProjectId}
+                onChange={(event) => setSelectedProjectId(event.target.value)}
+                className="h-9 min-w-[280px] rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink"
+              >
+                <option value="">Seleccionar desarrollo</option>
+                {financialData.projects.map((project) => (
+                  <option key={project.project_id} value={project.project_id}>
+                    {project.project_name} · {project.client_name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => void loadData()}
+                className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
+                title="Actualizar avance financiero"
+              >
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                Actualizar
+              </button>
+            </div>
+          </div>
+
+          {!selectedProjectFinancial && (
+            <div className="px-4 py-8 text-center text-sm text-acsm-muted">
+              No hay desarrollos disponibles para consultar.
+            </div>
+          )}
+
+          {selectedProjectFinancial && !selectedProjectFinancial.baseline_id && (
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-amber-200 bg-amber-50 px-4 py-3">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
+                <div>
+                  <div className="text-sm font-bold text-amber-900">Falta aprobar el presupuesto de materiales</div>
+                  <p className="text-xs text-amber-800">
+                    La explosion integrada sera la linea base contra la que se mediran compras y pagos.
+                  </p>
+                </div>
+              </div>
+              {canApproveMaterialBudget && (
+                <button
+                  type="button"
+                  onClick={() => void approveMaterialBudget()}
+                  disabled={approvingBudget}
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
+                >
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                  {approvingBudget ? 'Aprobando...' : 'Aprobar linea base'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {selectedProjectFinancial && (
+            <div>
+              <div className="border-b border-acsm-line bg-acsm-paper px-4 py-3">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-bold text-acsm-ink">{selectedProjectFinancial.project_name}</h3>
+                    <p className="text-xs text-acsm-muted">
+                      {selectedProjectFinancial.client_name} · {formatQuantity(Number(selectedProjectFinancial.houses_count))} viviendas ·{' '}
+                      {selectedProjectFinancial.models_count} modelo(s)
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-acsm-muted">
+                    {selectedProjectFinancial.baseline_revision
+                      ? `Linea base revision ${selectedProjectFinancial.baseline_revision}`
+                      : 'Sin linea base aprobada'}
+                    <div className="font-semibold text-acsm-ink">
+                      {selectedProjectFinancial.purchase_orders_count} orden(es) · {selectedProjectFinancial.invoices_count} factura(s) ·{' '}
+                      {selectedProjectFinancial.payments_count} pago(s)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-px border-b border-acsm-line bg-acsm-line sm:grid-cols-2 xl:grid-cols-6">
+                {[
+                  [
+                    'Presupuesto',
+                    selectedProjectFinancial.budget_amount,
+                    selectedProjectFinancial.baseline_id ? 'Base aprobada' : 'Sin base aprobada',
+                  ],
+                  ['Comprometido', selectedProjectFinancial.committed_amount, `${selectedProjectFinancial.committed_percent}%`],
+                  ['Recibido', selectedProjectFinancial.received_amount, `${selectedProjectFinancial.received_percent}%`],
+                  ['Facturado', selectedProjectFinancial.invoiced_amount, `${selectedProjectFinancial.invoiced_percent}%`],
+                  [
+                    'Pagado material',
+                    selectedProjectFinancial.paid_amount,
+                    `Neto sin impuestos · ${selectedProjectFinancial.paid_percent}%`,
+                  ],
+                  [
+                    selectedProjectFinancial.baseline_id && Number(selectedProjectFinancial.over_budget_amount) > 0
+                      ? 'Excedente'
+                      : 'Disponible',
+                    Number(selectedProjectFinancial.over_budget_amount) > 0
+                      ? selectedProjectFinancial.over_budget_amount
+                      : selectedProjectFinancial.available_amount,
+                    !selectedProjectFinancial.baseline_id
+                      ? 'Sin linea base'
+                      : Number(selectedProjectFinancial.over_budget_amount) > 0
+                        ? 'Requiere atencion'
+                        : 'Por ejercer',
+                  ],
+                ].map(([label, amount, detail]) => (
+                  <div key={label} className="bg-white px-4 py-3">
+                    <div className="text-[11px] font-bold uppercase text-acsm-muted">{label}</div>
+                    <div className="mt-1 text-lg font-bold text-acsm-ink">{formatMoney(amount)}</div>
+                    <div className="text-xs text-acsm-muted">{detail}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="border-b border-acsm-line px-4 py-4">
+                <div className="grid gap-3 md:grid-cols-4">
+                  {[
+                    ['Ordenado', selectedProjectFinancial.committed_percent],
+                    ['Recibido', selectedProjectFinancial.received_percent],
+                    ['Facturado', selectedProjectFinancial.invoiced_percent],
+                    ['Pagado', selectedProjectFinancial.paid_percent],
+                  ].map(([label, rawPercent]) => {
+                    const value = Number(rawPercent)
+                    return (
+                      <div key={label}>
+                        <div className="mb-1 flex items-center justify-between text-xs">
+                          <span className="font-semibold text-acsm-ink">{label}</span>
+                          <span className="text-acsm-muted">{value.toLocaleString('es-MX')}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className={value > 100 ? 'h-full bg-red-500' : 'h-full bg-acsm-green'}
+                            style={{ width: `${Math.min(Math.max(value, 0), 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {!!selectedProjectFinancial.integrity_issues.length && (
+                <div className="border-b border-red-200 bg-red-50 px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-700" aria-hidden="true" />
+                    <div>
+                      <div className="text-sm font-bold text-red-900">Requiere conciliacion</div>
+                      {selectedProjectFinancial.integrity_issues.map((issue) => (
+                        <p key={issue} className="mt-1 text-xs text-red-800">{issue}</p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!!financialData.materials.length && (
+                <div className="overflow-x-auto">
+                  <table className="min-w-[1100px] w-full text-xs">
+                    <thead className="bg-acsm-paper uppercase text-acsm-muted">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Material</th>
+                        <th className="px-3 py-3 text-right">Presupuesto</th>
+                        <th className="px-3 py-3 text-right">Ordenado</th>
+                        <th className="px-3 py-3 text-right">Recibido</th>
+                        <th className="px-3 py-3 text-right">Facturado</th>
+                        <th className="px-3 py-3 text-right">Pagado</th>
+                        <th className="px-4 py-3 text-right">Disponible</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {financialData.materials.map((material) => (
+                        <tr key={material.baseline_item_id} className="border-t border-acsm-line">
+                          <td className="px-4 py-3">
+                            <div className="font-semibold text-acsm-ink">{material.description}</div>
+                            <div className="text-acsm-muted">
+                              {material.source_code || 'Sin codigo'} · {material.house_model_name} ·{' '}
+                              {formatQuantity(Number(material.ordered_quantity))} de {formatQuantity(Number(material.budget_quantity))} {material.unit}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-right font-semibold">{formatMoney(material.budget_amount)}</td>
+                          <td className="px-3 py-3 text-right">{formatMoney(material.committed_amount)}</td>
+                          <td className="px-3 py-3 text-right">{formatQuantity(Number(material.received_quantity))} {material.unit}</td>
+                          <td className="px-3 py-3 text-right">{formatMoney(material.invoiced_amount)}</td>
+                          <td className="px-3 py-3 text-right">{formatMoney(material.paid_amount)}</td>
+                          <td className={material.status === 'over_budget' ? 'px-4 py-3 text-right font-bold text-red-700' : 'px-4 py-3 text-right font-semibold'}>
+                            {formatMoney(material.available_amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       )}
 
       <section className={canViewInvoices ? 'overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel' : 'hidden'}>
@@ -844,14 +1172,36 @@ export default function SupplierPaymentsPage() {
                   </div>
                 </div>
               ) : (
-                <input
-                  type="number"
-                  step="0.01"
-                  value={total}
-                  onChange={(event) => setTotal(event.target.value)}
-                  placeholder="Total factura"
-                  className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
-                />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase text-acsm-muted">
+                      Subtotal materiales
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={subtotal}
+                      onChange={(event) => setSubtotal(event.target.value)}
+                      placeholder="Importe antes de impuestos"
+                      className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase text-acsm-muted">
+                      Total fiscal
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={total}
+                      onChange={(event) => setTotal(event.target.value)}
+                      placeholder="Total con impuestos"
+                      className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
+                    />
+                  </div>
+                </div>
               )}
               <button
                 type="button"
@@ -863,7 +1213,7 @@ export default function SupplierPaymentsPage() {
                   !invoiceDate ||
                   (!pdfFile && !xmlFile) ||
                   analyzingXML ||
-                  (selectedOrderIsPartial ? partialTotal <= 0 : !total)
+                  (selectedOrderIsPartial ? partialTotal <= 0 : !subtotal || !total)
                 }
                 className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
               >

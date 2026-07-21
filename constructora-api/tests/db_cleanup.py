@@ -105,6 +105,7 @@ def cleanup_company_data(db: Session, company_id: int) -> None:
         "quotes",
         "project_material_prices",
         "project_warehouses",
+        "project_material_budget_baselines",
         "house_model_budget_activities",
         "house_model_material_requirements",
     )

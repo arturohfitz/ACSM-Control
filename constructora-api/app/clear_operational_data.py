@@ -41,6 +41,8 @@ TABLES_TO_CLEAR = (
     "quote_items",
     "quotes",
     "project_material_prices",
+    "project_material_budget_items",
+    "project_material_budget_baselines",
     "project_house_models",
     "project_warehouses",
     "house_model_budget_activities",

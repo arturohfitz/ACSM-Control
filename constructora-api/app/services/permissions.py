@@ -82,6 +82,8 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     ("supplier_payments", "view", "Ver pagos a proveedores"),
     ("supplier_payments", "schedule", "Programar pagos a proveedores"),
     ("supplier_payments", "pay", "Registrar pago a proveedor"),
+    ("project_financials", "view", "Ver avance financiero de materiales por desarrollo"),
+    ("project_material_budgets", "approve", "Aprobar linea base del presupuesto de materiales"),
 ]
 
 TENANT_ADMIN_EXCLUDED_PERMISSIONS: set[str] = {
@@ -185,6 +187,7 @@ DEFAULT_TENANT_ROLE_TEMPLATES: list[tuple[str, str, set[str]]] = [
             "supplier_payments:view",
             "supplier_payments:schedule",
             "supplier_payments:pay",
+            "project_financials:view",
             "notifications:view",
         },
     ),

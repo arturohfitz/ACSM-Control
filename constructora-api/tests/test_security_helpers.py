@@ -60,6 +60,8 @@ class SecurityHelpersTest(unittest.TestCase):
         self.assertIn("supplier_payments:view", cuentas_por_pagar)
         self.assertIn("supplier_payments:schedule", cuentas_por_pagar)
         self.assertIn("supplier_payments:pay", cuentas_por_pagar)
+        self.assertIn("project_financials:view", cuentas_por_pagar)
+        self.assertNotIn("project_material_budgets:approve", cuentas_por_pagar)
         self.assertNotIn("purchase_orders:send", cuentas_por_pagar)
 
         self.assertIn("material_requisitions:create", obra)

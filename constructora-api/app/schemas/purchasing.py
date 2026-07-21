@@ -671,5 +671,79 @@ class SupplierInvoiceValidation(BaseModel):
     message: str
 
 
+class ProjectMaterialBudgetApproval(BaseModel):
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class ProjectMaterialBudgetBaselineRead(TimestampRead):
+    id: int
+    company_id: int
+    project_id: int
+    revision: int
+    status: str
+    currency: str
+    total_amount: Decimal
+    approved_at: datetime
+    approved_by: int | None = None
+    notes: str | None = None
+    item_count: int = 0
+
+
+class ProjectFinancialMaterialRow(BaseModel):
+    baseline_item_id: int
+    house_model_id: int | None = None
+    house_model_name: str
+    source_code: str | None = None
+    description: str
+    unit: str
+    houses_quantity: Decimal
+    quantity_per_house: Decimal
+    budget_quantity: Decimal
+    ordered_quantity: Decimal
+    received_quantity: Decimal
+    budget_amount: Decimal
+    committed_amount: Decimal
+    received_amount: Decimal
+    invoiced_amount: Decimal
+    paid_amount: Decimal
+    available_amount: Decimal
+    committed_percent: Decimal
+    paid_percent: Decimal
+    status: str
+
+
+class ProjectFinancialProgressRead(BaseModel):
+    project_id: int
+    project_name: str
+    client_name: str
+    houses_count: Decimal
+    models_count: int
+    baseline_id: int | None = None
+    baseline_revision: int | None = None
+    baseline_status: str | None = None
+    baseline_approved_at: datetime | None = None
+    budget_amount: Decimal
+    committed_amount: Decimal
+    received_amount: Decimal
+    invoiced_amount: Decimal
+    paid_amount: Decimal
+    available_amount: Decimal
+    over_budget_amount: Decimal
+    committed_percent: Decimal
+    received_percent: Decimal
+    invoiced_percent: Decimal
+    paid_percent: Decimal
+    purchase_orders_count: int
+    invoices_count: int
+    payments_count: int
+    integrity_issues: list[str] = Field(default_factory=list)
+
+
+class ProjectFinancialProgressResponse(BaseModel):
+    projects: list[ProjectFinancialProgressRead] = Field(default_factory=list)
+    selected_project_id: int | None = None
+    materials: list[ProjectFinancialMaterialRow] = Field(default_factory=list)
+
+
 def invoice_due_date(invoice_date: date, payment_terms_days: int) -> date:
     return invoice_date + timedelta(days=payment_terms_days)

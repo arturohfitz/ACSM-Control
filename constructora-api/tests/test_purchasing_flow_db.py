@@ -49,6 +49,7 @@ from app.models import (
     HouseModelDocument,
     HouseModelMaterialRequirement,
     InventoryMovement,
+    Material,
     Project,
     ProjectHouseModel,
     ProjectWarehouse,
@@ -78,6 +79,10 @@ from app.schemas.purchasing import (
     SupplierRFQCreate,
     SupplierRFQExceptionDecision,
     SupplierRFQItemCreate,
+)
+from app.services.project_financials import (
+    approve_project_material_budget,
+    project_financial_progress,
 )
 from tests.db_cleanup import cleanup_company_data
 
@@ -275,6 +280,85 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.assertEqual(row["pending_quantity"], Decimal("15"))
         self.assertEqual(row["received_percent"], Decimal("25.00"))
         self.assertEqual(row["status"], "partial")
+
+    def test_project_material_budget_freezes_the_approved_explosion(self) -> None:
+        house_model = HouseModel(
+            company_id=self.company.id,
+            client_id=self.client.id,
+            name=f"Modelo presupuesto {self.suffix}",
+            construction_m2=Decimal("61.91"),
+        )
+        material = Material(
+            company_id=self.company.id,
+            supplier_id=self.suppliers[0].id,
+            name=f"Cemento presupuesto {self.suffix}",
+            unit="SACO",
+            current_unit_price=Decimal("10"),
+            is_active=True,
+        )
+        self.db.add_all([house_model, material])
+        self.db.flush()
+        self.db.add(
+            ProjectHouseModel(
+                project_id=self.project.id,
+                house_model_id=house_model.id,
+                quantity=Decimal("2"),
+            )
+        )
+        document = HouseModelDocument(
+            company_id=self.company.id,
+            client_id=self.client.id,
+            house_model_id=house_model.id,
+            document_type="explosion",
+            file_name=f"presupuesto-{self.suffix}.xlsx",
+            file_hash=f"presupuesto-{self.suffix}",
+            status="integrated",
+            total_items=1,
+            total_amount=Decimal("100"),
+        )
+        self.db.add(document)
+        self.db.flush()
+        self.db.add(
+            HouseModelMaterialRequirement(
+                company_id=self.company.id,
+                client_id=self.client.id,
+                house_model_id=house_model.id,
+                document_id=document.id,
+                material_id=material.id,
+                source_code="CEM-PRES-001",
+                description="Cemento normal gris",
+                unit="SACO",
+                quantity_per_house=Decimal("10"),
+                unit_cost_reference=Decimal("10"),
+                total_cost_reference=Decimal("100"),
+                validation_status="validated",
+            )
+        )
+        self.db.commit()
+
+        baseline = approve_project_material_budget(
+            self.db,
+            project=self.project,
+            approved_by=self.user.id,
+            notes="Linea base de integracion",
+        )
+        self.db.commit()
+        self.assertEqual(baseline.total_amount, Decimal("200.00"))
+
+        self.db.expire_all()
+        progress = project_financial_progress(
+            self.db,
+            company_id=self.company.id,
+            project_id=self.project.id,
+        )
+        project_row = next(
+            row for row in progress["projects"] if row["project_id"] == self.project.id
+        )
+        self.assertEqual(project_row["budget_amount"], Decimal("200.00"))
+        self.assertEqual(project_row["houses_count"], Decimal("2"))
+        self.assertEqual(len(progress["materials"]), 1)
+        self.assertEqual(progress["materials"][0]["budget_quantity"], Decimal("20.0000"))
+        self.assertEqual(progress["materials"][0]["budget_amount"], Decimal("200.00"))
 
     def test_damaged_material_is_reported_but_does_not_increase_inventory(self) -> None:
         house_model = HouseModel(
@@ -956,6 +1040,27 @@ class PurchasingFlowDBTest(unittest.TestCase):
         )
         purchase_order = self._get_purchase_order(purchase_order.id)
         self.assertEqual(purchase_order.status, "received")
+
+        with self.assertRaises(HTTPException) as overbilled:
+            create_supplier_invoice(
+                SupplierInvoiceCreate(
+                    purchase_order_id=purchase_order.id,
+                    invoice_number=f"FAC-EXCESO-IMPORTE-{self.suffix}",
+                    invoice_date=date.today(),
+                    total=Decimal("1274.00"),
+                    items=[
+                        SupplierInvoiceItemCreate(
+                            purchase_order_item_id=po_item.id,
+                            quantity=Decimal("49"),
+                            unit_price=Decimal("26"),
+                        )
+                    ],
+                ),
+                self.db,
+                self.user,
+            )
+        self.assertEqual(overbilled.exception.status_code, 400)
+        self.assertIn("supera la orden de compra", overbilled.exception.detail)
 
         second_invoice = self._create_validated_invoice(
             SupplierInvoiceCreate(

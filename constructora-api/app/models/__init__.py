@@ -25,6 +25,8 @@ from app.models.business import (
     Material,
     MaterialUnitConversion,
     ProjectMaterialPrice,
+    ProjectMaterialBudgetBaseline,
+    ProjectMaterialBudgetItem,
     Project,
     ProjectHouseModel,
 )
@@ -81,6 +83,8 @@ __all__ = [
     "Project",
     "ProjectHouseModel",
     "ProjectMaterialPrice",
+    "ProjectMaterialBudgetBaseline",
+    "ProjectMaterialBudgetItem",
     "ProjectWarehouse",
     "Quote",
     "QuoteItem",

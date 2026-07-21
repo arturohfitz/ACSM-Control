@@ -450,6 +450,41 @@ async function mockApi(
     if (pathname === '/purchasing/supplier-quote-approvals') return json(approvals)
     if (pathname === '/purchasing/supplier-invoices' && method === 'GET') return json(supplierInvoices)
     if (pathname === '/purchasing/supplier-payments' && method === 'GET') return json(supplierPayments)
+    if (pathname === '/purchasing/project-financial-progress' && method === 'GET') {
+      const selectedProjectId = url.searchParams.get('project_id')
+      return json({
+        projects: [
+          {
+            project_id: 1,
+            project_name: 'Privada Encinos',
+            client_name: 'Inmobiliaria Encinos',
+            houses_count: '10',
+            models_count: 1,
+            baseline_id: null,
+            baseline_revision: null,
+            baseline_status: null,
+            baseline_approved_at: null,
+            budget_amount: '0',
+            committed_amount: '2200',
+            received_amount: '0',
+            invoiced_amount: '0',
+            paid_amount: '0',
+            available_amount: '0',
+            over_budget_amount: '2200',
+            committed_percent: '0',
+            received_percent: '0',
+            invoiced_percent: '0',
+            paid_percent: '0',
+            purchase_orders_count: purchaseOrders.length,
+            invoices_count: supplierInvoices.length,
+            payments_count: supplierPayments.length,
+            integrity_issues: [],
+          },
+        ],
+        selected_project_id: selectedProjectId ? Number(selectedProjectId) : null,
+        materials: [],
+      })
+    }
     if (pathname === '/inventory/projects/1/warehouses' && method === 'GET') return json(warehouses)
     if (pathname === '/inventory/projects/1/expected-materials') return json(expectedLists)
     if (pathname === '/inventory/projects/1/status') return json(inventoryStatus())
@@ -1085,7 +1120,8 @@ test('pagos bloquea factura con faltantes y permite pagar al completar recepcion
     mimeType: 'application/pdf',
     buffer: Buffer.from('%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n%%EOF'),
   })
-  await invoiceSection.getByPlaceholder('Total factura').fill('2200')
+  await invoiceSection.getByPlaceholder('Importe antes de impuestos').fill('2200')
+  await invoiceSection.getByPlaceholder('Total con impuestos').fill('2200')
   await invoiceSection.getByRole('button', { name: 'Guardar factura' }).click()
 
   await expect(page.getByText('Factura FAC-001 registrada como Revision fiscal.')).toBeVisible()
