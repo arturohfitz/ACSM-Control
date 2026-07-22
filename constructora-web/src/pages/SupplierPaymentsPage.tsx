@@ -261,7 +261,9 @@ export default function SupplierPaymentsPage() {
   const [showMaterialDetail, setShowMaterialDetail] = useState(false)
   const [showAllMaterials, setShowAllMaterials] = useState(false)
 
-  const [purchaseOrderId, setPurchaseOrderId] = useState('')
+  const [purchaseOrderId, setPurchaseOrderId] = useState(
+    () => new URLSearchParams(window.location.search).get('purchase_order_id') ?? '',
+  )
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [invoiceDate, setInvoiceDate] = useState('')
   const [subtotal, setSubtotal] = useState('')

@@ -59,7 +59,11 @@ from app.schemas.inventory import (
 )
 from app.services.audit import record_create, record_delete, record_event, record_update, snapshot
 from app.services.crud import get_or_404
-from app.services.notifications import notify_permission, resolve_notifications
+from app.services.notifications import (
+    notify_permission,
+    resolve_notifications,
+    sync_purchase_order_invoice_readiness,
+)
 from app.services.pdf_text import PDFTextEmptyError, PDFTextExtractionError, extract_pdf_text
 from app.services.tenancy import ensure_same_company, scoped_select
 
@@ -1329,7 +1333,10 @@ def _sync_reception_notifications(
     purchase_order = db.scalar(
         select(PurchaseOrder)
         .where(PurchaseOrder.id == expected_list.purchase_order_id)
-        .options(selectinload(PurchaseOrder.supplier))
+        .options(
+            selectinload(PurchaseOrder.supplier),
+            selectinload(PurchaseOrder.items),
+        )
     )
     if purchase_order is None:
         return
@@ -1348,6 +1355,7 @@ def _sync_reception_notifications(
             entity_type="PurchaseOrder",
             entity_id=purchase_order.id,
         )
+        sync_purchase_order_invoice_readiness(db, purchase_order=purchase_order)
         return
 
     notify_permission(
@@ -1384,6 +1392,7 @@ def _sync_reception_notifications(
             "received_by": current_user.full_name,
         },
     )
+    sync_purchase_order_invoice_readiness(db, purchase_order=purchase_order)
 
 
 @router.get("/inbound-cases", response_model=list[InventoryInboundCaseRead])

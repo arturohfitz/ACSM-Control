@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+import logging
 from typing import Iterable
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
@@ -15,6 +16,7 @@ from app.models import (
     Role,
     RolePermission,
     SupplierInvoice,
+    SupplierInvoiceItem,
     User,
     UserRole,
 )
@@ -24,6 +26,7 @@ from app.services.tenancy import user_can_access_client_id
 OPEN_STATUSES = {"unread", "read"}
 ALLOWED_CATEGORIES = {"task", "deadline", "warning", "info", "exception"}
 ALLOWED_PRIORITIES = {"low", "normal", "high", "critical"}
+logger = logging.getLogger(__name__)
 
 
 def _safe_category(value: str) -> str:
@@ -61,9 +64,15 @@ def users_with_permission(
             ).all()
         )
 
+    company_scope = User.company_id == company_id
+    if include_master_admin:
+        company_scope = or_(
+            company_scope,
+            and_(User.is_master_admin.is_(True), User.company_id.is_(None)),
+        )
     statement = (
         select(User)
-        .where(User.is_active.is_(True), User.company_id == company_id)
+        .where(User.is_active.is_(True), company_scope)
         .options(selectinload(User.roles), selectinload(User.user_client_accesses))
     )
     if role_ids:
@@ -181,10 +190,11 @@ def notify_permission(
     module: str,
     action: str,
     include_master_admin: bool = False,
+    fallback_to_master_admin: bool = True,
     enforce_client_access: bool = True,
     **kwargs,
 ) -> int:
-    return notify_users(
+    count = notify_users(
         db,
         users_with_permission(
             db,
@@ -196,6 +206,51 @@ def notify_permission(
         enforce_client_access=enforce_client_access,
         company_id=company_id,
         **kwargs,
+    )
+    if count or include_master_admin or not fallback_to_master_admin:
+        return count
+
+    fallback_users = list(
+        db.scalars(
+            select(User)
+            .where(
+                User.is_active.is_(True),
+                User.is_master_admin.is_(True),
+                or_(User.company_id == company_id, User.company_id.is_(None)),
+            )
+            .options(selectinload(User.roles), selectinload(User.user_client_accesses))
+        ).unique().all()
+    )
+    if not fallback_users:
+        logger.error(
+            "Notification %s has no recipients for %s:%s in company %s",
+            kwargs.get("notification_type", "unknown"),
+            module,
+            action,
+            company_id,
+        )
+        return 0
+
+    fallback_kwargs = dict(kwargs)
+    metadata = dict(fallback_kwargs.get("metadata") or {})
+    metadata["notification_routing"] = {
+        "fallback": "master_admin",
+        "permission": f"{module}:{action}",
+    }
+    fallback_kwargs["metadata"] = metadata
+    logger.warning(
+        "Notification %s routed to master admin fallback for %s:%s in company %s",
+        kwargs.get("notification_type", "unknown"),
+        module,
+        action,
+        company_id,
+    )
+    return notify_users(
+        db,
+        fallback_users,
+        enforce_client_access=enforce_client_access,
+        company_id=company_id,
+        **fallback_kwargs,
     )
 
 
@@ -248,8 +303,202 @@ def resolve_notifications(
 
 
 def sync_operational_notifications(db: Session, *, company_id: int) -> None:
+    _sync_purchase_order_workflow_notifications(db, company_id=company_id)
     _sync_invoice_due_notifications(db, company_id=company_id)
     _sync_incomplete_purchase_order_notifications(db, company_id=company_id)
+
+
+def _active_invoice_count(db: Session, purchase_order_id: int) -> int:
+    return int(
+        db.scalar(
+            select(func.count(SupplierInvoice.id)).where(
+                SupplierInvoice.purchase_order_id == purchase_order_id,
+                SupplierInvoice.status.notin_(("rejected", "cancelled")),
+            )
+        )
+        or 0
+    )
+
+
+def _uninvoiced_received_items(db: Session, purchase_order: PurchaseOrder) -> int:
+    if not purchase_order.items:
+        return 0
+    if purchase_order.billing_mode != "partial":
+        complete = all(
+            item.received_quantity >= item.quantity_ordered for item in purchase_order.items
+        )
+        return (
+            len(purchase_order.items)
+            if complete and not _active_invoice_count(db, purchase_order.id)
+            else 0
+        )
+
+    invoiced_rows = db.execute(
+        select(
+            SupplierInvoiceItem.purchase_order_item_id,
+            func.coalesce(func.sum(SupplierInvoiceItem.quantity), Decimal("0")),
+        )
+        .join(SupplierInvoice, SupplierInvoice.id == SupplierInvoiceItem.supplier_invoice_id)
+        .where(
+            SupplierInvoice.purchase_order_id == purchase_order.id,
+            SupplierInvoice.status.notin_(("rejected", "cancelled")),
+        )
+        .group_by(SupplierInvoiceItem.purchase_order_item_id)
+    ).all()
+    invoiced_by_item = {item_id: Decimal(quantity) for item_id, quantity in invoiced_rows}
+    return sum(
+        1
+        for item in purchase_order.items
+        if min(Decimal(item.received_quantity), Decimal(item.quantity_ordered))
+        > invoiced_by_item.get(item.id, Decimal("0"))
+    )
+
+
+def sync_purchase_order_invoice_readiness(
+    db: Session,
+    *,
+    purchase_order: PurchaseOrder,
+) -> int:
+    available_items = _uninvoiced_received_items(db, purchase_order)
+    notification_types = (
+        "purchase_order_partial_ready_for_invoice",
+        "purchase_order_ready_for_invoice",
+    )
+    if not available_items:
+        return sum(
+            resolve_notifications(
+                db,
+                company_id=purchase_order.company_id,
+                notification_type=notification_type,
+                entity_type="PurchaseOrder",
+                entity_id=purchase_order.id,
+            )
+            for notification_type in notification_types
+        )
+
+    complete = bool(purchase_order.items) and all(
+        item.received_quantity >= item.quantity_ordered for item in purchase_order.items
+    )
+    notification_type = (
+        "purchase_order_ready_for_invoice"
+        if complete
+        else "purchase_order_partial_ready_for_invoice"
+    )
+    alternate_type = next(item for item in notification_types if item != notification_type)
+    resolve_notifications(
+        db,
+        company_id=purchase_order.company_id,
+        notification_type=alternate_type,
+        entity_type="PurchaseOrder",
+        entity_id=purchase_order.id,
+    )
+    supplier_name = purchase_order.supplier.name if purchase_order.supplier else "Proveedor"
+    return notify_permission(
+        db,
+        company_id=purchase_order.company_id,
+        module="supplier_invoices",
+        action="upload",
+        notification_type=notification_type,
+        title=(
+            "Orden recibida: registra la factura"
+            if complete
+            else "Entrega parcial disponible para facturar"
+        ),
+        body=(
+            f"{purchase_order.po_number} de {supplier_name} fue recibida por completo. "
+            "Captura el PDF o XML de la factura para continuar."
+            if complete
+            else (
+                f"{purchase_order.po_number} de {supplier_name} tiene {available_items} "
+                "partida(s) recibida(s) todavia no facturada(s)."
+            )
+        ),
+        category="task",
+        priority="high" if complete else "normal",
+        source_module="pagos_proveedores",
+        project_id=purchase_order.project_id,
+        entity_type="PurchaseOrder",
+        entity_id=purchase_order.id,
+        entity_label=purchase_order.po_number,
+        action_url=(
+            "/supplier-payments?view=invoices"
+            f"&project_id={purchase_order.project_id}"
+            f"&purchase_order_id={purchase_order.id}"
+        ),
+        metadata={
+            "purchase_order_id": purchase_order.id,
+            "supplier_id": purchase_order.supplier_id,
+            "available_items": available_items,
+            "billing_mode": purchase_order.billing_mode,
+            "receipt_complete": complete,
+        },
+    )
+
+
+def _sync_purchase_order_workflow_notifications(db: Session, *, company_id: int) -> None:
+    purchase_orders = list(
+        db.scalars(
+            select(PurchaseOrder)
+            .where(
+                PurchaseOrder.company_id == company_id,
+                PurchaseOrder.status.in_(
+                    ("sent", "partially_received", "received", "factured", "closed")
+                ),
+            )
+            .options(selectinload(PurchaseOrder.supplier), selectinload(PurchaseOrder.items))
+        ).unique().all()
+    )
+    for purchase_order in purchase_orders:
+        pending_items = [
+            item
+            for item in purchase_order.items
+            if item.received_quantity < item.quantity_ordered
+        ]
+        if pending_items and purchase_order.status in {"sent", "partially_received"}:
+            notify_permission(
+                db,
+                company_id=company_id,
+                module="inventory_receiving",
+                action="receive",
+                notification_type="purchase_order_ready_to_receive",
+                title="Material pendiente de recibir",
+                body=(
+                    f"{purchase_order.po_number} tiene {len(pending_items)} "
+                    "partida(s) esperadas en Inventario."
+                ),
+                category="task",
+                priority="normal",
+                source_module="inventario",
+                project_id=purchase_order.project_id,
+                entity_type="PurchaseOrder",
+                entity_id=purchase_order.id,
+                entity_label=purchase_order.po_number,
+                action_url=(
+                    "/inventory/material-receiving?type=oc"
+                    f"&project_id={purchase_order.project_id}"
+                    f"&purchase_order_id={purchase_order.id}"
+                    + (
+                        f"&warehouse_id={purchase_order.warehouse_id}"
+                        if purchase_order.warehouse_id is not None
+                        else ""
+                    )
+                ),
+                metadata={
+                    "purchase_order_id": purchase_order.id,
+                    "warehouse_id": purchase_order.warehouse_id,
+                    "pending_items": len(pending_items),
+                    "recovered_from_state": True,
+                },
+            )
+        else:
+            resolve_notifications(
+                db,
+                company_id=company_id,
+                notification_type="purchase_order_ready_to_receive",
+                entity_type="PurchaseOrder",
+                entity_id=purchase_order.id,
+            )
+        sync_purchase_order_invoice_readiness(db, purchase_order=purchase_order)
 
 
 def _sync_invoice_due_notifications(db: Session, *, company_id: int) -> None:

@@ -284,6 +284,8 @@ function focusForNotification(notification: NotificationItem) {
     supplier_quote_rejected: 'rfq-list',
     purchase_order_ready_to_receive: 'receiving',
     purchase_order_incomplete: 'receiving',
+    purchase_order_partial_ready_for_invoice: 'invoices',
+    purchase_order_ready_for_invoice: 'invoices',
     supplier_invoice_ready_to_pay: 'payments',
     supplier_invoice_blocked: 'receiving',
   }
@@ -500,7 +502,7 @@ export default function AppLayout() {
       }
       previousUnreadRef.current = counts.unread
     } catch {
-      setNotificationCounts({ unread: 0, open: 0 })
+      // Preserve the last known counts when connectivity is interrupted.
     }
   }, [notificationAlertSettings.repeat_alert_minutes, runNotificationAlert])
 
@@ -528,7 +530,7 @@ export default function AppLayout() {
     if (!user) return
     void loadNotificationSettings()
     loadNotificationCounts()
-    const timer = window.setInterval(loadNotificationCounts, 60000)
+    const timer = window.setInterval(loadNotificationCounts, 30000)
     return () => window.clearInterval(timer)
   }, [loadNotificationCounts, loadNotificationSettings, user])
 

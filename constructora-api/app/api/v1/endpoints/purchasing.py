@@ -112,7 +112,12 @@ from app.services.invoice_documents import (
     store_invoice_file,
     validate_invoice_file,
 )
-from app.services.notifications import notify_permission, notify_user_id, resolve_notifications
+from app.services.notifications import (
+    notify_permission,
+    notify_user_id,
+    resolve_notifications,
+    sync_purchase_order_invoice_readiness,
+)
 from app.services.permissions import user_has_permission
 from app.services.project_financials import (
     approve_project_material_budget,
@@ -3475,6 +3480,7 @@ def _create_supplier_invoice_record(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
     db.flush()
     record_create(db, current_user, module="facturas_proveedor", item=invoice)
+    sync_purchase_order_invoice_readiness(db, purchase_order=purchase_order)
     if commit:
         db.commit()
         return _invoice_with_documents(db, invoice.id)
