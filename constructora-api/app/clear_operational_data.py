@@ -77,7 +77,11 @@ PRESERVED_TABLES = (
     "system_notification_settings",
 )
 
-STORAGE_DIRS_TO_CLEAR = ("house_model_documents", "supplier_invoice_documents")
+STORAGE_DIRS_TO_CLEAR = (
+    "house_model_documents",
+    "supplier_invoice_documents",
+    "supplier_quote_uploads",
+)
 
 
 def _count_rows(table_names: tuple[str, ...]) -> dict[str, int]:
