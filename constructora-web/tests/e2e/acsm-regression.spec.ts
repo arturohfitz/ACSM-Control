@@ -439,6 +439,59 @@ async function mockApi(
       return json({ access_token: 'test-token', token_type: 'bearer' })
     }
     if (path === '/auth/me') return json(currentUser)
+    if (pathname === '/executive-dashboard') {
+      return json({
+        generated_at: '2026-07-23T18:00:00Z',
+        selected_project_id: null,
+        totals: {
+          project_count: 1,
+          active_project_count: 1,
+          attention_project_count: 0,
+          houses_count: '10',
+          budget_amount: '100000',
+          committed_amount: '2200',
+          received_amount: '0',
+          invoiced_amount: '0',
+          paid_amount: '0',
+          available_amount: '97800',
+          over_budget_amount: '0',
+          purchase_orders_count: 1,
+          invoices_count: 0,
+          payments_count: 0,
+        },
+        flow: [],
+        alerts: [],
+        projects: [{
+          project_id: 1,
+          project_name: 'Privada Encinos',
+          client_name: 'Inmobiliaria Encinos',
+          houses_count: '10',
+          models_count: 1,
+          baseline_id: 1,
+          baseline_revision: 1,
+          budget_amount: '100000',
+          committed_amount: '2200',
+          received_amount: '0',
+          invoiced_amount: '0',
+          paid_amount: '0',
+          available_amount: '97800',
+          over_budget_amount: '0',
+          committed_percent: '2.2',
+          received_percent: '0',
+          invoiced_percent: '0',
+          paid_percent: '0',
+          purchase_orders_count: 1,
+          invoices_count: 0,
+          payments_count: 0,
+          integrity_issues: [],
+          health: 'healthy',
+          health_label: 'En control',
+          next_action_label: 'Abrir proyecto',
+          next_action_url: '/dashboard/projects/1',
+        }],
+        materials: [],
+      })
+    }
     if (path === '/projects') return json(projects)
     if (path === '/materials') return json(materials)
     if (path === '/purchasing/suppliers') return json(suppliers)
@@ -943,8 +996,20 @@ test('login muestra el dashboard con sesion activa', async ({ page }) => {
   await page.getByLabel('Contrasena').fill('Admin12345!')
   await page.getByRole('button', { name: 'Entrar' }).click()
 
-  await expect(page.getByRole('heading', { name: 'Inicio' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Control Ejecutivo' })).toBeVisible()
   await expect(page.getByText('admin@acsm-control.local').first()).toBeVisible()
+})
+
+test('control ejecutivo abre el detalle financiero del desarrollo', async ({ page }) => {
+  await mockApi(page)
+  await authenticate(page)
+  await page.goto('/')
+
+  await page.getByRole('button', { name: 'Privada Encinos' }).click()
+
+  await expect(page).toHaveURL('/dashboard/projects/1')
+  await expect(page.getByText('10 viviendas · 1 modelos · 1 órdenes')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Portafolio' })).toBeVisible()
 })
 
 test('menu principal despliega y contrae submenus por modulo', async ({ page }) => {
@@ -963,7 +1028,7 @@ test('menu principal despliega y contrae submenus por modulo', async ({ page }) 
   await expect(page.getByRole('link', { name: /Validar documentos/i })).toHaveCount(0)
   await expect(page.getByRole('link', { name: /Documentos material/i })).toHaveCount(0)
 
-  await page.getByRole('link', { name: /^Inicio$/i }).click()
+  await page.getByRole('link', { name: /^Control Ejecutivo$/i }).click()
   await expect(page.getByRole('link', { name: /Recepcion de materiales/i })).toBeHidden()
   await expect(page.getByRole('link', { name: /Control de avance/i })).toBeHidden()
 })
@@ -973,8 +1038,8 @@ test('menu oculta modulos sin permiso para usuarios operativos', async ({ page }
   await authenticate(page)
   await page.goto('/')
 
-  await expect(page.getByRole('heading', { name: 'Inicio' })).toBeVisible()
-  await expect(page.getByRole('link', { name: /Inmobiliarias/i })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Inmobiliarias', level: 1 })).toBeVisible()
+  await expect(page.getByRole('link', { name: /^Inmobiliarias$/i }).first()).toBeVisible()
   await expect(page.getByRole('link', { name: /^Compras$/i })).toHaveCount(0)
   await expect(page.getByRole('link', { name: /^Inventario$/i })).toHaveCount(0)
   await expect(page.getByRole('link', { name: /^Roles$/i })).toHaveCount(0)

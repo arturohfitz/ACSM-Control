@@ -13,7 +13,7 @@ import {
   FolderKanban,
   Handshake,
   HardHat,
-  Home,
+  LayoutDashboard,
   Layers3,
   LogOut,
   Package,
@@ -45,7 +45,12 @@ function canUsePermission(
 }
 
 const navItems = [
-  { to: '/', label: 'Inicio', icon: Home, permission: null },
+  {
+    to: '/',
+    label: 'Control Ejecutivo',
+    icon: LayoutDashboard,
+    permission: 'executive_dashboard:view',
+  },
   { to: '/companies', label: 'Constructoras', icon: Building2, permission: 'companies:view' },
   { to: '/clients', label: 'Inmobiliarias', icon: Building2, permission: 'clients:view' },
   {
@@ -204,7 +209,7 @@ const inventorySubItems = [
 ]
 
 const titles: Record<string, string> = {
-  '/': 'Inicio',
+  '/': 'Control Ejecutivo',
   '/companies': 'Constructoras',
   '/clients': 'Inmobiliarias',
   '/projects': 'Desarrollos',
@@ -335,6 +340,8 @@ export default function AppLayout() {
     ? 'Expediente de compra'
     : location.pathname.startsWith('/inventory/cases/')
       ? 'Expediente de inventario'
+    : location.pathname.startsWith('/dashboard/projects/')
+      ? 'Detalle ejecutivo del desarrollo'
     : titles[location.pathname] ?? 'ACSM Control'
   const isRealEstateRoute =
     location.pathname === '/clients' ||

@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     clients,
     companies,
     construction_concepts,
+    executive_dashboard,
     house_models,
     inventory,
     materials,
@@ -24,6 +25,11 @@ from app.api.v1.endpoints import (
 api_router = APIRouter()
 api_router.include_router(audit_events.router, prefix="/events", tags=["events"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(
+    executive_dashboard.router,
+    prefix="/executive-dashboard",
+    tags=["executive-dashboard"],
+)
 api_router.include_router(companies.router, prefix="/companies", tags=["companies"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(roles.router, prefix="/roles", tags=["roles"])

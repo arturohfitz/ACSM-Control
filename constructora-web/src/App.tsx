@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
 
+import { useAuth } from './auth/AuthContext'
 import AppLayout from './components/AppLayout'
 import ProtectedRoute from './components/ProtectedRoute'
 import DashboardPage from './pages/DashboardPage'
@@ -41,6 +42,18 @@ function protect(element: ReactNode, permission: string | string[]) {
   return <ProtectedRoute permission={permission}>{element}</ProtectedRoute>
 }
 
+function HomeRoute() {
+  const { hasPermission } = useAuth()
+  if (hasPermission('executive_dashboard:view')) return <DashboardPage />
+  if (hasPermission('material_requisitions:view')) return <Navigate to="/work" replace />
+  if (hasPermission('supplier_rfq:view')) return <Navigate to="/purchasing" replace />
+  if (hasPermission('inventory_receiving:view')) return <Navigate to="/inventory" replace />
+  if (hasPermission('supplier_invoices:view')) return <Navigate to="/supplier-payments" replace />
+  if (hasPermission('clients:view')) return <Navigate to="/clients" replace />
+  if (hasPermission('users:view')) return <Navigate to="/users" replace />
+  return <DashboardPage />
+}
+
 export default function App() {
   return (
     <Routes>
@@ -48,7 +61,11 @@ export default function App() {
       <Route path="/supplier/quote/:token" element={<SupplierQuotePortalPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
-          <Route index element={<DashboardPage />} />
+          <Route index element={<HomeRoute />} />
+          <Route
+            path="/dashboard/projects/:projectId"
+            element={protect(<DashboardPage />, 'executive_dashboard:view')}
+          />
           <Route path="/companies" element={protect(<CompaniesPage />, 'companies:view')} />
           <Route path="/clients" element={protect(<ClientsPage />, 'clients:view')} />
           <Route path="/projects" element={protect(<ProjectsPage />, 'projects:view')} />

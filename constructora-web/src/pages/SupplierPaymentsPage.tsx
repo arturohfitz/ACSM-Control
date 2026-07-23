@@ -166,7 +166,6 @@ const workspaceTabs = new Set<PaymentWorkspaceTab>([
   'invoices',
   'reconciliations',
   'payments',
-  'progress',
 ])
 
 const money = new Intl.NumberFormat('es-MX', {
@@ -997,7 +996,6 @@ export default function SupplierPaymentsPage() {
               { id: 'invoices' as const, label: 'Facturas', count: selectedProjectInvoices.length, icon: FileCheck2, allowed: canViewInvoices },
               { id: 'reconciliations' as const, label: 'Conciliaciones', count: reconciliationIssueCount, icon: ListChecks, allowed: canViewReconciliations },
               { id: 'payments' as const, label: 'Pagos', count: selectedProjectPayments.length, icon: CreditCard, allowed: canViewPayments },
-              { id: 'progress' as const, label: 'Avance del proyecto', count: financialData.materials.length, icon: BarChart3, allowed: canViewProjectFinancials },
             ].filter((tab) => tab.allowed).map((tab) => {
               const TabIcon = tab.icon
               const active = activeView === tab.id
@@ -1047,8 +1045,8 @@ export default function SupplierPaymentsPage() {
                       <div className="text-xs text-acsm-muted">Define la linea base antes de medir compras y pagos del desarrollo.</div>
                     </div>
                   </div>
-                  <button type="button" onClick={() => openWorkspace('progress')} className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line px-3 text-sm font-semibold hover:bg-acsm-paper">
-                    Revisar avance <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  <button type="button" onClick={() => window.location.assign(`/dashboard/projects/${selectedProjectId}?focus=baseline`)} className="inline-flex h-9 items-center gap-2 rounded-md border border-acsm-line px-3 text-sm font-semibold hover:bg-acsm-paper">
+                    Abrir control ejecutivo <ArrowRight className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </div>
               )}
@@ -1127,7 +1125,7 @@ export default function SupplierPaymentsPage() {
                   <CheckCircle2 className="h-5 w-5 text-emerald-700" aria-hidden="true" />
                   <div>
                     <div className="text-sm font-bold text-acsm-ink">El desarrollo no tiene acciones financieras pendientes</div>
-                    <div className="text-xs text-acsm-muted">Consulta pagos realizados o el avance del presupuesto desde las pestañas superiores.</div>
+                    <div className="text-xs text-acsm-muted">Consulta las facturas, conciliaciones y pagos realizados desde las pestañas superiores.</div>
                   </div>
                 </div>
               )}
