@@ -34,6 +34,7 @@ RFQSupplierStatus = Literal[
     "awarded",
 ]
 SupplierQuoteStatus = Literal["received", "approval_requested", "rejected", "discarded", "approved"]
+SupplierQuoteDraftStatus = Literal["review_required", "confirmed", "failed", "correction_requested"]
 SupplierQuoteApprovalStatus = Literal["requested", "approved", "rejected", "cancelled"]
 SupplierRFQExceptionStatus = Literal["requested", "approved", "rejected", "used", "cancelled"]
 PurchaseOrderBillingMode = Literal["single", "partial"]
@@ -321,6 +322,10 @@ class SupplierQuoteCreate(BaseModel):
     valid_until: date | None = None
     delivery_days: int | None = Field(default=None, ge=0)
     payment_terms_days: int = Field(default=30, ge=0)
+    currency: str = Field(default="MXN", min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
+    discount: NonNegativeDecimal = Decimal("0")
+    shipping_cost: NonNegativeDecimal = Decimal("0")
+    tax_amount: NonNegativeDecimal = Decimal("0")
     notes: str | None = None
     attachment_name: str | None = Field(default=None, max_length=255)
     items: list[SupplierQuoteItemCreate] = Field(min_length=1)
@@ -337,7 +342,12 @@ class SupplierQuoteRead(TimestampRead):
     valid_until: date | None = None
     delivery_days: int | None = None
     payment_terms_days: int
+    currency: str
     subtotal: Decimal
+    discount: Decimal
+    shipping_cost: Decimal
+    tax_amount: Decimal
+    total: Decimal
     notes: str | None = None
     attachment_name: str | None = None
     supplier: SupplierRead | None = None
@@ -360,6 +370,74 @@ class SupplierQuoteUploadRead(TimestampRead):
     uploaded_at: datetime
     notes: str | None = None
     supplier: SupplierRead | None = None
+
+
+class SupplierQuoteDraftItemInput(BaseModel):
+    rfq_item_id: int
+    unit_price: NonNegativeDecimal
+    delivery_days: int | None = Field(default=None, ge=0)
+    notes: str | None = None
+
+
+class SupplierQuoteDraftInput(BaseModel):
+    quote_number: str = Field(min_length=1, max_length=80)
+    valid_until: date | None = None
+    currency: str = Field(default="MXN", min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
+    delivery_days: int | None = Field(default=None, ge=0)
+    payment_terms_days: int = Field(default=30, ge=0)
+    discount: NonNegativeDecimal = Decimal("0")
+    shipping_cost: NonNegativeDecimal = Decimal("0")
+    tax_amount: NonNegativeDecimal = Decimal("0")
+    notes: str | None = None
+    items: list[SupplierQuoteDraftItemInput] = Field(min_length=1)
+
+
+class SupplierQuoteDraftItemRead(ORMModel):
+    id: int
+    draft_id: int
+    rfq_item_id: int
+    material_id: int | None = None
+    description: str
+    unit: str
+    quantity: Decimal
+    unit_price: Decimal | None = None
+    line_total: Decimal
+    delivery_days: int | None = None
+    notes: str | None = None
+    confidence: Decimal
+    match_method: str
+
+
+class SupplierQuoteDraftRead(TimestampRead):
+    id: int
+    company_id: int
+    rfq_id: int
+    rfq_supplier_id: int
+    supplier_id: int
+    upload_id: int | None = None
+    supplier_quote_id: int | None = None
+    status: SupplierQuoteDraftStatus
+    source_type: str
+    parser_version: str | None = None
+    confidence: Decimal
+    quote_number: str | None = None
+    received_at: date | None = None
+    valid_until: date | None = None
+    currency: str
+    delivery_days: int | None = None
+    payment_terms_days: int
+    subtotal: Decimal
+    discount: Decimal
+    shipping_cost: Decimal
+    tax_amount: Decimal
+    total: Decimal
+    notes: str | None = None
+    validation_errors: list[str] = Field(default_factory=list)
+    confirmed_by: int | None = None
+    confirmed_at: datetime | None = None
+    supplier: SupplierRead | None = None
+    upload: SupplierQuoteUploadRead | None = None
+    items: list[SupplierQuoteDraftItemRead] = Field(default_factory=list)
 
 
 class SupplierPortalRFQRead(BaseModel):

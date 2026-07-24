@@ -33,6 +33,8 @@ TABLES_TO_CLEAR = (
     "purchase_order_items",
     "purchase_orders",
     "supplier_quote_approvals",
+    "supplier_quote_draft_items",
+    "supplier_quote_drafts",
     "supplier_quote_uploads",
     "supplier_quote_items",
     "supplier_quotes",

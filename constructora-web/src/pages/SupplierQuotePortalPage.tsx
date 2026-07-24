@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Building2, CheckCircle2, FileUp, RefreshCw, ShieldCheck } from 'lucide-react'
+import {
+  AlertTriangle,
+  Building2,
+  CheckCircle2,
+  Download,
+  FileUp,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react'
 import { useParams } from 'react-router-dom'
 
-import { apiRequest } from '../lib/api'
+import { API_BASE_URL, apiRequest } from '../lib/api'
 import { brand } from '../config/brand'
 
 type PortalItem = {
@@ -32,6 +40,13 @@ type PortalRFQ = {
   previous_uploads: PortalUpload[]
 }
 
+type PortalQuoteRow = {
+  rfq_item_id: number
+  unit_price: string
+  delivery_days: string
+  notes: string
+}
+
 function formatDate(value?: string | null) {
   if (!value) return 'Sin fecha definida'
   const [year, month, day] = value.slice(0, 10).split('-').map(Number)
@@ -59,6 +74,14 @@ export default function SupplierQuotePortalPage() {
   const { token = '' } = useParams()
   const [data, setData] = useState<PortalRFQ | null>(null)
   const [quoteNumber, setQuoteNumber] = useState('')
+  const [validUntil, setValidUntil] = useState('')
+  const [currency, setCurrency] = useState('MXN')
+  const [deliveryDays, setDeliveryDays] = useState('')
+  const [paymentTermsDays, setPaymentTermsDays] = useState('30')
+  const [discount, setDiscount] = useState('0')
+  const [shippingCost, setShippingCost] = useState('0')
+  const [taxAmount, setTaxAmount] = useState('0')
+  const [quoteRows, setQuoteRows] = useState<PortalQuoteRow[]>([])
   const [notes, setNotes] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(true)
@@ -67,6 +90,7 @@ export default function SupplierQuotePortalPage() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [fileInputKey, setFileInputKey] = useState(0)
+  const [captureMode, setCaptureMode] = useState<'portal' | 'template'>('portal')
 
   const sortedUploads = useMemo(
     () => [...(data?.previous_uploads ?? [])].sort((left, right) => right.id - left.id),
@@ -80,6 +104,14 @@ export default function SupplierQuotePortalPage() {
     try {
       const response = await apiRequest<PortalRFQ>(`/supplier-portal/quotes/${token}`)
       setData(response)
+      setQuoteRows(
+        response.items.map((item) => ({
+          rfq_item_id: item.id,
+          unit_price: '',
+          delivery_days: '',
+          notes: '',
+        })),
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar la solicitud')
     } finally {
@@ -100,6 +132,20 @@ export default function SupplierQuotePortalPage() {
       setError('Selecciona un archivo PDF, XLS o XLSX.')
       return
     }
+    const pricedRows = quoteRows.filter((row) => row.unit_price !== '')
+    if (captureMode === 'portal') {
+      if (!quoteNumber.trim()) {
+        setError('Captura el folio de la cotizacion.')
+        return
+      }
+      if (!pricedRows.length) {
+        setError('Captura al menos un precio unitario.')
+        return
+      }
+    } else if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      setError('Para importar la plantilla selecciona el archivo XLSX generado por ACSM.')
+      return
+    }
     setSubmitting(true)
     setError('')
     setMessage('')
@@ -108,11 +154,33 @@ export default function SupplierQuotePortalPage() {
       formData.append('file', file)
       formData.append('quote_number', quoteNumber)
       formData.append('notes', notes)
+      if (captureMode === 'portal') {
+        formData.append(
+          'quote_payload',
+          JSON.stringify({
+            quote_number: quoteNumber.trim(),
+            valid_until: validUntil || null,
+            currency,
+            delivery_days: deliveryDays ? Number(deliveryDays) : null,
+            payment_terms_days: Number(paymentTermsDays || 30),
+            discount: Number(discount || 0),
+            shipping_cost: Number(shippingCost || 0),
+            tax_amount: Number(taxAmount || 0),
+            notes: notes.trim() || null,
+            items: pricedRows.map((row) => ({
+              rfq_item_id: row.rfq_item_id,
+              unit_price: Number(row.unit_price),
+              delivery_days: row.delivery_days ? Number(row.delivery_days) : null,
+              notes: row.notes.trim() || null,
+            })),
+          }),
+        )
+      }
       await apiRequest<PortalUpload>(`/supplier-portal/quotes/${token}/uploads`, {
         method: 'POST',
         body: formData,
       })
-      setMessage('Cotizacion cargada correctamente. ACSM ya puede revisarla.')
+      setMessage('Cotizacion recibida y capturada. ACSM ya puede revisar los datos y el documento.')
       setQuoteNumber('')
       setNotes('')
       setFile(null)
@@ -214,28 +282,102 @@ export default function SupplierQuotePortalPage() {
 
             <section className="overflow-hidden rounded-[24px] border border-acsm-line bg-white shadow-panel">
               <div className="border-b border-acsm-line bg-acsm-paper px-5 py-4">
-                <h2 className="font-bold">Materiales solicitados</h2>
-                <p className="text-sm text-acsm-muted">Cotiza cada partida con la unidad indicada.</p>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-bold">Materiales solicitados</h2>
+                    <p className="text-sm text-acsm-muted">
+                      Captura el precio de cada partida; ACSM calculara y validara los importes.
+                    </p>
+                  </div>
+                  {!hasExistingUpload ? (
+                    <a
+                      href={`${API_BASE_URL}/supplier-portal/quotes/${token}/template`}
+                      className="inline-flex h-10 items-center gap-2 rounded-md border border-sky-300 bg-white px-4 text-sm font-bold text-sky-800 hover:bg-sky-50"
+                    >
+                      <Download className="h-4 w-4" aria-hidden="true" />
+                      Descargar plantilla Excel
+                    </a>
+                  ) : null}
+                </div>
               </div>
               <div className="overflow-x-auto">
-                <table className="min-w-[720px] w-full text-sm">
+                <table className="min-w-[980px] w-full text-sm">
                   <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
                     <tr>
                       <th className="px-4 py-3 text-left">Material</th>
                       <th className="px-4 py-3 text-left">Cantidad</th>
                       <th className="px-4 py-3 text-left">Unidad</th>
+                      <th className="px-4 py-3 text-left">Precio unitario</th>
+                      <th className="px-4 py-3 text-left">Dias entrega</th>
                       <th className="px-4 py-3 text-left">Notas</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.items.map((item) => (
-                      <tr key={item.id} className="border-t border-acsm-line">
-                        <td className="px-4 py-3 font-semibold">{item.description}</td>
-                        <td className="px-4 py-3">{Number(item.quantity).toLocaleString('es-MX')}</td>
-                        <td className="px-4 py-3">{item.unit}</td>
-                        <td className="px-4 py-3 text-acsm-muted">{item.notes || '-'}</td>
-                      </tr>
-                    ))}
+                    {data.items.map((item) => {
+                      const quoteRow = quoteRows.find((row) => row.rfq_item_id === item.id)
+                      return (
+                        <tr key={item.id} className="border-t border-acsm-line">
+                          <td className="px-4 py-3 font-semibold">{item.description}</td>
+                          <td className="px-4 py-3">{Number(item.quantity).toLocaleString('es-MX')}</td>
+                          <td className="px-4 py-3">{item.unit}</td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.0001"
+                              disabled={hasExistingUpload || captureMode === 'template'}
+                              value={quoteRow?.unit_price ?? ''}
+                              onChange={(event) =>
+                                setQuoteRows((current) =>
+                                  current.map((row) =>
+                                    row.rfq_item_id === item.id
+                                      ? { ...row, unit_price: event.target.value }
+                                      : row,
+                                  ),
+                                )
+                              }
+                              placeholder="$ 0.00"
+                              className="h-10 w-full rounded-md border border-acsm-line px-3 disabled:bg-slate-100"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="number"
+                              min="0"
+                              disabled={hasExistingUpload || captureMode === 'template'}
+                              value={quoteRow?.delivery_days ?? ''}
+                              onChange={(event) =>
+                                setQuoteRows((current) =>
+                                  current.map((row) =>
+                                    row.rfq_item_id === item.id
+                                      ? { ...row, delivery_days: event.target.value }
+                                      : row,
+                                  ),
+                                )
+                              }
+                              className="h-10 w-full rounded-md border border-acsm-line px-3 disabled:bg-slate-100"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                              disabled={hasExistingUpload || captureMode === 'template'}
+                              value={quoteRow?.notes ?? ''}
+                              onChange={(event) =>
+                                setQuoteRows((current) =>
+                                  current.map((row) =>
+                                    row.rfq_item_id === item.id
+                                      ? { ...row, notes: event.target.value }
+                                      : row,
+                                  ),
+                                )
+                              }
+                              placeholder={item.notes || 'Opcional'}
+                              className="h-10 w-full rounded-md border border-acsm-line px-3 disabled:bg-slate-100"
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -278,15 +420,121 @@ export default function SupplierQuotePortalPage() {
                   </div>
                 ) : (
                   <div className="space-y-4 p-5">
-                    <label className="block text-sm font-semibold">
-                      Folio de cotizacion
-                      <input
-                        value={quoteNumber}
-                        onChange={(event) => setQuoteNumber(event.target.value)}
-                        placeholder="Ej. COT-2026-001"
-                        className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
-                      />
-                    </label>
+                    <div className="grid grid-cols-2 rounded-md border border-acsm-line bg-acsm-paper p-1">
+                      <button
+                        type="button"
+                        onClick={() => setCaptureMode('portal')}
+                        className={[
+                          'h-10 rounded-md text-sm font-bold',
+                          captureMode === 'portal' ? 'bg-white text-sky-800 shadow-sm' : 'text-acsm-muted',
+                        ].join(' ')}
+                      >
+                        Capturar en portal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCaptureMode('template')}
+                        className={[
+                          'h-10 rounded-md text-sm font-bold',
+                          captureMode === 'template' ? 'bg-white text-sky-800 shadow-sm' : 'text-acsm-muted',
+                        ].join(' ')}
+                      >
+                        Importar plantilla
+                      </button>
+                    </div>
+                    {captureMode === 'template' ? (
+                      <div className="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                        Descarga la plantilla de esta solicitud, captura sus campos y adjunta el mismo archivo XLSX.
+                        El sistema relacionara las partidas por su identificador interno.
+                      </div>
+                    ) : (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="block text-sm font-semibold">
+                        Folio de cotizacion *
+                        <input
+                          value={quoteNumber}
+                          onChange={(event) => setQuoteNumber(event.target.value)}
+                          maxLength={80}
+                          placeholder="Ej. COT-2026-001"
+                          className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
+                        />
+                      </label>
+                      <label className="block text-sm font-semibold">
+                        Vigencia
+                        <input
+                          type="date"
+                          value={validUntil}
+                          onChange={(event) => setValidUntil(event.target.value)}
+                          className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
+                        />
+                      </label>
+                      <label className="block text-sm font-semibold">
+                        Moneda
+                        <select
+                          value={currency}
+                          onChange={(event) => setCurrency(event.target.value)}
+                          className="mt-1 h-11 w-full rounded-md border border-acsm-line bg-white px-3"
+                        >
+                          <option value="MXN">MXN</option>
+                          <option value="USD">USD</option>
+                        </select>
+                      </label>
+                      <label className="block text-sm font-semibold">
+                        Dias de credito
+                        <input
+                          type="number"
+                          min="0"
+                          value={paymentTermsDays}
+                          onChange={(event) => setPaymentTermsDays(event.target.value)}
+                          className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
+                        />
+                      </label>
+                      <label className="block text-sm font-semibold">
+                        Entrega general
+                        <input
+                          type="number"
+                          min="0"
+                          value={deliveryDays}
+                          onChange={(event) => setDeliveryDays(event.target.value)}
+                          placeholder="Dias"
+                          className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
+                        />
+                      </label>
+                      <label className="block text-sm font-semibold">
+                        Descuento
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={discount}
+                          onChange={(event) => setDiscount(event.target.value)}
+                          className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
+                        />
+                      </label>
+                      <label className="block text-sm font-semibold">
+                        Flete
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={shippingCost}
+                          onChange={(event) => setShippingCost(event.target.value)}
+                          className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
+                        />
+                      </label>
+                      <label className="block text-sm font-semibold">
+                        Impuestos
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={taxAmount}
+                          onChange={(event) => setTaxAmount(event.target.value)}
+                          className="mt-1 h-11 w-full rounded-md border border-acsm-line px-3"
+                        />
+                      </label>
+                    </div>
+                    )}
                     <label className="block text-sm font-semibold">
                       Archivo
                       <input

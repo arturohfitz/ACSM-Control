@@ -67,6 +67,17 @@ def cleanup_company_data(db: Session, company_id: int) -> None:
         company_id,
         "purchase_orders",
         "supplier_quote_approvals",
+    )
+    _delete_related(
+        db,
+        company_id,
+        "DELETE FROM supplier_quote_draft_items WHERE draft_id IN "
+        "(SELECT id FROM supplier_quote_drafts WHERE company_id = :company_id)",
+    )
+    _delete_company_rows(
+        db,
+        company_id,
+        "supplier_quote_drafts",
         "supplier_quote_uploads",
     )
     _delete_related(

@@ -134,6 +134,9 @@ class SupplierRFQ(TimestampMixin, Base):
         back_populates="rfq", cascade="all, delete-orphan"
     )
     quotes: Mapped[list["SupplierQuote"]] = relationship(back_populates="rfq")
+    quote_drafts: Mapped[list["SupplierQuoteDraft"]] = relationship(
+        back_populates="rfq", cascade="all, delete-orphan"
+    )
     creator: Mapped["User | None"] = relationship(foreign_keys=[created_by])
 
 
@@ -242,6 +245,89 @@ class SupplierQuoteUpload(TimestampMixin, Base):
     rfq: Mapped[SupplierRFQ] = relationship()
     rfq_supplier: Mapped[SupplierRFQSupplier] = relationship(back_populates="quote_uploads")
     supplier: Mapped[Supplier] = relationship()
+    draft: Mapped["SupplierQuoteDraft | None"] = relationship(back_populates="upload")
+
+
+class SupplierQuoteDraft(TimestampMixin, Base):
+    __tablename__ = "supplier_quote_drafts"
+    __table_args__ = (
+        UniqueConstraint("upload_id", name="uq_supplier_quote_drafts_upload"),
+        UniqueConstraint("supplier_quote_id", name="uq_supplier_quote_drafts_quote"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    rfq_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_rfqs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rfq_supplier_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_rfq_suppliers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), nullable=False, index=True)
+    upload_id: Mapped[int | None] = mapped_column(
+        ForeignKey("supplier_quote_uploads.id", ondelete="SET NULL"), index=True
+    )
+    supplier_quote_id: Mapped[int | None] = mapped_column(
+        ForeignKey("supplier_quotes.id", ondelete="SET NULL"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(40), default="review_required", nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(40), default="portal", nullable=False)
+    parser_version: Mapped[str | None] = mapped_column(String(40))
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=1, nullable=False)
+    quote_number: Mapped[str | None] = mapped_column(String(80))
+    received_at: Mapped[date | None] = mapped_column(Date)
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    currency: Mapped[str] = mapped_column(String(3), default="MXN", nullable=False)
+    delivery_days: Mapped[int | None] = mapped_column(Integer)
+    payment_terms_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    discount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    shipping_cost: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    validation_errors: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    rfq: Mapped[SupplierRFQ] = relationship(back_populates="quote_drafts")
+    rfq_supplier: Mapped[SupplierRFQSupplier] = relationship()
+    supplier: Mapped[Supplier] = relationship()
+    upload: Mapped[SupplierQuoteUpload | None] = relationship(back_populates="draft")
+    supplier_quote: Mapped["SupplierQuote | None"] = relationship()
+    confirmer: Mapped["User | None"] = relationship(foreign_keys=[confirmed_by])
+    items: Mapped[list["SupplierQuoteDraftItem"]] = relationship(
+        back_populates="draft", cascade="all, delete-orphan"
+    )
+
+
+class SupplierQuoteDraftItem(Base):
+    __tablename__ = "supplier_quote_draft_items"
+    __table_args__ = (
+        UniqueConstraint("draft_id", "rfq_item_id", name="uq_supplier_quote_draft_items_rfq_item"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    draft_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_quote_drafts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rfq_item_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_rfq_items.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    material_id: Mapped[int | None] = mapped_column(ForeignKey("materials.id"), index=True)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    unit: Mapped[str] = mapped_column(String(40), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    line_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    delivery_days: Mapped[int | None] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=1, nullable=False)
+    match_method: Mapped[str] = mapped_column(String(40), default="rfq_item_id", nullable=False)
+
+    draft: Mapped[SupplierQuoteDraft] = relationship(back_populates="items")
+    rfq_item: Mapped[SupplierRFQItem] = relationship()
+    material: Mapped["Material | None"] = relationship()
 
 
 class SupplierQuote(TimestampMixin, Base):
@@ -260,7 +346,12 @@ class SupplierQuote(TimestampMixin, Base):
     valid_until: Mapped[date | None] = mapped_column(Date)
     delivery_days: Mapped[int | None] = mapped_column(Integer)
     payment_terms_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="MXN", nullable=False)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    discount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    shipping_cost: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     attachment_name: Mapped[str | None] = mapped_column(String(255))
 

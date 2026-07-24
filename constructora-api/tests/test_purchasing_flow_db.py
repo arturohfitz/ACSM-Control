@@ -1,7 +1,7 @@
 import asyncio
 import os
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 from tempfile import TemporaryDirectory
@@ -20,6 +20,7 @@ from app.api.v1.endpoints.inventory import (
 from app.api.v1.endpoints.purchasing import (
     approve_supplier_quote,
     approve_supplier_agreement,
+    confirm_supplier_quote_draft,
     create_supplier_agreement,
     create_supplier_quote,
     create_supplier_rfq,
@@ -56,6 +57,9 @@ from app.models import (
     ProjectHouseModel,
     ProjectWarehouse,
     PurchaseOrder,
+    SupplierQuote,
+    SupplierQuoteDraft,
+    SupplierQuoteUpload,
     SupplierInvoiceItem,
     Supplier,
     SupplierInvoice,
@@ -79,6 +83,7 @@ from app.schemas.purchasing import (
     SupplierPaymentUpdate,
     FinancialReconciliationCreate,
     SupplierQuoteCreate,
+    SupplierQuoteDraftInput,
     SupplierQuoteItemCreate,
     SupplierRFQApprovalRequest,
     SupplierRFQCreate,
@@ -93,6 +98,7 @@ from app.services.financial_reconciliations import (
     apply_reconciliation_case,
     create_reconciliation_case,
 )
+from app.services.supplier_quote_drafts import create_quote_draft
 from tests.db_cleanup import cleanup_company_data
 
 
@@ -679,6 +685,109 @@ class PurchasingFlowDBTest(unittest.TestCase):
 
         pending = list_supplier_quote_approvals("requested", 0, 20, self.db, self.user)
         self.assertIn(approval.id, {item.id for item in pending})
+
+    def test_structured_supplier_quote_requires_buyer_confirmation(self) -> None:
+        rfq = create_supplier_rfq(
+            SupplierRFQCreate(
+                project_id=self.project.id,
+                title=f"Cotizacion estructurada CI {self.suffix}",
+                required_by=date.today() + timedelta(days=10),
+                response_deadline=date.today() + timedelta(days=5),
+                supplier_ids=[supplier.id for supplier in self.suppliers],
+                items=[
+                    SupplierRFQItemCreate(
+                        source_code="EST-001",
+                        description="Cemento estructural",
+                        unit="saco",
+                        quantity=Decimal("20"),
+                    ),
+                    SupplierRFQItemCreate(
+                        source_code="EST-002",
+                        description="Varilla estructural",
+                        unit="pieza",
+                        quantity=Decimal("10"),
+                    ),
+                ],
+            ),
+            BackgroundTasks(),
+            self.db,
+            self.user,
+        )
+        link = rfq.supplier_links[0]
+        upload = SupplierQuoteUpload(
+            company_id=self.company.id,
+            rfq_id=rfq.id,
+            rfq_supplier_id=link.id,
+            supplier_id=link.supplier_id,
+            quote_number="COT-EST-001",
+            original_file_name="cotizacion.pdf",
+            stored_file_name=f"{self.suffix}.pdf",
+            stored_file_path=f"/tmp/{self.suffix}.pdf",
+            content_type="application/pdf",
+            file_extension=".pdf",
+            file_size_bytes=100,
+            file_sha256="a" * 64,
+            status="received",
+            uploaded_at=datetime.now(timezone.utc),
+        )
+        self.db.add(upload)
+        self.db.flush()
+        draft_payload = SupplierQuoteDraftInput(
+            quote_number="COT-EST-001",
+            currency="MXN",
+            delivery_days=4,
+            payment_terms_days=30,
+            discount=Decimal("50"),
+            shipping_cost=Decimal("100"),
+            tax_amount=Decimal("248"),
+            items=[
+                {
+                    "rfq_item_id": rfq.items[0].id,
+                    "unit_price": Decimal("50"),
+                    "delivery_days": 3,
+                },
+                {
+                    "rfq_item_id": rfq.items[1].id,
+                    "unit_price": Decimal("50"),
+                    "delivery_days": 4,
+                },
+            ],
+        )
+        draft = create_quote_draft(
+            self.db,
+            link=link,
+            upload=upload,
+            payload=draft_payload,
+            source_type="portal",
+            confidence=Decimal("1"),
+            parser_version="structured-v1",
+        )
+        self.db.commit()
+
+        self.assertEqual(draft.status, "review_required")
+        self.assertEqual(draft.subtotal, Decimal("1500.00"))
+        self.assertEqual(draft.total, Decimal("1798.00"))
+        self.assertIsNone(
+            self.db.scalar(
+                select(SupplierQuote).where(
+                    SupplierQuote.rfq_id == rfq.id,
+                    SupplierQuote.supplier_id == link.supplier_id,
+                )
+            )
+        )
+
+        quote = confirm_supplier_quote_draft(
+            draft.id,
+            draft_payload,
+            self.db,
+            self.user,
+        )
+        confirmed_draft = self.db.get(SupplierQuoteDraft, draft.id)
+        self.assertEqual(confirmed_draft.status, "confirmed")
+        self.assertEqual(confirmed_draft.supplier_quote_id, quote.id)
+        self.assertEqual(quote.subtotal, Decimal("1500.00"))
+        self.assertEqual(quote.total, Decimal("1798.00"))
+        self.assertEqual(len(quote.items), 2)
 
     def test_purchase_order_reception_invoice_and_payment_controls(self) -> None:
         rfq = create_supplier_rfq(

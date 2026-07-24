@@ -197,6 +197,64 @@ type SupplierQuoteUpload = {
   supplier?: Supplier | null
 }
 
+type SupplierQuoteDraftItem = {
+  id: number
+  rfq_item_id: number
+  description: string
+  unit: string
+  quantity: string
+  unit_price?: string | null
+  line_total: string
+  delivery_days?: number | null
+  notes?: string | null
+  confidence: string
+  match_method: string
+}
+
+type SupplierQuoteDraft = {
+  id: number
+  rfq_id: number
+  supplier_id: number
+  upload_id?: number | null
+  supplier_quote_id?: number | null
+  status: string
+  source_type: string
+  confidence: string
+  quote_number?: string | null
+  valid_until?: string | null
+  currency: string
+  delivery_days?: number | null
+  payment_terms_days: number
+  subtotal: string
+  discount: string
+  shipping_cost: string
+  tax_amount: string
+  total: string
+  notes?: string | null
+  validation_errors: string[]
+  supplier?: Supplier | null
+  upload?: SupplierQuoteUpload | null
+  items: SupplierQuoteDraftItem[]
+}
+
+type SupplierQuoteDraftForm = {
+  quote_number: string
+  valid_until: string
+  currency: string
+  delivery_days: string
+  payment_terms_days: string
+  discount: string
+  shipping_cost: string
+  tax_amount: string
+  notes: string
+  items: {
+    rfq_item_id: number
+    unit_price: string
+    delivery_days: string
+    notes: string
+  }[]
+}
+
 type ComparisonRow = {
   supplier_quote_id: number
   supplier_id: number
@@ -741,6 +799,9 @@ export default function PurchasingPage() {
   const [projectSummary, setProjectSummary] = useState<ProjectSummary | null>(null)
   const [quotes, setQuotes] = useState<SupplierQuote[]>([])
   const [quoteUploads, setQuoteUploads] = useState<SupplierQuoteUpload[]>([])
+  const [quoteDrafts, setQuoteDrafts] = useState<SupplierQuoteDraft[]>([])
+  const [activeQuoteDraftId, setActiveQuoteDraftId] = useState<number | null>(null)
+  const [quoteDraftForm, setQuoteDraftForm] = useState<SupplierQuoteDraftForm | null>(null)
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [materialRequisitions, setMaterialRequisitions] = useState<MaterialRequisition[]>([])
@@ -789,6 +850,34 @@ export default function PurchasingPage() {
     () => rfqs.find((rfq) => rfq.id === selectedRfqId) ?? rfqs[0],
     [rfqs, selectedRfqId],
   )
+  const activeQuoteDraft = useMemo(
+    () => quoteDrafts.find((draft) => draft.id === activeQuoteDraftId) ?? null,
+    [activeQuoteDraftId, quoteDrafts],
+  )
+  const pendingQuoteDrafts = useMemo(
+    () => quoteDrafts.filter((draft) => draft.status === 'review_required'),
+    [quoteDrafts],
+  )
+  const quoteDraftPreview = useMemo(() => {
+    if (!activeQuoteDraft || !quoteDraftForm) return { subtotal: 0, total: 0 }
+    const quantityByItem = new Map(
+      activeQuoteDraft.items.map((item) => [item.rfq_item_id, Number(item.quantity)]),
+    )
+    const subtotal = quoteDraftForm.items.reduce(
+      (sum, item) => sum + (quantityByItem.get(item.rfq_item_id) ?? 0) * Number(item.unit_price || 0),
+      0,
+    )
+    return {
+      subtotal,
+      total: Math.max(
+        0,
+        subtotal -
+          Number(quoteDraftForm.discount || 0) +
+          Number(quoteDraftForm.shipping_cost || 0) +
+          Number(quoteDraftForm.tax_amount || 0),
+      ),
+    }
+  }, [activeQuoteDraft, quoteDraftForm])
   const notificationRfqId = useMemo(() => {
     const rawId = searchParams.get('rfq_id')
     const parsedId = rawId ? Number(rawId) : NaN
@@ -1272,19 +1361,31 @@ export default function PurchasingPage() {
     if (!rfqId) {
       setQuotes([])
       setQuoteUploads([])
+      setQuoteDrafts([])
+      setActiveQuoteDraftId(null)
+      setQuoteDraftForm(null)
       setComparison([])
       setQuoteRows([])
       return
     }
     try {
-      const [quoteData, comparisonData, uploadData] = await Promise.all([
+      const [quoteData, comparisonData, uploadData, draftData] = await Promise.all([
         apiRequest<SupplierQuote[]>(`/purchasing/supplier-rfqs/${rfqId}/quotes`),
         apiRequest<ComparisonRow[]>(`/purchasing/supplier-rfqs/${rfqId}/comparison`),
         apiRequest<SupplierQuoteUpload[]>(`/purchasing/supplier-rfqs/${rfqId}/quote-uploads`),
+        apiRequest<SupplierQuoteDraft[]>(`/purchasing/supplier-rfqs/${rfqId}/quote-drafts`),
       ])
       setQuotes(quoteData)
       setComparison(comparisonData)
       setQuoteUploads(uploadData)
+      setQuoteDrafts(draftData)
+      const reviewDraft = draftData.find((draft) => draft.status === 'review_required')
+      if (reviewDraft && activeQuoteDraftId !== reviewDraft.id) {
+        beginQuoteDraftReview(reviewDraft)
+      } else if (!reviewDraft) {
+        setActiveQuoteDraftId(null)
+        setQuoteDraftForm(null)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar cotizaciones')
     }
@@ -1308,6 +1409,27 @@ export default function PurchasingPage() {
     setDeliveryDays('')
     setPaymentTermsDays('30')
     setQuoteRows(emptyQuoteRowsFor(rfq))
+  }
+
+  function beginQuoteDraftReview(draft: SupplierQuoteDraft) {
+    setActiveQuoteDraftId(draft.id)
+    setQuoteDraftForm({
+      quote_number: draft.quote_number ?? '',
+      valid_until: draft.valid_until?.slice(0, 10) ?? '',
+      currency: draft.currency || 'MXN',
+      delivery_days: draft.delivery_days == null ? '' : String(draft.delivery_days),
+      payment_terms_days: String(draft.payment_terms_days ?? 30),
+      discount: draft.discount ?? '0',
+      shipping_cost: draft.shipping_cost ?? '0',
+      tax_amount: draft.tax_amount ?? '0',
+      notes: draft.notes ?? '',
+      items: draft.items.map((item) => ({
+        rfq_item_id: item.rfq_item_id,
+        unit_price: item.unit_price ?? '',
+        delivery_days: item.delivery_days == null ? '' : String(item.delivery_days),
+        notes: item.notes ?? '',
+      })),
+    })
   }
 
   useEffect(() => {
@@ -1613,6 +1735,52 @@ export default function PurchasingPage() {
       await loadData(selectedRfq.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible registrar la cotizacion')
+    }
+  }
+
+  async function confirmQuoteDraft() {
+    if (!selectedRfq || !activeQuoteDraftId || !quoteDraftForm) return
+    if (!quoteDraftForm.quote_number.trim()) {
+      setError('El folio de cotizacion es obligatorio.')
+      return
+    }
+    const pricedItems = quoteDraftForm.items.filter((item) => item.unit_price !== '')
+    if (!pricedItems.length) {
+      setError('La cotizacion necesita al menos una partida con precio.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      await apiRequest<SupplierQuote>(`/purchasing/supplier-quote-drafts/${activeQuoteDraftId}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({
+          quote_number: quoteDraftForm.quote_number.trim(),
+          valid_until: quoteDraftForm.valid_until || null,
+          currency: quoteDraftForm.currency,
+          delivery_days: quoteDraftForm.delivery_days ? Number(quoteDraftForm.delivery_days) : null,
+          payment_terms_days: Number(quoteDraftForm.payment_terms_days || 30),
+          discount: Number(quoteDraftForm.discount || 0),
+          shipping_cost: Number(quoteDraftForm.shipping_cost || 0),
+          tax_amount: Number(quoteDraftForm.tax_amount || 0),
+          notes: quoteDraftForm.notes.trim() || null,
+          items: pricedItems.map((item) => ({
+            rfq_item_id: item.rfq_item_id,
+            unit_price: Number(item.unit_price),
+            delivery_days: item.delivery_days ? Number(item.delivery_days) : null,
+            notes: item.notes.trim() || null,
+          })),
+        }),
+      })
+      notifySuccess('Cotizacion confirmada e incorporada al comparativo.')
+      setActiveQuoteDraftId(null)
+      setQuoteDraftForm(null)
+      await loadRfqDetails(selectedRfq.id)
+      await loadData(selectedRfq.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible confirmar la cotizacion')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -2574,6 +2742,7 @@ export default function PurchasingPage() {
                   <input
                     value={quoteNumber}
                     onChange={(event) => setQuoteNumber(event.target.value)}
+                    maxLength={80}
                     placeholder="Ej. COT-1234 *"
                     required
                     className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm font-semibold normal-case text-acsm-ink"
@@ -2737,6 +2906,289 @@ export default function PurchasingPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </section>
+        )}
+
+        {selectedRfq && pendingQuoteDrafts.length > 0 && (
+          <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-sky-50 px-5 py-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-sky-700">
+                  Captura asistida
+                </p>
+                <h2 className="mt-1 font-bold text-acsm-ink">Cotizaciones por revisar</h2>
+                <p className="text-sm text-acsm-muted">
+                  Verifica los datos contra el documento antes de incorporarlos al comparativo.
+                </p>
+              </div>
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
+                {pendingQuoteDrafts.length} pendientes
+              </span>
+            </div>
+
+            <div className="grid border-b border-acsm-line lg:grid-cols-[330px_minmax(0,1fr)]">
+              <div className="border-b border-acsm-line bg-acsm-paper p-4 lg:border-b-0 lg:border-r">
+                <div className="space-y-2">
+                  {pendingQuoteDrafts.map((draft) => (
+                    <button
+                      key={draft.id}
+                      type="button"
+                      onClick={() => draft.status === 'review_required' && beginQuoteDraftReview(draft)}
+                      disabled={draft.status !== 'review_required'}
+                      className={[
+                        'w-full rounded-md border px-3 py-3 text-left transition',
+                        activeQuoteDraftId === draft.id
+                          ? 'border-sky-400 bg-white shadow-sm'
+                          : 'border-acsm-line bg-white/70 hover:border-sky-300',
+                        draft.status !== 'review_required' ? 'cursor-default opacity-65' : '',
+                      ].join(' ')}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-acsm-ink">
+                            {draft.supplier?.name ?? `Proveedor ${draft.supplier_id}`}
+                          </p>
+                          <p className="mt-1 text-xs text-acsm-muted">
+                            {draft.quote_number || 'Sin folio'} · {draft.source_type === 'xlsx_template' ? 'Excel ACSM' : 'Portal'}
+                          </p>
+                        </div>
+                        <span
+                          className={[
+                            'rounded-full px-2 py-1 text-[11px] font-bold',
+                            draft.status === 'confirmed'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800',
+                          ].join(' ')}
+                        >
+                          {draft.status === 'confirmed' ? 'Confirmada' : 'Revisar'}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {activeQuoteDraft && quoteDraftForm ? (
+                <div className="min-w-0">
+                  <div className="grid gap-3 border-b border-acsm-line p-4 md:grid-cols-4">
+                    <label className="text-xs font-bold uppercase text-acsm-muted">
+                      Folio
+                      <input
+                        value={quoteDraftForm.quote_number}
+                        onChange={(event) =>
+                          setQuoteDraftForm((current) =>
+                            current ? { ...current, quote_number: event.target.value } : current,
+                          )
+                        }
+                        maxLength={80}
+                        className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm font-semibold normal-case"
+                      />
+                    </label>
+                    <label className="text-xs font-bold uppercase text-acsm-muted">
+                      Vigencia
+                      <input
+                        type="date"
+                        value={quoteDraftForm.valid_until}
+                        onChange={(event) =>
+                          setQuoteDraftForm((current) =>
+                            current ? { ...current, valid_until: event.target.value } : current,
+                          )
+                        }
+                        className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm normal-case"
+                      />
+                    </label>
+                    <label className="text-xs font-bold uppercase text-acsm-muted">
+                      Moneda
+                      <select
+                        value={quoteDraftForm.currency}
+                        onChange={(event) =>
+                          setQuoteDraftForm((current) =>
+                            current ? { ...current, currency: event.target.value } : current,
+                          )
+                        }
+                        className="mt-1 h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm normal-case"
+                      >
+                        <option value="MXN">MXN</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    </label>
+                    <label className="text-xs font-bold uppercase text-acsm-muted">
+                      Credito
+                      <input
+                        type="number"
+                        min="0"
+                        value={quoteDraftForm.payment_terms_days}
+                        onChange={(event) =>
+                          setQuoteDraftForm((current) =>
+                            current ? { ...current, payment_terms_days: event.target.value } : current,
+                          )
+                        }
+                        className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm normal-case"
+                      />
+                    </label>
+                  </div>
+
+                  {activeQuoteDraft.validation_errors.length > 0 ? (
+                    <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                      {activeQuoteDraft.validation_errors.join('. ')}
+                    </div>
+                  ) : null}
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[920px] w-full text-sm">
+                      <thead className="bg-acsm-paper text-xs uppercase text-acsm-muted">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Material</th>
+                          <th className="px-3 py-2 text-left">Cantidad</th>
+                          <th className="px-3 py-2 text-left">Precio unitario</th>
+                          <th className="px-3 py-2 text-left">Entrega</th>
+                          <th className="px-3 py-2 text-left">Notas</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activeQuoteDraft.items.map((item) => {
+                          const formIndex = quoteDraftForm.items.findIndex(
+                            (row) => row.rfq_item_id === item.rfq_item_id,
+                          )
+                          const formItem = quoteDraftForm.items[formIndex]
+                          return (
+                            <tr key={item.id} className="border-t border-acsm-line">
+                              <td className="px-3 py-2 font-semibold text-acsm-ink">{item.description}</td>
+                              <td className="px-3 py-2 text-acsm-muted">
+                                {Number(item.quantity).toLocaleString('es-MX')} {item.unit}
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.0001"
+                                  value={formItem?.unit_price ?? ''}
+                                  onChange={(event) =>
+                                    setQuoteDraftForm((current) =>
+                                      current
+                                        ? {
+                                            ...current,
+                                            items: current.items.map((row, index) =>
+                                              index === formIndex
+                                                ? { ...row, unit_price: event.target.value }
+                                                : row,
+                                            ),
+                                          }
+                                        : current,
+                                    )
+                                  }
+                                  className="h-9 w-full rounded-md border border-acsm-line px-2"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={formItem?.delivery_days ?? ''}
+                                  onChange={(event) =>
+                                    setQuoteDraftForm((current) =>
+                                      current
+                                        ? {
+                                            ...current,
+                                            items: current.items.map((row, index) =>
+                                              index === formIndex
+                                                ? { ...row, delivery_days: event.target.value }
+                                                : row,
+                                            ),
+                                          }
+                                        : current,
+                                    )
+                                  }
+                                  className="h-9 w-full rounded-md border border-acsm-line px-2"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  value={formItem?.notes ?? ''}
+                                  onChange={(event) =>
+                                    setQuoteDraftForm((current) =>
+                                      current
+                                        ? {
+                                            ...current,
+                                            items: current.items.map((row, index) =>
+                                              index === formIndex ? { ...row, notes: event.target.value } : row,
+                                            ),
+                                          }
+                                        : current,
+                                    )
+                                  }
+                                  className="h-9 w-full rounded-md border border-acsm-line px-2"
+                                />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="grid gap-3 border-t border-acsm-line bg-acsm-paper p-4 md:grid-cols-4">
+                    {[
+                      ['Descuento', 'discount'],
+                      ['Flete', 'shipping_cost'],
+                      ['Impuestos', 'tax_amount'],
+                    ].map(([label, field]) => (
+                      <label key={field} className="text-xs font-bold uppercase text-acsm-muted">
+                        {label}
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={quoteDraftForm[field as 'discount' | 'shipping_cost' | 'tax_amount']}
+                          onChange={(event) =>
+                            setQuoteDraftForm((current) =>
+                              current ? { ...current, [field]: event.target.value } : current,
+                            )
+                          }
+                          className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm normal-case"
+                        />
+                      </label>
+                    ))}
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <p className="text-xs font-bold uppercase text-emerald-700">Total revisado</p>
+                      <p className="mt-1 text-lg font-bold text-emerald-900">
+                        {quoteDraftForm.currency} {quoteDraftPreview.total.toLocaleString('es-MX', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-acsm-line px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        activeQuoteDraft.upload_id && void openSupplierQuoteUpload(activeQuoteDraft.upload_id)
+                      }
+                      disabled={!activeQuoteDraft.upload_id}
+                      className="inline-flex h-10 items-center gap-2 rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold disabled:opacity-50"
+                    >
+                      <Eye className="h-4 w-4" aria-hidden="true" />
+                      Abrir documento
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void confirmQuoteDraft()}
+                      disabled={loading || !quoteDraftForm.quote_number.trim()}
+                      className="inline-flex h-10 items-center gap-2 rounded-md bg-acsm-green px-5 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
+                    >
+                      <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+                      Confirmar e incorporar al comparativo
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-48 items-center justify-center p-6 text-sm text-acsm-muted">
+                  Selecciona una cotizacion pendiente para revisar sus datos.
+                </div>
+              )}
             </div>
           </section>
         )}

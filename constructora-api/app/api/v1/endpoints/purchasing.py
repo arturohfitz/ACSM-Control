@@ -39,6 +39,7 @@ from app.models import (
     SupplierPayment,
     SupplierQuote,
     SupplierQuoteApproval,
+    SupplierQuoteDraft,
     SupplierQuoteItem,
     SupplierQuoteUpload,
     SupplierRFQ,
@@ -74,6 +75,8 @@ from app.schemas.purchasing import (
     SupplierPaymentRead,
     SupplierPaymentUpdate,
     SupplierQuoteCreate,
+    SupplierQuoteDraftInput,
+    SupplierQuoteDraftRead,
     SupplierQuoteApprovalDecision,
     SupplierQuoteApprovalRead,
     SupplierQuoteApprovalRequest,
@@ -2050,18 +2053,12 @@ def send_supplier_rfq(
     return get_supplier_rfq(rfq_id, db, current_user)
 
 
-@router.post(
-    "/supplier-rfqs/{rfq_id}/quotes",
-    response_model=SupplierQuoteRead,
-    status_code=status.HTTP_201_CREATED,
-)
-def create_supplier_quote(
-    rfq_id: int,
+def _create_supplier_quote_record(
+    db: Session,
+    current_user: User,
+    rfq: SupplierRFQ,
     payload: SupplierQuoteCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("supplier_quotes", "create")),
 ) -> SupplierQuote:
-    rfq = get_supplier_rfq(rfq_id, db, current_user)
     if rfq.status in {"approval_pending", "awarded"}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2100,6 +2097,10 @@ def create_supplier_quote(
         valid_until=payload.valid_until,
         delivery_days=payload.delivery_days,
         payment_terms_days=payload.payment_terms_days,
+        currency=payload.currency,
+        discount=payload.discount,
+        shipping_cost=payload.shipping_cost,
+        tax_amount=payload.tax_amount,
         notes=payload.notes,
         attachment_name=payload.attachment_name,
     )
@@ -2131,9 +2132,154 @@ def create_supplier_quote(
             )
         )
     quote.subtotal = subtotal
+    quote.total = max(
+        Decimal("0"),
+        quote.subtotal - quote.discount + quote.shipping_cost + quote.tax_amount,
+    )
     link.status = "responded"
     rfq.status = "quoted" if len(payload.items) == len(rfq.items) else "partially_quoted"
     record_create(db, current_user, module="compras", item=quote)
+    return quote
+
+
+@router.post(
+    "/supplier-rfqs/{rfq_id}/quotes",
+    response_model=SupplierQuoteRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_supplier_quote(
+    rfq_id: int,
+    payload: SupplierQuoteCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "create")),
+) -> SupplierQuote:
+    rfq = get_supplier_rfq(rfq_id, db, current_user)
+    quote = _create_supplier_quote_record(db, current_user, rfq, payload)
+    db.commit()
+    return db.scalar(
+        select(SupplierQuote)
+        .where(SupplierQuote.id == quote.id)
+        .options(selectinload(SupplierQuote.supplier), selectinload(SupplierQuote.items))
+    )
+
+
+def _quote_draft_query():
+    return select(SupplierQuoteDraft).options(
+        selectinload(SupplierQuoteDraft.supplier),
+        selectinload(SupplierQuoteDraft.upload),
+        selectinload(SupplierQuoteDraft.items),
+    )
+
+
+@router.get(
+    "/supplier-rfqs/{rfq_id}/quote-drafts",
+    response_model=list[SupplierQuoteDraftRead],
+)
+def list_supplier_quote_drafts(
+    rfq_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "view")),
+) -> list[SupplierQuoteDraft]:
+    rfq = get_supplier_rfq(rfq_id, db, current_user)
+    return list(
+        db.scalars(
+            _quote_draft_query()
+            .where(SupplierQuoteDraft.rfq_id == rfq.id)
+            .order_by(SupplierQuoteDraft.created_at.desc())
+        ).all()
+    )
+
+
+@router.post(
+    "/supplier-quote-drafts/{draft_id}/confirm",
+    response_model=SupplierQuoteRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def confirm_supplier_quote_draft(
+    draft_id: int,
+    payload: SupplierQuoteDraftInput,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "create")),
+) -> SupplierQuote:
+    draft = db.scalar(_quote_draft_query().where(SupplierQuoteDraft.id == draft_id))
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Borrador no encontrado")
+    ensure_same_company(current_user, draft, db=db)
+    if draft.status == "confirmed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La cotizacion ya fue confirmada",
+        )
+    rfq = get_supplier_rfq(draft.rfq_id, db, current_user)
+    if draft.supplier_id not in {link.supplier_id for link in rfq.supplier_links}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El proveedor del borrador no esta invitado a la solicitud",
+        )
+
+    quote_payload = SupplierQuoteCreate(
+        supplier_id=draft.supplier_id,
+        quote_number=payload.quote_number,
+        received_at=draft.received_at or date.today(),
+        valid_until=payload.valid_until,
+        delivery_days=payload.delivery_days,
+        payment_terms_days=payload.payment_terms_days,
+        currency=payload.currency,
+        discount=payload.discount,
+        shipping_cost=payload.shipping_cost,
+        tax_amount=payload.tax_amount,
+        notes=payload.notes,
+        attachment_name=draft.upload.original_file_name if draft.upload else None,
+        items=[
+            {
+                "rfq_item_id": item.rfq_item_id,
+                "unit_price": item.unit_price,
+                "delivery_days": item.delivery_days,
+                "notes": item.notes,
+            }
+            for item in payload.items
+        ],
+    )
+    quote = _create_supplier_quote_record(db, current_user, rfq, quote_payload)
+
+    draft.quote_number = payload.quote_number.strip()
+    draft.valid_until = payload.valid_until
+    draft.currency = payload.currency
+    draft.delivery_days = payload.delivery_days
+    draft.payment_terms_days = payload.payment_terms_days
+    draft.discount = payload.discount
+    draft.shipping_cost = payload.shipping_cost
+    draft.tax_amount = payload.tax_amount
+    draft.notes = payload.notes
+    draft.status = "confirmed"
+    draft.supplier_quote_id = quote.id
+    draft.confirmed_by = current_user.id
+    draft.confirmed_at = _now()
+    draft.subtotal = quote.subtotal
+    draft.total = quote.total
+    draft.validation_errors = []
+    if draft.upload:
+        draft.upload.status = "confirmed"
+
+    submitted_by_item = {item.rfq_item_id: item for item in payload.items}
+    for draft_item in draft.items:
+        submitted = submitted_by_item.get(draft_item.rfq_item_id)
+        if submitted is None:
+            continue
+        draft_item.unit_price = submitted.unit_price
+        draft_item.line_total = draft_item.quantity * submitted.unit_price
+        draft_item.delivery_days = submitted.delivery_days
+        draft_item.notes = submitted.notes
+        draft_item.confidence = Decimal("1")
+        draft_item.match_method = "buyer_confirmed"
+
+    record_update(
+        db,
+        current_user,
+        module="compras",
+        item=draft,
+        before={"status": "review_required"},
+    )
     db.commit()
     return db.scalar(
         select(SupplierQuote)

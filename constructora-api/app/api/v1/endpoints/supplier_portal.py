@@ -1,14 +1,17 @@
 import hashlib
+import json
 import re
 import shutil
 import subprocess
 import uuid
 import zipfile
 from datetime import datetime, timezone
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import selectinload
@@ -16,8 +19,13 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import SupplierQuoteUpload, SupplierRFQ, SupplierRFQSupplier
-from app.schemas.purchasing import SupplierPortalRFQRead, SupplierQuoteUploadRead
+from app.schemas.purchasing import SupplierPortalRFQRead, SupplierQuoteDraftInput, SupplierQuoteUploadRead
 from app.services.notifications import notify_permission
+from app.services.supplier_quote_drafts import (
+    build_quote_template,
+    create_quote_draft,
+    parse_quote_template,
+)
 
 
 router = APIRouter()
@@ -179,11 +187,27 @@ def get_supplier_quote_request(
     )
 
 
+@router.get("/quotes/{token}/template")
+def download_supplier_quote_template(
+    token: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    link = _link_from_token(db, token)
+    content = build_quote_template(link)
+    filename = f"Cotizacion-{link.rfq.rfq_number}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/quotes/{token}/uploads", response_model=SupplierQuoteUploadRead, status_code=status.HTTP_201_CREATED)
 async def upload_supplier_quote_document(
     token: str,
     quote_number: str | None = Form(default=None),
     notes: str | None = Form(default=None),
+    quote_payload: str | None = Form(default=None),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> SupplierQuoteUpload:
@@ -238,6 +262,38 @@ async def upload_supplier_quote_document(
         )
         db.add(upload)
         db.flush()
+
+        draft = None
+        draft_payload = None
+        draft_source = "portal"
+        draft_confidence = Decimal("1")
+        if quote_payload:
+            try:
+                draft_payload = SupplierQuoteDraftInput.model_validate(json.loads(quote_payload))
+            except (json.JSONDecodeError, ValidationError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Los datos estructurados de la cotizacion no son validos: {exc}",
+                ) from exc
+        elif extension == ".xlsx":
+            try:
+                draft_payload = parse_quote_template(content, link)
+                draft_source = "xlsx_template"
+            except (ValueError, ValidationError):
+                upload.status = "manual_capture_required"
+
+        if draft_payload is not None:
+            upload.quote_number = draft_payload.quote_number
+            draft = create_quote_draft(
+                db,
+                link=link,
+                upload=upload,
+                payload=draft_payload,
+                source_type=draft_source,
+                confidence=draft_confidence,
+                parser_version="structured-v1",
+            )
+
         link.status = "responded"
         if link.rfq.status == "sent":
             link.rfq.status = "partially_quoted"
@@ -247,8 +303,16 @@ async def upload_supplier_quote_document(
             module="supplier_quotes",
             action="create",
             notification_type="supplier_quote_document_uploaded",
-            title="Cotizacion cargada por proveedor",
-            body=f"{link.supplier.name if link.supplier else 'Proveedor'} cargo un archivo para {link.rfq.rfq_number}.",
+            title="Cotizacion lista para revisar" if draft else "Cotizacion cargada por proveedor",
+            body=(
+                f"{link.supplier.name if link.supplier else 'Proveedor'} envio datos estructurados "
+                f"para {link.rfq.rfq_number}."
+                if draft
+                else (
+                    f"{link.supplier.name if link.supplier else 'Proveedor'} cargo un archivo "
+                    f"para {link.rfq.rfq_number}; requiere captura manual."
+                )
+            ),
             category="info",
             priority="normal",
             source_module="compras",
@@ -257,7 +321,12 @@ async def upload_supplier_quote_document(
             entity_label=link.rfq.rfq_number,
             action_url=f"/purchasing?rfq_id={link.rfq_id}&focus=uploads",
             project_id=link.rfq.project_id,
-            metadata={"rfq_id": link.rfq_id, "supplier_id": link.supplier_id},
+            metadata={
+                "rfq_id": link.rfq_id,
+                "supplier_id": link.supplier_id,
+                "draft_id": draft.id if draft else None,
+                "structured": draft is not None,
+            },
         )
         db.commit()
         db.refresh(upload)
