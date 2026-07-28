@@ -794,6 +794,46 @@ async function mockApi(
       return json(sentOrder)
     }
 
+    if (pathname === '/purchasing/supplier-invoice-documents/analyze' && method === 'POST') {
+      const order = purchaseOrders.find((entry) => entry.id === 800)
+      const item = order?.items[0]
+      return json({
+        document_type: 'pdf',
+        extraction_method: 'native_text',
+        validation_status: 'valid',
+        validation_message: 'PDF interpretado',
+        parsed_data: {
+          folio: 'FAC-001',
+          issue_datetime: '2026-06-05',
+          currency: 'MXN',
+          subtotal: '2200.00',
+          transferred_taxes: '0.00',
+          total: '2200.00',
+          concepts: [],
+        },
+        items: item
+          ? [
+              {
+                purchase_order_item_id: item.id,
+                source_description: item.description,
+                matched_description: item.description,
+                source_unit: item.unit,
+                source_quantity: '40',
+                billable_quantity: '40',
+                unit_price: '55',
+                line_total: '2200',
+                match_status: 'matched',
+                confidence: '1',
+              },
+            ]
+          : [],
+        matched_items: item ? 1 : 0,
+        source_items: item ? 1 : 0,
+        warnings: [],
+        requires_review: true,
+      })
+    }
+
     if (pathname === '/purchasing/supplier-invoices/register' && method === 'POST') {
       const multipartBody = request.postData() ?? ''
       const payloadMatch = multipartBody.match(/name="payload_json"\r\n\r\n([\s\S]*?)\r\n--/)
@@ -1335,4 +1375,43 @@ test('pagos captura precios e importes con formato mexicano sin alterar la canti
   await expect(
     invoiceSection.getByText('$21,064.50', { exact: true }).first(),
   ).toBeVisible()
+})
+
+test('pagos interpreta la factura y autocompleta encabezado y partidas recibidas', async ({
+  page,
+}) => {
+  await mockApi(page)
+  await authenticate(page)
+  await page.goto('/purchasing/operations')
+  await approveAndPrepareOrder(page, true)
+
+  await page.goto('/inventory/material-receiving')
+  await page.getByLabel('Orden de compra').selectOption('800')
+  await page.getByPlaceholder('Recibe').fill('Encargado de bodega')
+  await page.getByLabel('Entregado Cemento gris 50kg').fill('40')
+  await page.getByRole('button', { name: 'Registrar recepcion' }).click()
+
+  await page.goto('/supplier-payments')
+  await page.getByRole('tab', { name: /Facturas/ }).click()
+  const invoiceSection = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Facturas de proveedores' }),
+  })
+  await invoiceSection.locator('select').first().selectOption('800')
+  await invoiceSection.getByRole('button', { name: 'Parcial por entregas' }).click()
+  await invoiceSection.locator('input[type="file"]').first().setInputFiles({
+    name: 'FAC-001.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n%%EOF'),
+  })
+
+  await expect(invoiceSection.getByText('PDF interpretado')).toBeVisible()
+  await expect(invoiceSection.getByText('1 de 1 partidas identificadas')).toBeVisible()
+  await expect(invoiceSection.getByPlaceholder('Folio factura')).toHaveValue('FAC-001')
+  await expect(invoiceSection.locator('input[type="date"]').first()).toHaveValue('2026-06-05')
+  await expect(
+    invoiceSection.getByLabel('Cantidad a facturar de Cemento gris 50kg'),
+  ).toHaveValue('40')
+  await expect(
+    invoiceSection.getByLabel('Precio unitario de Cemento gris 50kg'),
+  ).toHaveValue('55.00')
 })

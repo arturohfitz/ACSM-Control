@@ -29,7 +29,7 @@ class ValidatedInvoiceFile:
     sha256: str
     validation_status: str
     validation_message: str
-    parsed_data: dict[str, str] | None = None
+    parsed_data: dict[str, object] | None = None
 
 
 def safe_filename(file_name: str | None, fallback: str) -> str:
@@ -65,7 +65,7 @@ def _decimal_text(value: str | None) -> str | None:
         raise InvoiceDocumentError("El XML contiene importes fiscales no validos") from exc
 
 
-def parse_cfdi_xml(content: bytes) -> dict[str, str]:
+def parse_cfdi_xml(content: bytes) -> dict[str, object]:
     try:
         root = ElementTree.fromstring(content)
     except Exception as exc:
@@ -73,7 +73,8 @@ def parse_cfdi_xml(content: bytes) -> dict[str, str]:
     if _local_name(root.tag).lower() != "comprobante":
         raise InvoiceDocumentError("El XML no corresponde a un comprobante CFDI")
 
-    parsed: dict[str, str] = {}
+    parsed: dict[str, object] = {}
+    concepts: list[dict[str, str]] = []
     root_fields = {
         "version": ("Version",),
         "series": ("Serie",),
@@ -112,6 +113,26 @@ def parse_cfdi_xml(content: bytes) -> dict[str, str]:
             fiscal_uuid = _attribute(element, "UUID")
             if fiscal_uuid:
                 parsed["fiscal_uuid"] = fiscal_uuid.upper()
+        elif local == "concepto":
+            concept = {
+                "description": _attribute(element, "Descripcion") or "",
+                "product_code": _attribute(element, "ClaveProdServ") or "",
+                "identification_number": _attribute(element, "NoIdentificacion") or "",
+                "unit_code": _attribute(element, "ClaveUnidad") or "",
+                "unit": _attribute(element, "Unidad") or _attribute(element, "ClaveUnidad") or "",
+                "quantity": _attribute(element, "Cantidad") or "0",
+                "unit_price": _attribute(element, "ValorUnitario") or "0",
+                "line_total": _attribute(element, "Importe") or "0",
+                "discount": _attribute(element, "Descuento") or "0",
+            }
+            for key in ("quantity", "unit_price", "line_total", "discount"):
+                try:
+                    concept[key] = str(Decimal(concept[key]))
+                except (InvalidOperation, ValueError) as exc:
+                    raise InvoiceDocumentError(
+                        f"El concepto CFDI contiene un numero invalido: {key}"
+                    ) from exc
+            concepts.append(concept)
         elif local == "impuestos":
             transferred = _attribute(element, "TotalImpuestosTrasladados")
             withheld = _attribute(element, "TotalImpuestosRetenidos")
@@ -121,9 +142,11 @@ def parse_cfdi_xml(content: bytes) -> dict[str, str]:
                 parsed["withheld_taxes"] = withheld
 
     for monetary in ("subtotal", "discount", "total", "transferred_taxes", "withheld_taxes"):
-        normalized = _decimal_text(parsed.get(monetary))
+        value = parsed.get(monetary)
+        normalized = _decimal_text(str(value) if value is not None else None)
         if normalized is not None:
             parsed[monetary] = normalized
+    parsed["concepts"] = concepts
     if "fiscal_uuid" not in parsed:
         raise InvoiceDocumentError("El XML CFDI no contiene un UUID fiscal timbrado")
     for required in ("issuer_tax_id", "receiver_tax_id", "total"):
@@ -156,7 +179,7 @@ def validate_invoice_file(
     if extension != expected_extension:
         raise InvoiceDocumentError(f"El archivo debe tener extension {expected_extension.upper()}")
     original_name = safe_filename(file_name, f"factura{expected_extension}")
-    parsed_data: dict[str, str] | None = None
+    parsed_data: dict[str, object] | None = None
     if expected_type == "pdf":
         if not content.startswith(b"%PDF-"):
             raise InvoiceDocumentError("El archivo no parece ser un PDF valido")

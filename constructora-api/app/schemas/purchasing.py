@@ -729,6 +729,32 @@ class SupplierInvoiceXMLAnalysis(BaseModel):
     parsed_data: dict
 
 
+class SupplierInvoiceDocumentItemAnalysis(BaseModel):
+    purchase_order_item_id: int | None = None
+    source_description: str
+    matched_description: str | None = None
+    source_unit: str
+    source_quantity: Decimal
+    billable_quantity: Decimal
+    unit_price: Decimal
+    line_total: Decimal
+    match_status: str
+    confidence: Decimal
+
+
+class SupplierInvoiceDocumentAnalysis(BaseModel):
+    document_type: str
+    extraction_method: str
+    validation_status: str
+    validation_message: str | None = None
+    parsed_data: dict
+    items: list[SupplierInvoiceDocumentItemAnalysis] = Field(default_factory=list)
+    matched_items: int
+    source_items: int
+    warnings: list[str] = Field(default_factory=list)
+    requires_review: bool = True
+
+
 class SupplierPaymentCreate(BaseModel):
     supplier_invoice_id: int
     amount: PositiveDecimal

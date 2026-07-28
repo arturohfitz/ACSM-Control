@@ -95,10 +95,28 @@ type SupplierInvoiceDocument = {
   is_active: boolean
 }
 
-type XMLAnalysis = {
+type InvoiceDocumentAnalysis = {
+  document_type: 'pdf' | 'xml'
+  extraction_method: string
   validation_status: string
   validation_message?: string | null
-  parsed_data: Record<string, string>
+  parsed_data: Record<string, unknown>
+  items: {
+    purchase_order_item_id?: number | null
+    source_description: string
+    matched_description?: string | null
+    source_unit: string
+    source_quantity: string
+    billable_quantity: string
+    unit_price: string
+    line_total: string
+    match_status: string
+    confidence: string
+  }[]
+  matched_items: number
+  source_items: number
+  warnings: string[]
+  requires_review: boolean
 }
 
 type SupplierPayment = {
@@ -266,8 +284,8 @@ export default function SupplierPaymentsPage() {
   const [total, setTotal] = useState('')
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [xmlFile, setXmlFile] = useState<File | null>(null)
-  const [xmlAnalysis, setXmlAnalysis] = useState<XMLAnalysis | null>(null)
-  const [analyzingXML, setAnalyzingXML] = useState(false)
+  const [documentAnalysis, setDocumentAnalysis] = useState<InvoiceDocumentAnalysis | null>(null)
+  const [analyzingDocument, setAnalyzingDocument] = useState(false)
   const [uploadingDocumentKey, setUploadingDocumentKey] = useState('')
   const [invoiceRows, setInvoiceRows] = useState<Record<number, { quantity: string; unit_price: string }>>({})
 
@@ -575,32 +593,86 @@ export default function SupplierPaymentsPage() {
     }))
   }
 
-  async function analyzeXML(file: File | null) {
-    setXmlFile(file)
-    setXmlAnalysis(null)
-    if (!file) return
-    setAnalyzingXML(true)
+  function parsedValue(key: string) {
+    const value = documentAnalysis?.parsed_data[key]
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+  }
+
+  function applyDocumentAnalysis(analysis: InvoiceDocumentAnalysis) {
+    const parsed = analysis.parsed_data
+    const stringValue = (key: string) => {
+      const value = parsed[key]
+      return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+    }
+    const fiscalFolio = [stringValue('series'), stringValue('folio')].filter(Boolean).join('-')
+    if (fiscalFolio) setInvoiceNumber(fiscalFolio)
+    const issueDate = stringValue('issue_datetime')
+    if (issueDate) setInvoiceDate(issueDate.slice(0, 10))
+    if (stringValue('subtotal')) setSubtotal(stringValue('subtotal'))
+    if (stringValue('total')) setTotal(stringValue('total'))
+    if (selectedOrder) {
+      setInvoiceRows(() => {
+        const next: Record<number, { quantity: string; unit_price: string }> = {}
+        for (const item of selectedOrder.items) {
+          next[item.id] = { quantity: '', unit_price: item.unit_price || '0' }
+        }
+        for (const item of analysis.items) {
+          if (!item.purchase_order_item_id || Number(item.billable_quantity || 0) <= 0) continue
+          next[item.purchase_order_item_id] = {
+            quantity: item.billable_quantity,
+            unit_price: item.unit_price,
+          }
+        }
+        return next
+      })
+    }
+  }
+
+  async function analyzeInvoiceDocument(file: File, documentType: 'pdf' | 'xml') {
+    if (!purchaseOrderId) {
+      setError('Selecciona primero la orden de compra que corresponde a la factura.')
+      return
+    }
+    setDocumentAnalysis(null)
+    setAnalyzingDocument(true)
     setError('')
     try {
       const formData = new FormData()
+      formData.append('purchase_order_id', purchaseOrderId)
+      formData.append('document_type', documentType)
       formData.append('file', file)
-      const analysis = await apiRequest<XMLAnalysis>(
-        '/purchasing/supplier-invoice-documents/analyze-xml',
+      const analysis = await apiRequest<InvoiceDocumentAnalysis>(
+        '/purchasing/supplier-invoice-documents/analyze',
         { method: 'POST', body: formData },
       )
-      setXmlAnalysis(analysis)
-      const parsed = analysis.parsed_data
-      const fiscalFolio = [parsed.series, parsed.folio].filter(Boolean).join('-')
-      if (fiscalFolio) setInvoiceNumber(fiscalFolio)
-      if (parsed.issue_datetime) setInvoiceDate(parsed.issue_datetime.slice(0, 10))
-      if (parsed.subtotal) setSubtotal(parsed.subtotal)
-      if (parsed.total) setTotal(parsed.total)
+      setDocumentAnalysis(analysis)
+      applyDocumentAnalysis(analysis)
     } catch (err) {
-      setXmlFile(null)
-      setError(err instanceof Error ? err.message : 'No fue posible analizar el XML')
+      if (documentType === 'pdf') setPdfFile(null)
+      else setXmlFile(null)
+      setError(err instanceof Error ? err.message : 'No fue posible analizar la factura')
     } finally {
-      setAnalyzingXML(false)
+      setAnalyzingDocument(false)
     }
+  }
+
+  async function selectPDF(file: File | null) {
+    setPdfFile(file)
+    if (!file) {
+      if (!xmlFile) setDocumentAnalysis(null)
+      return
+    }
+    if (!xmlFile) await analyzeInvoiceDocument(file, 'pdf')
+  }
+
+  async function selectXML(file: File | null) {
+    setXmlFile(file)
+    if (!file) {
+      if (pdfFile) await analyzeInvoiceDocument(pdfFile, 'pdf')
+      else setDocumentAnalysis(null)
+      return
+    }
+    await analyzeInvoiceDocument(file, 'xml')
   }
 
   async function downloadInvoiceDocument(document: SupplierInvoiceDocument) {
@@ -690,32 +762,32 @@ export default function SupplierPaymentsPage() {
         }))
       const invoiceSubtotal = selectedOrderIsPartial
         ? Number(partialTotal.toFixed(2))
-        : xmlAnalysis?.parsed_data.subtotal
-          ? Number(xmlAnalysis.parsed_data.subtotal)
+        : parsedValue('subtotal')
+          ? Number(parsedValue('subtotal'))
           : Number(subtotal)
       const payload = {
         purchase_order_id: Number(purchaseOrderId),
         invoice_number: invoiceNumber,
         invoice_date: invoiceDate,
         subtotal: invoiceSubtotal,
-        discount: xmlAnalysis?.parsed_data.discount ? Number(xmlAnalysis.parsed_data.discount) : null,
-        transferred_taxes: xmlAnalysis?.parsed_data.transferred_taxes
-          ? Number(xmlAnalysis.parsed_data.transferred_taxes)
+        discount: parsedValue('discount') ? Number(parsedValue('discount')) : null,
+        transferred_taxes: parsedValue('transferred_taxes')
+          ? Number(parsedValue('transferred_taxes'))
           : null,
-        withheld_taxes: xmlAnalysis?.parsed_data.withheld_taxes
-          ? Number(xmlAnalysis.parsed_data.withheld_taxes)
+        withheld_taxes: parsedValue('withheld_taxes')
+          ? Number(parsedValue('withheld_taxes'))
           : null,
         total: Number(total || partialTotal.toFixed(2)),
-        currency: xmlAnalysis?.parsed_data.currency || 'MXN',
-        exchange_rate: xmlAnalysis?.parsed_data.exchange_rate
-          ? Number(xmlAnalysis.parsed_data.exchange_rate)
+        currency: parsedValue('currency') || 'MXN',
+        exchange_rate: parsedValue('exchange_rate')
+          ? Number(parsedValue('exchange_rate'))
           : null,
-        fiscal_uuid: xmlAnalysis?.parsed_data.fiscal_uuid || null,
-        series: xmlAnalysis?.parsed_data.series || null,
-        issuer_tax_id: xmlAnalysis?.parsed_data.issuer_tax_id || null,
-        receiver_tax_id: xmlAnalysis?.parsed_data.receiver_tax_id || null,
-        payment_method: xmlAnalysis?.parsed_data.payment_method || null,
-        payment_form: xmlAnalysis?.parsed_data.payment_form || null,
+        fiscal_uuid: parsedValue('fiscal_uuid') || null,
+        series: parsedValue('series') || null,
+        issuer_tax_id: parsedValue('issuer_tax_id') || null,
+        receiver_tax_id: parsedValue('receiver_tax_id') || null,
+        payment_method: parsedValue('payment_method') || null,
+        payment_form: parsedValue('payment_form') || null,
         items: selectedOrderIsPartial ? partialItems : [],
       }
       const formData = new FormData()
@@ -734,7 +806,7 @@ export default function SupplierPaymentsPage() {
       setTotal('')
       setPdfFile(null)
       setXmlFile(null)
-      setXmlAnalysis(null)
+      setDocumentAnalysis(null)
       setInvoiceRows({})
       await loadData()
     } catch (err) {
@@ -1469,7 +1541,16 @@ export default function SupplierPaymentsPage() {
             <div className="space-y-3">
               <select
                 value={purchaseOrderId}
-                onChange={(event) => setPurchaseOrderId(event.target.value)}
+                onChange={(event) => {
+                  setPurchaseOrderId(event.target.value)
+                  setPdfFile(null)
+                  setXmlFile(null)
+                  setDocumentAnalysis(null)
+                  setInvoiceNumber('')
+                  setInvoiceDate('')
+                  setSubtotal('')
+                  setTotal('')
+                }}
                 className="h-10 w-full rounded-md border border-acsm-line px-3 text-sm"
               >
                 <option value="">Orden de compra</option>
@@ -1529,9 +1610,14 @@ export default function SupplierPaymentsPage() {
                     <div className="text-xs font-bold uppercase text-acsm-muted">Documentos fiscales</div>
                     <div className="text-xs text-acsm-muted">Adjunta al menos PDF o XML.</div>
                   </div>
-                  {xmlAnalysis && (
-                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
-                      XML leido
+                  {documentAnalysis && (
+                    <span className={[
+                      'rounded-full border px-2 py-1 text-[11px] font-bold',
+                      documentAnalysis.requires_review
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                    ].join(' ')}>
+                      {documentAnalysis.document_type === 'xml' ? 'XML CFDI leido' : 'PDF interpretado'}
                     </span>
                   )}
                 </div>
@@ -1547,7 +1633,7 @@ export default function SupplierPaymentsPage() {
                     <input
                       type="file"
                       accept="application/pdf,.pdf"
-                      onChange={(event) => setPdfFile(event.target.files?.[0] ?? null)}
+                      onChange={(event) => void selectPDF(event.target.files?.[0] ?? null)}
                       className="sr-only"
                     />
                   </label>
@@ -1556,27 +1642,63 @@ export default function SupplierPaymentsPage() {
                     <span className="min-w-0">
                       <span className="block text-xs font-bold text-acsm-ink">Factura XML</span>
                       <span className="block truncate text-xs text-acsm-muted">
-                        {analyzingXML ? 'Analizando...' : xmlFile?.name ?? 'Seleccionar XML'}
+                        {analyzingDocument && xmlFile ? 'Analizando...' : xmlFile?.name ?? 'Seleccionar XML'}
                       </span>
                     </span>
                     <input
                       type="file"
                       accept="application/xml,text/xml,.xml"
-                      onChange={(event) => void analyzeXML(event.target.files?.[0] ?? null)}
+                      onChange={(event) => void selectXML(event.target.files?.[0] ?? null)}
                       className="sr-only"
                     />
                   </label>
                 </div>
-                {xmlAnalysis && (
-                  <div className="mt-2 grid gap-2 rounded-md border border-blue-100 bg-blue-50 p-2 text-xs sm:grid-cols-2">
-                    <div>
-                      <span className="font-semibold text-blue-900">UUID:</span>{' '}
-                      <span className="break-all text-blue-800">{xmlAnalysis.parsed_data.fiscal_uuid}</span>
+                {analyzingDocument && (
+                  <div className="mt-2 flex items-center gap-2 rounded-md border border-blue-100 bg-blue-50 p-2 text-xs font-semibold text-blue-800">
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    Leyendo datos y conciliando partidas con la orden de compra...
+                  </div>
+                )}
+                {documentAnalysis && !analyzingDocument && (
+                  <div className={[
+                    'mt-2 space-y-2 rounded-md border p-2 text-xs',
+                    documentAnalysis.requires_review
+                      ? 'border-amber-200 bg-amber-50'
+                      : 'border-emerald-200 bg-emerald-50',
+                  ].join(' ')}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-bold text-acsm-ink">
+                        {documentAnalysis.matched_items} de {documentAnalysis.source_items} partidas identificadas
+                      </span>
+                      <span className={documentAnalysis.requires_review ? 'font-semibold text-amber-800' : 'font-semibold text-emerald-700'}>
+                        {documentAnalysis.requires_review ? 'Revisa antes de guardar' : 'Datos fiscales estructurados'}
+                      </span>
                     </div>
-                    <div>
-                      <span className="font-semibold text-blue-900">RFC emisor:</span>{' '}
-                      <span className="text-blue-800">{xmlAnalysis.parsed_data.issuer_tax_id}</span>
-                    </div>
+                    {(parsedValue('fiscal_uuid') || parsedValue('issuer_tax_id')) && (
+                      <div className="grid gap-1 text-acsm-muted sm:grid-cols-2">
+                        {parsedValue('fiscal_uuid') && (
+                          <span className="break-all">
+                            <strong className="text-acsm-ink">UUID:</strong> {parsedValue('fiscal_uuid')}
+                          </span>
+                        )}
+                        {parsedValue('issuer_tax_id') && (
+                          <span>
+                            <strong className="text-acsm-ink">RFC emisor:</strong> {parsedValue('issuer_tax_id')}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {documentAnalysis.warnings.slice(0, 3).map((warning) => (
+                      <div key={warning} className="flex items-start gap-1.5 text-amber-900">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <span>{warning}</span>
+                      </div>
+                    ))}
+                    {documentAnalysis.warnings.length > 3 && (
+                      <div className="font-semibold text-amber-800">
+                        +{documentAnalysis.warnings.length - 3} observaciones adicionales.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1728,7 +1850,7 @@ export default function SupplierPaymentsPage() {
                   !invoiceNumber ||
                   !invoiceDate ||
                   (!pdfFile && !xmlFile) ||
-                  analyzingXML ||
+                  analyzingDocument ||
                   (selectedOrderIsPartial ? partialTotal <= 0 : !subtotal || !total)
                 }
                 className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"

@@ -68,6 +68,7 @@ from app.schemas.purchasing import (
     SupplierAgreementUpdate,
     SupplierCreate,
     SupplierInvoiceCreate,
+    SupplierInvoiceDocumentAnalysis,
     SupplierInvoiceRead,
     SupplierInvoiceXMLAnalysis,
     SupplierInvoiceValidation,
@@ -108,6 +109,7 @@ from app.services.financial_reconciliations import (
     get_reconciliation_case,
     reconciliation_case_read,
 )
+from app.services.invoice_analysis import analyze_invoice_document
 from app.services.invoice_documents import (
     InvoiceDocumentError,
     ValidatedInvoiceFile,
@@ -550,10 +552,10 @@ def _fiscal_review_for_xml(
     *,
     purchase_order: PurchaseOrder,
     payload: SupplierInvoiceCreate,
-    parsed_data: dict[str, str],
+    parsed_data: dict[str, object],
     exclude_invoice_id: int | None = None,
 ) -> tuple[str, str]:
-    fiscal_uuid = parsed_data["fiscal_uuid"].upper()
+    fiscal_uuid = str(parsed_data["fiscal_uuid"]).upper()
     duplicate_statement = select(SupplierInvoice.id).where(
         SupplierInvoice.company_id == purchase_order.company_id,
         SupplierInvoice.fiscal_uuid == fiscal_uuid,
@@ -566,20 +568,20 @@ def _fiscal_review_for_xml(
             detail="El UUID fiscal ya esta registrado en otra factura.",
         )
 
-    xml_total = Decimal(parsed_data["total"])
+    xml_total = Decimal(str(parsed_data["total"]))
     if abs(xml_total - payload.total) > Decimal("0.01"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El total capturado no coincide con el total del XML CFDI.",
         )
     if payload.subtotal is not None and parsed_data.get("subtotal"):
-        xml_subtotal = Decimal(parsed_data["subtotal"])
+        xml_subtotal = Decimal(str(parsed_data["subtotal"]))
         if abs(xml_subtotal - payload.subtotal) > Decimal("0.01"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El subtotal capturado no coincide con el subtotal del XML CFDI.",
             )
-    issue_date = parsed_data.get("issue_datetime", "")[:10]
+    issue_date = str(parsed_data.get("issue_datetime") or "")[:10]
     if issue_date and issue_date != payload.invoice_date.isoformat():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -589,8 +591,8 @@ def _fiscal_review_for_xml(
     supplier_tax_id = normalize_tax_id(purchase_order.supplier.tax_id)
     company = db.get(Company, purchase_order.company_id)
     company_tax_id = normalize_tax_id(company.tax_id if company else None)
-    issuer_tax_id = normalize_tax_id(parsed_data.get("issuer_tax_id"))
-    receiver_tax_id = normalize_tax_id(parsed_data.get("receiver_tax_id"))
+    issuer_tax_id = normalize_tax_id(str(parsed_data.get("issuer_tax_id") or ""))
+    receiver_tax_id = normalize_tax_id(str(parsed_data.get("receiver_tax_id") or ""))
     if supplier_tax_id and issuer_tax_id != supplier_tax_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -614,22 +616,33 @@ def _fiscal_review_for_xml(
     return "valid", "XML CFDI coincide con proveedor, constructora, fecha y total capturado."
 
 
-def _apply_fiscal_data(invoice: SupplierInvoice, parsed_data: dict[str, str]) -> None:
-    invoice.fiscal_uuid = parsed_data.get("fiscal_uuid")
-    invoice.series = parsed_data.get("series")
-    invoice.issuer_tax_id = parsed_data.get("issuer_tax_id")
-    invoice.receiver_tax_id = parsed_data.get("receiver_tax_id")
-    invoice.currency = parsed_data.get("currency") or "MXN"
-    invoice.exchange_rate = Decimal(parsed_data["exchange_rate"]) if parsed_data.get("exchange_rate") else None
-    invoice.discount = Decimal(parsed_data["discount"]) if parsed_data.get("discount") else None
+def _parsed_text(parsed_data: dict[str, object], key: str) -> str | None:
+    value = parsed_data.get(key)
+    return str(value) if value is not None and not isinstance(value, (dict, list)) else None
+
+
+def _apply_fiscal_data(invoice: SupplierInvoice, parsed_data: dict[str, object]) -> None:
+    invoice.fiscal_uuid = _parsed_text(parsed_data, "fiscal_uuid")
+    invoice.series = _parsed_text(parsed_data, "series")
+    invoice.issuer_tax_id = _parsed_text(parsed_data, "issuer_tax_id")
+    invoice.receiver_tax_id = _parsed_text(parsed_data, "receiver_tax_id")
+    invoice.currency = _parsed_text(parsed_data, "currency") or "MXN"
+    invoice.exchange_rate = (
+        Decimal(str(parsed_data["exchange_rate"])) if parsed_data.get("exchange_rate") else None
+    )
+    invoice.discount = (
+        Decimal(str(parsed_data["discount"])) if parsed_data.get("discount") else None
+    )
     invoice.transferred_taxes = (
-        Decimal(parsed_data["transferred_taxes"]) if parsed_data.get("transferred_taxes") else None
+        Decimal(str(parsed_data["transferred_taxes"]))
+        if parsed_data.get("transferred_taxes")
+        else None
     )
     invoice.withheld_taxes = (
-        Decimal(parsed_data["withheld_taxes"]) if parsed_data.get("withheld_taxes") else None
+        Decimal(str(parsed_data["withheld_taxes"])) if parsed_data.get("withheld_taxes") else None
     )
-    invoice.payment_method = parsed_data.get("payment_method")
-    invoice.payment_form = parsed_data.get("payment_form")
+    invoice.payment_method = _parsed_text(parsed_data, "payment_method")
+    invoice.payment_form = _parsed_text(parsed_data, "payment_form")
 
 
 def _store_supplier_invoice_document(
@@ -3782,6 +3795,52 @@ async def analyze_supplier_invoice_xml(
         validation_message=validated.validation_message,
         parsed_data=validated.parsed_data or {},
     )
+
+
+@router.post(
+    "/supplier-invoice-documents/analyze",
+    response_model=SupplierInvoiceDocumentAnalysis,
+)
+async def analyze_supplier_invoice_document(
+    purchase_order_id: int = Form(...),
+    document_type: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_invoices", "upload")),
+) -> SupplierInvoiceDocumentAnalysis:
+    if document_type not in {"pdf", "xml"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tipo de documento no permitido",
+        )
+    purchase_order = get_purchase_order(purchase_order_id, db, current_user)
+    validated = await _validated_invoice_upload(file, document_type)
+    analysis = analyze_invoice_document(
+        validated,
+        file_name=file.filename or f"factura.{document_type}",
+        purchase_order_items=purchase_order.items,
+        already_invoiced=_invoiced_quantities_by_po_item(db, purchase_order),
+    )
+    warnings = list(analysis["warnings"])
+    parsed_data = analysis["parsed_data"]
+    supplier_tax_id = normalize_tax_id(purchase_order.supplier.tax_id if purchase_order.supplier else None)
+    issuer_tax_id = normalize_tax_id(str(parsed_data.get("issuer_tax_id") or ""))
+    if supplier_tax_id and issuer_tax_id and supplier_tax_id != issuer_tax_id:
+        warnings.insert(
+            0,
+            "El RFC emisor del documento no coincide con el proveedor de la orden de compra.",
+        )
+    company = db.get(Company, purchase_order.company_id)
+    company_tax_id = normalize_tax_id(company.tax_id if company else None)
+    receiver_tax_id = normalize_tax_id(str(parsed_data.get("receiver_tax_id") or ""))
+    if company_tax_id and receiver_tax_id and company_tax_id != receiver_tax_id:
+        warnings.insert(
+            0,
+            "El RFC receptor del documento no coincide con la constructora.",
+        )
+    analysis["warnings"] = warnings
+    analysis["requires_review"] = bool(analysis["requires_review"] or warnings)
+    return SupplierInvoiceDocumentAnalysis.model_validate(analysis)
 
 
 @router.post(
