@@ -130,7 +130,7 @@ type PurchaseOrderReceiveRow = {
   received_quantity: string
   accepted_quantity: string
   rejected_quantity: string
-  condition_status: 'ok' | 'damaged' | 'incomplete' | 'extra' | 'other'
+  condition_status: 'ok' | 'not_delivered' | 'damaged' | 'incomplete' | 'extra' | 'other'
   notes: string
 }
 
@@ -861,7 +861,14 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
         const next = { ...row, ...patch }
         if ('received_quantity' in patch || 'condition_status' in patch) {
           const delivered = Number(next.received_quantity || 0)
-          if (next.condition_status === 'damaged') {
+          if (next.condition_status === 'not_delivered') {
+            next.received_quantity = '0'
+            next.accepted_quantity = '0'
+            next.rejected_quantity = '0'
+            if (!next.notes.trim()) {
+              next.notes = 'Material no entregado por el proveedor'
+            }
+          } else if (next.condition_status === 'damaged') {
             next.accepted_quantity = '0'
             next.rejected_quantity = delivered ? String(delivered) : ''
           } else {
@@ -897,9 +904,11 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setError('Selecciona una bodega antes de registrar la recepcion')
       return
     }
-    const validRows = poReceiveRows.filter((row) => Number(row.received_quantity) > 0)
+    const validRows = poReceiveRows.filter(
+      (row) => Number(row.received_quantity) > 0 || row.condition_status === 'not_delivered',
+    )
     if (!validRows.length) {
-      setError('Captura al menos una cantidad recibida de la orden de compra')
+      setError('Captura una cantidad recibida o marca el material como No llegó')
       return
     }
     setSaving(true)
@@ -1461,7 +1470,16 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                 <button
                   type="button"
                   onClick={() => void savePurchaseOrderReception()}
-                  disabled={saving || !selectedPurchaseOrderList || !warehouseId || !poReceiveRows.some((row) => Number(row.received_quantity) > 0)}
+                  disabled={
+                    saving ||
+                    !selectedPurchaseOrderList ||
+                    !warehouseId ||
+                    !poReceiveRows.some(
+                      (row) =>
+                        Number(row.received_quantity) > 0 ||
+                        row.condition_status === 'not_delivered',
+                    )
+                  }
                   className="inline-flex h-9 items-center gap-2 rounded-md bg-acsm-green px-3 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
                 >
                   <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
@@ -1485,7 +1503,12 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                 </thead>
                 <tbody>
                   {poReceiveRows.map((row) => (
-                    <tr key={row.expected_item_id} className="border-t border-acsm-line">
+                    <tr
+                      key={row.expected_item_id}
+                      className={`border-t border-acsm-line ${
+                        row.condition_status === 'not_delivered' ? 'bg-amber-50/70' : ''
+                      }`}
+                    >
                       <td className="px-3 py-2 font-semibold text-acsm-ink">{row.description}</td>
                       <td className="px-3 py-2">
                         {formatQuantity(row.pending_quantity)} {row.unit}
@@ -1498,12 +1521,13 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                           step="0.0001"
                           aria-label={`Entregado ${row.description}`}
                           value={row.received_quantity}
+                          disabled={row.condition_status === 'not_delivered'}
                           onChange={(event) =>
                             updatePoReceiveRow(row.expected_item_id, {
                               received_quantity: event.target.value,
                             })
                           }
-                          className="h-9 w-full rounded-md border border-acsm-line px-2"
+                          className="h-9 w-full rounded-md border border-acsm-line px-2 disabled:bg-slate-100 disabled:text-acsm-muted"
                         />
                       </td>
                       <td className="px-3 py-2">
@@ -1514,12 +1538,13 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                           step="0.0001"
                           aria-label={`Aceptado ${row.description}`}
                           value={row.accepted_quantity}
+                          disabled={row.condition_status === 'not_delivered'}
                           onChange={(event) =>
                             updatePoReceiveRow(row.expected_item_id, {
                               accepted_quantity: event.target.value,
                             })
                           }
-                          className="h-9 w-full rounded-md border border-emerald-200 bg-emerald-50/40 px-2"
+                          className="h-9 w-full rounded-md border border-emerald-200 bg-emerald-50/40 px-2 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-acsm-muted"
                         />
                       </td>
                       <td className="px-3 py-2">
@@ -1530,12 +1555,13 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                           step="0.0001"
                           aria-label={`Rechazado ${row.description}`}
                           value={row.rejected_quantity}
+                          disabled={row.condition_status === 'not_delivered'}
                           onChange={(event) =>
                             updatePoReceiveRow(row.expected_item_id, {
                               rejected_quantity: event.target.value,
                             })
                           }
-                          className="h-9 w-full rounded-md border border-amber-200 bg-amber-50/40 px-2"
+                          className="h-9 w-full rounded-md border border-amber-200 bg-amber-50/40 px-2 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-acsm-muted"
                         />
                       </td>
                       <td className="px-3 py-2">
@@ -1551,6 +1577,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                         >
                           <option value="ok">Correcto</option>
                           <option value="incomplete">Incompleto</option>
+                          <option value="not_delivered">No llegó</option>
                           <option value="damaged">Dañado</option>
                           <option value="extra">Extra</option>
                           <option value="other">Otro</option>

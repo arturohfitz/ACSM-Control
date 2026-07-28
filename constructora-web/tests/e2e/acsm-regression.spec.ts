@@ -1139,6 +1139,48 @@ test('inventario recibe parcialmente una orden de compra generada desde compras'
   await expect(statusSection.locator('tr', { hasText: 'Cemento gris 50kg' }).getByText('partial')).toBeVisible()
 })
 
+test('inventario registra una partida que no llego sin alterar cantidades', async ({ page }) => {
+  await mockApi(page)
+  await authenticate(page)
+  await page.goto('/purchasing/operations')
+  await approveAndPrepareOrder(page, true)
+  await page.goto('/inventory/material-receiving')
+
+  await page.getByLabel('Orden de compra').selectOption('800')
+  const materialRow = page.locator('tr', { hasText: 'Cemento gris 50kg' })
+  await materialRow.locator('select').selectOption('not_delivered')
+
+  await expect(page.getByLabel('Entregado Cemento gris 50kg')).toHaveValue('0')
+  await expect(page.getByLabel('Entregado Cemento gris 50kg')).toBeDisabled()
+  await expect(page.getByLabel('Aceptado Cemento gris 50kg')).toHaveValue('0')
+  await expect(page.getByLabel('Aceptado Cemento gris 50kg')).toBeDisabled()
+  await expect(page.getByLabel('Rechazado Cemento gris 50kg')).toHaveValue('0')
+  await expect(page.getByLabel('Rechazado Cemento gris 50kg')).toBeDisabled()
+  await expect(materialRow.locator('input').last()).toHaveValue(
+    'Material no entregado por el proveedor',
+  )
+  await expect(page.getByRole('button', { name: 'Registrar recepcion' })).toBeEnabled()
+
+  const requestPromise = page.waitForRequest(
+    (request) =>
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname.endsWith('/inventory/projects/1/receptions'),
+  )
+  await page.getByRole('button', { name: 'Registrar recepcion' }).click()
+  const request = await requestPromise
+  const payload = request.postDataJSON()
+  expect(payload.items).toEqual([
+    expect.objectContaining({
+      received_quantity: 0,
+      accepted_quantity: 0,
+      rejected_quantity: 0,
+      condition_status: 'not_delivered',
+      notes: 'Material no entregado por el proveedor',
+    }),
+  ])
+  await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
+})
+
 test('inventario exige crear y seleccionar una bodega antes de recibir material', async ({ page }) => {
   await mockApi(page, user, { withoutWarehouses: true })
   await authenticate(page)

@@ -9,7 +9,14 @@ from app.schemas.business import SupplySource
 
 
 InventoryItemStatus = Literal["pending", "partial", "complete", "over_received", "with_issue"]
-ReceptionConditionStatus = Literal["ok", "damaged", "incomplete", "extra", "other"]
+ReceptionConditionStatus = Literal[
+    "ok",
+    "not_delivered",
+    "damaged",
+    "incomplete",
+    "extra",
+    "other",
+]
 
 
 class ProjectWarehouseBase(BaseModel):
@@ -128,7 +135,7 @@ class ExpectedMaterialListRead(TimestampRead):
 
 class MaterialReceptionItemCreate(BaseModel):
     expected_item_id: int
-    received_quantity: PositiveDecimal
+    received_quantity: NonNegativeDecimal
     accepted_quantity: NonNegativeDecimal | None = None
     rejected_quantity: NonNegativeDecimal | None = None
     condition_status: ReceptionConditionStatus = "ok"
@@ -136,6 +143,18 @@ class MaterialReceptionItemCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_quantity_classification(self):
+        if self.condition_status == "not_delivered":
+            accepted = self.accepted_quantity or Decimal("0")
+            rejected = self.rejected_quantity or Decimal("0")
+            if self.received_quantity != 0 or accepted != 0 or rejected != 0:
+                raise ValueError(
+                    "Una partida no entregada debe registrar cantidades en cero"
+                )
+            return self
+        if self.received_quantity <= 0:
+            raise ValueError(
+                "La cantidad entregada debe ser mayor a cero salvo que el material no haya llegado"
+            )
         if self.accepted_quantity is None and self.rejected_quantity is None:
             return self
         accepted = self.accepted_quantity or Decimal("0")
@@ -235,6 +254,17 @@ class QuickInventoryLine(BaseModel):
     received_quantity: NonNegativeDecimal | None = None
     condition_status: ReceptionConditionStatus = "ok"
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def validate_not_delivered_quantity(self):
+        if (
+            self.condition_status == "not_delivered"
+            and self.received_quantity not in (None, Decimal("0"))
+        ):
+            raise ValueError(
+                "Una partida no entregada debe registrar la cantidad recibida en cero"
+            )
+        return self
 
 
 class QuickInventoryMetadata(BaseModel):

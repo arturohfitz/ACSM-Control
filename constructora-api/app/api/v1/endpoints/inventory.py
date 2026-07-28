@@ -632,6 +632,8 @@ def _status_for_item(item: ExpectedMaterialItem, has_issue: bool = False) -> str
 
 def _classified_reception_quantities(item_payload) -> tuple[Decimal, Decimal]:
     delivered = item_payload.received_quantity
+    if item_payload.condition_status == "not_delivered":
+        return Decimal("0"), Decimal("0")
     accepted = item_payload.accepted_quantity
     rejected = item_payload.rejected_quantity
     if accepted is None and rejected is None:
@@ -1876,7 +1878,11 @@ def create_quick_inventory_document(
     received_lines = [
         (expected_item, line)
         for expected_item, line in expected_items
-        if line.received_quantity is not None and line.received_quantity > 0
+        if (
+            line.received_quantity is not None
+            and line.received_quantity > 0
+        )
+        or line.condition_status == "not_delivered"
     ]
     if received_lines:
         reception = MaterialReception(
@@ -1909,7 +1915,14 @@ def create_quick_inventory_document(
                 accepted_quantity=accepted_quantity,
                 rejected_quantity=rejected_quantity,
                 condition_status=line.condition_status,
-                notes=line.notes,
+                notes=(
+                    line.notes
+                    or (
+                        "Material no entregado por el proveedor"
+                        if line.condition_status == "not_delivered"
+                        else None
+                    )
+                ),
             )
             db.add(reception_item)
             db.flush()
@@ -2117,7 +2130,14 @@ def create_reception(
             accepted_quantity=accepted_quantity,
             rejected_quantity=rejected_quantity,
             condition_status=item_payload.condition_status,
-            notes=item_payload.notes,
+            notes=(
+                item_payload.notes
+                or (
+                    "Material no entregado por el proveedor"
+                    if item_payload.condition_status == "not_delivered"
+                    else None
+                )
+            ),
         )
         db.add(reception_item)
         db.flush()

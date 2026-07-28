@@ -615,6 +615,74 @@ class PurchasingFlowDBTest(unittest.TestCase):
         )
         self.assertEqual(row["received_quantity"], Decimal("0"))
 
+    def test_not_delivered_material_records_issue_and_remains_pending(self) -> None:
+        expected_list = ExpectedMaterialList(
+            company_id=self.company.id,
+            project_id=self.project.id,
+            warehouse_id=self.warehouse.id,
+            name=f"Entrega omitida {self.suffix}",
+            status="open",
+        )
+        self.db.add(expected_list)
+        self.db.flush()
+        expected_item = ExpectedMaterialItem(
+            company_id=self.company.id,
+            expected_list_id=expected_list.id,
+            source_code="MAT-NO-ENTREGADO",
+            description="Material no entregado",
+            unit="PZA",
+            expected_quantity=Decimal("10"),
+            received_quantity=Decimal("0"),
+            status="pending",
+        )
+        self.db.add(expected_item)
+        self.db.commit()
+
+        reception = create_reception(
+            self.project.id,
+            MaterialReceptionCreate(
+                warehouse_id=self.warehouse.id,
+                expected_list_id=expected_list.id,
+                delivery_reference=f"NO-ENTREGADO-{self.suffix}",
+                items=[
+                    MaterialReceptionItemCreate(
+                        expected_item_id=expected_item.id,
+                        received_quantity=Decimal("0"),
+                        accepted_quantity=Decimal("0"),
+                        rejected_quantity=Decimal("0"),
+                        condition_status="not_delivered",
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+
+        self.db.refresh(expected_item)
+        self.db.refresh(expected_list)
+        reception_item = reception.items[0]
+        self.assertEqual(reception.status, "with_issue")
+        self.assertEqual(reception_item.condition_status, "not_delivered")
+        self.assertEqual(reception_item.received_quantity, Decimal("0"))
+        self.assertEqual(reception_item.accepted_quantity, Decimal("0"))
+        self.assertEqual(reception_item.rejected_quantity, Decimal("0"))
+        self.assertEqual(reception_item.notes, "Material no entregado por el proveedor")
+        self.assertEqual(expected_item.received_quantity, Decimal("0"))
+        self.assertEqual(expected_item.status, "with_issue")
+        self.assertEqual(expected_list.status, "with_issue")
+        self.assertIsNone(
+            self.db.scalar(
+                select(WarehouseStock).where(WarehouseStock.expected_item_id == expected_item.id)
+            )
+        )
+        self.assertIsNone(
+            self.db.scalar(
+                select(InventoryMovement).where(
+                    InventoryMovement.reception_item_id == reception_item.id
+                )
+            )
+        )
+
     def test_rfq_quote_comparison_and_approval_request(self) -> None:
         rfq_payload = SupplierRFQCreate(
             project_id=self.project.id,
