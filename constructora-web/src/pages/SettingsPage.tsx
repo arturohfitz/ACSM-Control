@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthContext'
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
 import { NOTIFICATION_SETTINGS_UPDATED_EVENT } from '../components/AppLayout'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type EmailSettings = {
   id: number
@@ -356,8 +357,7 @@ export default function SettingsPage() {
                 </label>
                 <label className="text-sm font-semibold text-acsm-ink">
                   Puerto SMTP
-                  <input
-                    type="number"
+                  <MexicanNumberInput
                     value={form.smtp_port}
                     disabled={!canEditSettings}
                     onChange={(event) => patchForm({ smtp_port: event.target.value })}
@@ -429,8 +429,7 @@ export default function SettingsPage() {
                 </label>
                 <label className="text-sm font-semibold text-acsm-ink">
                   Puerto IMAP
-                  <input
-                    type="number"
+                  <MexicanNumberInput
                     value={form.imap_port}
                     disabled={!canEditSettings}
                     onChange={(event) => patchForm({ imap_port: event.target.value })}
@@ -541,8 +540,7 @@ export default function SettingsPage() {
               <label className="text-sm font-semibold text-acsm-ink">
                 Repetir alerta cada
                 <div className="mt-2 flex items-center gap-2">
-                  <input
-                    type="number"
+                  <MexicanNumberInput
                     min="1"
                     max="60"
                     value={notificationForm.repeat_alert_minutes}

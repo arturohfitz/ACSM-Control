@@ -108,6 +108,7 @@ type PurchaseOrder = {
   warehouse_id: number
   po_number: string
   status: string
+  billing_mode: 'single' | 'partial'
   issued_at: string
   payment_terms_days: number
   subtotal: string
@@ -500,6 +501,22 @@ async function mockApi(
     if (pathname === '/purchasing/supplier-rfqs' && method === 'GET') return json(rfqState)
     if (path.startsWith('/purchasing/supplier-rfq-exceptions')) return json([])
     if (pathname === '/purchasing/purchase-orders' && method === 'GET') return json(purchaseOrders)
+    const billingModeMatch = pathname.match(
+      /^\/purchasing\/purchase-orders\/(\d+)\/billing-mode$/,
+    )
+    if (billingModeMatch && method === 'PATCH') {
+      const orderId = Number(billingModeMatch[1])
+      const payload = await request.postDataJSON()
+      purchaseOrders = purchaseOrders.map((order) =>
+        order.id === orderId
+          ? { ...order, billing_mode: payload.billing_mode as 'single' | 'partial' }
+          : order,
+      )
+      const updatedOrder = purchaseOrders.find((order) => order.id === orderId)
+      return updatedOrder
+        ? json(updatedOrder)
+        : json({ detail: 'Orden de compra no encontrada' }, 404)
+    }
     if (pathname === '/purchasing/supplier-quote-approvals') return json(approvals)
     if (pathname === '/purchasing/supplier-invoices' && method === 'GET') return json(supplierInvoices)
     if (pathname === '/purchasing/supplier-payments' && method === 'GET') return json(supplierPayments)
@@ -720,6 +737,7 @@ async function mockApi(
         warehouse_id: 1,
         po_number: 'OC-202606-0001',
         status: 'issued',
+        billing_mode: 'single',
         issued_at: '2026-06-04T12:00:00-06:00',
         payment_terms_days: quote.payment_terms_days,
         subtotal: quote.subtotal,
@@ -1273,4 +1291,48 @@ test('pagos bloquea factura con faltantes y permite pagar al completar recepcion
   await paymentSection.locator('tr', { hasText: 'FAC-001' }).getByRole('button', { name: 'Pagado' }).click()
   await expect(page.getByText('Pago marcado como realizado.')).toBeVisible()
   await expect(paymentSection.locator('tr', { hasText: 'FAC-001' }).getByText('Pagada')).toBeVisible()
+})
+
+test('pagos captura precios e importes con formato mexicano sin alterar la cantidad', async ({
+  page,
+}) => {
+  await mockApi(page)
+  await authenticate(page)
+  await page.goto('/purchasing/operations')
+  await approveAndPrepareOrder(page, true)
+
+  await page.goto('/inventory/material-receiving')
+  await page.getByLabel('Orden de compra').selectOption('800')
+  await page.getByPlaceholder('Recibe').fill('Encargado de bodega')
+  await page.getByLabel('Entregado Cemento gris 50kg').fill('40')
+  await page.getByRole('button', { name: 'Registrar recepcion' }).click()
+
+  await page.goto('/supplier-payments')
+  await page.getByRole('tab', { name: /Facturas/ }).click()
+  const invoiceSection = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Facturas de proveedores' }),
+  })
+  await invoiceSection.locator('select').first().selectOption('800')
+  await invoiceSection.getByRole('button', { name: 'Parcial por entregas' }).click()
+  await expect(
+    page.getByText('Orden OC-202606-0001 configurada para facturacion parcial.'),
+  ).toBeVisible()
+
+  const quantityInput = invoiceSection.getByLabel(
+    'Cantidad a facturar de Cemento gris 50kg',
+  )
+  const unitPriceInput = invoiceSection.getByLabel(
+    'Precio unitario de Cemento gris 50kg',
+  )
+
+  await quantityInput.fill('1')
+  await quantityInput.blur()
+  await unitPriceInput.fill('21,064.50')
+  await unitPriceInput.blur()
+
+  await expect(quantityInput).toHaveValue('1')
+  await expect(unitPriceInput).toHaveValue('21,064.50')
+  await expect(
+    invoiceSection.getByText('$21,064.50', { exact: true }).first(),
+  ).toBeVisible()
 })

@@ -23,8 +23,10 @@ import {
 
 import { API_BASE_URL, apiRequest, getStoredToken } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
+import { formatMexicanMoney, formatMexicanNumber } from '../lib/numberFormat'
 import { useAuth } from '../auth/AuthContext'
 import FinancialReconciliationPanel from '../components/FinancialReconciliationPanel'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type Supplier = {
   id: number
@@ -168,13 +170,8 @@ const workspaceTabs = new Set<PaymentWorkspaceTab>([
   'payments',
 ])
 
-const money = new Intl.NumberFormat('es-MX', {
-  style: 'currency',
-  currency: 'MXN',
-})
-
 function formatMoney(value: string | number) {
-  return money.format(Number(value || 0))
+  return formatMexicanMoney(value)
 }
 
 function statusLabel(status: string) {
@@ -211,7 +208,7 @@ function percent(value: number, total: number) {
 }
 
 function formatQuantity(value: number) {
-  return value.toLocaleString('es-MX', { maximumFractionDigits: 4 })
+  return formatMexicanNumber(value, { maximumFractionDigits: 4 })
 }
 
 function statusPillClass(status: string) {
@@ -1467,7 +1464,7 @@ export default function SupplierPaymentsPage() {
         </div>
 
         <div className={canUploadInvoices ? 'grid gap-4 p-4 lg:grid-cols-[420px_minmax(0,1fr)]' : 'p-4'}>
-          <div className={canUploadInvoices ? 'rounded-md border border-acsm-line bg-acsm-paper p-3' : 'hidden'}>
+          <div className={canUploadInvoices ? 'min-w-0 rounded-md border border-acsm-line bg-acsm-paper p-3' : 'hidden'}>
             <h3 className="mb-3 text-sm font-semibold text-acsm-ink">Registrar factura</h3>
             <div className="space-y-3">
               <select
@@ -1585,61 +1582,92 @@ export default function SupplierPaymentsPage() {
               </div>
               {selectedOrderIsPartial ? (
                 <div className="overflow-hidden rounded-md border border-acsm-line bg-white">
-                  <div className="border-b border-acsm-line px-3 py-2 text-xs font-semibold uppercase text-acsm-muted">
-                    Partidas recibidas disponibles para facturar
+                  <div className="border-b border-acsm-line px-3 py-2">
+                    <div className="text-xs font-semibold uppercase text-acsm-muted">
+                      Partidas recibidas disponibles para facturar
+                    </div>
+                    <p className="mt-0.5 text-xs text-acsm-muted">
+                      Captura la cantidad y el precio unitario; el importe se calcula automaticamente.
+                    </p>
                   </div>
-                  <div className="max-h-[260px] overflow-auto">
-                    <table className="min-w-[680px] w-full text-xs">
-                      <thead className="bg-acsm-paper text-acsm-muted">
-                        <tr>
-                          <th className="px-2 py-2 text-left">Material</th>
-                          <th className="px-2 py-2 text-right">Recibido</th>
-                          <th className="px-2 py-2 text-right">Facturado</th>
-                          <th className="px-2 py-2 text-right">Disponible</th>
-                          <th className="px-2 py-2 text-right">Facturar</th>
-                          <th className="px-2 py-2 text-right">PU</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {partialInvoiceRows.map((row) => (
-                          <tr key={row.id} className="border-t border-acsm-line">
-                            <td className="px-2 py-2 font-semibold text-acsm-ink">{row.description}</td>
-                            <td className="px-2 py-2 text-right">{row.received.toLocaleString('es-MX')} {row.unit}</td>
-                            <td className="px-2 py-2 text-right">{row.invoiced.toLocaleString('es-MX')}</td>
-                            <td className="px-2 py-2 text-right">{row.available.toLocaleString('es-MX')}</td>
-                            <td className="px-2 py-2">
-                              <input
-                                type="number"
-                                min="0"
-                                max={row.available}
-                                step="0.0001"
-                                value={row.draft.quantity}
-                                onChange={(event) => {
-                                  const rawValue = Number(event.target.value || 0)
-                                  const nextValue = Math.max(0, Math.min(rawValue, row.available))
-                                  patchInvoiceRow(row.id, {
-                                    quantity: event.target.value === '' ? '' : String(nextValue),
-                                  })
-                                }}
-                                disabled={row.available <= 0}
-                                className="h-8 w-full rounded-md border border-acsm-line px-2 text-right disabled:bg-slate-100"
-                              />
-                            </td>
-                            <td className="px-2 py-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.0001"
-                                value={row.draft.unit_price}
-                                onChange={(event) => patchInvoiceRow(row.id, { unit_price: event.target.value })}
-                                disabled={row.available <= 0}
-                                className="h-8 w-full rounded-md border border-acsm-line px-2 text-right disabled:bg-slate-100"
-                              />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="max-h-[360px] divide-y divide-acsm-line overflow-y-auto">
+                    {partialInvoiceRows.map((row) => (
+                      <div key={row.id} className="space-y-2.5 px-3 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold leading-4 text-acsm-ink">
+                              {row.description}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-acsm-muted">
+                              Recibido {formatQuantity(row.received)} {row.unit}
+                              {' · '}
+                              Facturado {formatQuantity(row.invoiced)} {row.unit}
+                            </div>
+                          </div>
+                          <div className="shrink-0 rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-right">
+                            <div className="text-[9px] font-bold uppercase tracking-wide text-blue-700">
+                              Disponible
+                            </div>
+                            <div className="text-xs font-bold text-blue-900">
+                              {formatQuantity(row.available)} {row.unit}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="min-w-0">
+                            <span className="mb-1 block text-[10px] font-bold uppercase text-acsm-muted">
+                              Cantidad
+                            </span>
+                            <MexicanNumberInput
+                              min="0"
+                              max={row.available}
+                              step="0.0001"
+                              value={row.draft.quantity}
+                              aria-label={`Cantidad a facturar de ${row.description}`}
+                              placeholder="0.0000"
+                              onChange={(event) => {
+                                const rawValue = Number(event.target.value || 0)
+                                const nextValue = Math.max(0, Math.min(rawValue, row.available))
+                                patchInvoiceRow(row.id, {
+                                  quantity: event.target.value === '' ? '' : String(nextValue),
+                                })
+                              }}
+                              disabled={row.available <= 0}
+                              className="h-9 w-full rounded-md border border-acsm-line px-2 text-right text-sm disabled:bg-slate-100"
+                            />
+                          </label>
+                          <label className="min-w-0">
+                            <span className="mb-1 block text-[10px] font-bold uppercase text-acsm-muted">
+                              Precio unitario
+                            </span>
+                            <MexicanNumberInput
+                              min="0"
+                              step="0.0001"
+                              minimumFractionDigits={2}
+                              value={row.draft.unit_price}
+                              aria-label={`Precio unitario de ${row.description}`}
+                              placeholder="0.00"
+                              onChange={(event) => patchInvoiceRow(row.id, { unit_price: event.target.value })}
+                              disabled={row.available <= 0}
+                              className="h-9 w-full rounded-md border border-acsm-line px-2 text-right text-sm disabled:bg-slate-100"
+                            />
+                          </label>
+                        </div>
+                        <div className="flex items-center justify-between rounded-md bg-acsm-paper px-2.5 py-2">
+                          <span className="text-[10px] font-bold uppercase text-acsm-muted">
+                            Importe de la partida
+                          </span>
+                          <span className="text-sm font-bold text-acsm-ink">
+                            {formatMoney(row.lineTotal)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {!partialInvoiceRows.length && (
+                      <div className="px-3 py-6 text-center text-xs text-acsm-muted">
+                        No hay partidas recibidas disponibles para facturar.
+                      </div>
+                    )}
                   </div>
                   <div className="border-t border-acsm-line px-3 py-2 text-right text-sm font-bold text-acsm-ink">
                     Total parcial: {formatMoney(partialTotal)}
@@ -1648,10 +1676,10 @@ export default function SupplierPaymentsPage() {
                     <label className="mb-1 block text-xs font-semibold uppercase text-acsm-muted">
                       Total fiscal de la factura
                     </label>
-                    <input
-                      type="number"
+                    <MexicanNumberInput
                       min="0"
                       step="0.01"
+                      minimumFractionDigits={2}
                       value={total}
                       onChange={(event) => setTotal(event.target.value)}
                       placeholder={`Base ${formatMoney(partialTotal)}; agrega impuestos si aplica`}
@@ -1665,10 +1693,10 @@ export default function SupplierPaymentsPage() {
                     <label className="mb-1 block text-xs font-semibold uppercase text-acsm-muted">
                       Subtotal materiales
                     </label>
-                    <input
-                      type="number"
+                    <MexicanNumberInput
                       min="0"
                       step="0.01"
+                      minimumFractionDigits={2}
                       value={subtotal}
                       onChange={(event) => setSubtotal(event.target.value)}
                       placeholder="Importe antes de impuestos"
@@ -1679,10 +1707,10 @@ export default function SupplierPaymentsPage() {
                     <label className="mb-1 block text-xs font-semibold uppercase text-acsm-muted">
                       Total fiscal
                     </label>
-                    <input
-                      type="number"
+                    <MexicanNumberInput
                       min="0"
                       step="0.01"
+                      minimumFractionDigits={2}
                       value={total}
                       onChange={(event) => setTotal(event.target.value)}
                       placeholder="Total con impuestos"
@@ -1711,7 +1739,7 @@ export default function SupplierPaymentsPage() {
             </div>
           </div>
 
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             {selectedOrder && selectedOrderSummary && (
               <div className="overflow-hidden rounded-md border border-acsm-line bg-white">
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-acsm-paper px-4 py-3">
@@ -2038,10 +2066,10 @@ export default function SupplierPaymentsPage() {
                 </option>
               ))}
             </select>
-            <input
-              type="number"
+            <MexicanNumberInput
               min="0.01"
               step="0.01"
+              minimumFractionDigits={2}
               value={paymentAmount}
               onChange={(event) => setPaymentAmount(event.target.value)}
               placeholder="Monto a programar"

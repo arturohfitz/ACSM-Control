@@ -19,6 +19,7 @@ import { useSearchParams } from 'react-router-dom'
 
 import { API_BASE_URL, apiRequest, getStoredToken } from '../lib/api'
 import { showActionNotice, type ActionNoticeKind } from '../lib/actionNotice'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type Project = {
   id: number
@@ -2250,8 +2251,7 @@ export default function PurchasingPage() {
                           />
                         </td>
                         <td className="px-2 py-2">
-                          <input
-                            type="number"
+                          <MexicanNumberInput
                             step="0.0001"
                             value={item.quantity}
                             onChange={(event) => updateItem(index, { quantity: event.target.value })}
@@ -2787,8 +2787,7 @@ export default function PurchasingPage() {
                 </label>
                 <label className="text-xs font-bold uppercase text-acsm-muted">
                   Dias de entrega general
-                  <input
-                    type="number"
+                  <MexicanNumberInput
                     value={deliveryDays}
                     onChange={(event) => setDeliveryDays(event.target.value)}
                     placeholder="Ej. 5 dias"
@@ -2797,8 +2796,7 @@ export default function PurchasingPage() {
                 </label>
                 <label className="text-xs font-bold uppercase text-acsm-muted">
                   Dias de credito / pago
-                  <input
-                    type="number"
+                  <MexicanNumberInput
                     value={paymentTermsDays}
                     onChange={(event) => setPaymentTermsDays(event.target.value)}
                     placeholder="Ej. 30 dias"
@@ -2825,8 +2823,7 @@ export default function PurchasingPage() {
                           {Number(item.quantity).toLocaleString('es-MX')} {item.unit}
                         </td>
                         <td className="px-3 py-2">
-                          <input
-                            type="number"
+                          <MexicanNumberInput
                             step="0.0001"
                             value={quoteRows[index]?.unit_price ?? ''}
                             onChange={(event) =>
@@ -2840,8 +2837,7 @@ export default function PurchasingPage() {
                           />
                         </td>
                         <td className="px-3 py-2">
-                          <input
-                            type="number"
+                          <MexicanNumberInput
                             value={quoteRows[index]?.delivery_days ?? ''}
                             onChange={(event) =>
                               setQuoteRows((current) =>
@@ -3164,8 +3160,7 @@ export default function PurchasingPage() {
                     </label>
                     <label className="text-xs font-bold uppercase text-acsm-muted">
                       Credito
-                      <input
-                        type="number"
+                      <MexicanNumberInput
                         min="0"
                         value={quoteDraftForm.payment_terms_days}
                         onChange={(event) =>
@@ -3209,8 +3204,7 @@ export default function PurchasingPage() {
                                 {Number(item.quantity).toLocaleString('es-MX')} {item.unit}
                               </td>
                               <td className="px-3 py-2">
-                                <input
-                                  type="number"
+                                <MexicanNumberInput
                                   min="0"
                                   step="0.0001"
                                   value={formItem?.unit_price ?? ''}
@@ -3247,8 +3241,7 @@ export default function PurchasingPage() {
                                 </span>
                               </td>
                               <td className="px-3 py-2">
-                                <input
-                                  type="number"
+                                <MexicanNumberInput
                                   min="0"
                                   value={formItem?.delivery_days ?? ''}
                                   onChange={(event) =>
@@ -3301,8 +3294,7 @@ export default function PurchasingPage() {
                     ].map(([label, field]) => (
                       <label key={field} className="text-xs font-bold uppercase text-acsm-muted">
                         {label}
-                        <input
-                          type="number"
+                        <MexicanNumberInput
                           min="0"
                           step="0.01"
                           value={quoteDraftForm[field as 'discount' | 'shipping_cost' | 'tax_amount']}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CheckCircle2, History, RotateCcw, XCircle } from 'lucide-react'
 
 import { apiRequest } from '../lib/api'
+import MexicanNumberInput from './MexicanNumberInput'
 import { showActionNotice } from '../lib/actionNotice'
 
 type Invoice = {
@@ -260,7 +261,7 @@ export default function FinancialReconciliationPanel({
               ].map(([label, value, setter]) => (
                 <label key={label as string} className="text-xs font-semibold uppercase text-acsm-muted">
                   {label as string}
-                  <input type="number" min="0" step="0.01" value={value as string} onChange={(event) => (setter as (value: string) => void)(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm normal-case text-acsm-ink" />
+                  <MexicanNumberInput min="0" step="0.01" minimumFractionDigits={2} value={value as string} onChange={(event) => (setter as (value: string) => void)(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm normal-case text-acsm-ink" />
                 </label>
               ))}
             </div>
@@ -268,7 +269,7 @@ export default function FinancialReconciliationPanel({
           {resolution === 'amend_purchase_order' && (
             <label className="text-xs font-semibold uppercase text-acsm-muted lg:col-span-2">
               Nuevo subtotal autorizado de la OC
-              <input type="number" min="0" step="0.01" value={amendedSubtotal} onChange={(event) => setAmendedSubtotal(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm normal-case text-acsm-ink" />
+              <MexicanNumberInput min="0" step="0.01" minimumFractionDigits={2} value={amendedSubtotal} onChange={(event) => setAmendedSubtotal(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-acsm-line px-3 text-sm normal-case text-acsm-ink" />
             </label>
           )}
           {resolution === 'reverse_payment' && (

@@ -4,6 +4,7 @@ import { Check, Handshake, Plus, RefreshCw } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
 import FormDrawer from '../components/FormDrawer'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type Supplier = {
   id: number
@@ -492,15 +493,13 @@ export default function SupplierAgreementsPage() {
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <input
-              type="number"
+            <MexicanNumberInput
               value={agreementForm.payment_terms_days}
               onChange={(event) => updateAgreementField('payment_terms_days', event.target.value)}
               placeholder="Credito dias"
               className="h-10 w-full rounded-xl border border-acsm-line bg-white px-3"
             />
-            <input
-              type="number"
+            <MexicanNumberInput
               value={agreementForm.average_delivery_days}
               onChange={(event) => updateAgreementField('average_delivery_days', event.target.value)}
               placeholder="Entrega dias"

@@ -12,6 +12,7 @@ import { useParams } from 'react-router-dom'
 
 import { API_BASE_URL, apiRequest } from '../lib/api'
 import { brand } from '../config/brand'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type PortalItem = {
   id: number
@@ -321,8 +322,7 @@ export default function SupplierQuotePortalPage() {
                           <td className="px-4 py-3">{Number(item.quantity).toLocaleString('es-MX')}</td>
                           <td className="px-4 py-3">{item.unit}</td>
                           <td className="px-4 py-3">
-                            <input
-                              type="number"
+                            <MexicanNumberInput
                               min="0"
                               step="0.0001"
                               disabled={hasExistingUpload || captureMode === 'template'}
@@ -341,8 +341,7 @@ export default function SupplierQuotePortalPage() {
                             />
                           </td>
                           <td className="px-4 py-3">
-                            <input
-                              type="number"
+                            <MexicanNumberInput
                               min="0"
                               disabled={hasExistingUpload || captureMode === 'template'}
                               value={quoteRow?.delivery_days ?? ''}
@@ -481,8 +480,7 @@ export default function SupplierQuotePortalPage() {
                       </label>
                       <label className="block text-sm font-semibold">
                         Dias de credito
-                        <input
-                          type="number"
+                        <MexicanNumberInput
                           min="0"
                           value={paymentTermsDays}
                           onChange={(event) => setPaymentTermsDays(event.target.value)}
@@ -491,8 +489,7 @@ export default function SupplierQuotePortalPage() {
                       </label>
                       <label className="block text-sm font-semibold">
                         Entrega general
-                        <input
-                          type="number"
+                        <MexicanNumberInput
                           min="0"
                           value={deliveryDays}
                           onChange={(event) => setDeliveryDays(event.target.value)}
@@ -502,8 +499,7 @@ export default function SupplierQuotePortalPage() {
                       </label>
                       <label className="block text-sm font-semibold">
                         Descuento
-                        <input
-                          type="number"
+                        <MexicanNumberInput
                           min="0"
                           step="0.01"
                           value={discount}
@@ -513,8 +509,7 @@ export default function SupplierQuotePortalPage() {
                       </label>
                       <label className="block text-sm font-semibold">
                         Flete
-                        <input
-                          type="number"
+                        <MexicanNumberInput
                           min="0"
                           step="0.01"
                           value={shippingCost}
@@ -524,8 +519,7 @@ export default function SupplierQuotePortalPage() {
                       </label>
                       <label className="block text-sm font-semibold">
                         Impuestos
-                        <input
-                          type="number"
+                        <MexicanNumberInput
                           min="0"
                           step="0.01"
                           value={taxAmount}

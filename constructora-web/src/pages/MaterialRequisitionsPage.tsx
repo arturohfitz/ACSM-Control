@@ -20,6 +20,7 @@ import {
 
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type PageMode = 'field' | 'purchasing'
 
@@ -1196,8 +1197,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                             {formatNumber(item.requirement.quantity_per_house)} {item.requirement.unit}
                           </td>
                           <td className="px-4 py-4">
-                            <input
-                              type="number"
+                            <MexicanNumberInput
                               min="1"
                               max={item.requirement.assigned_houses}
                               step="1"
@@ -1253,8 +1253,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                             </div>
                           </td>
                           <td className="px-4 py-4">
-                            <input
-                              type="number"
+                            <MexicanNumberInput
                               min="0"
                               step="0.0001"
                               value={item.quantity}
@@ -1739,8 +1738,7 @@ export default function MaterialRequisitionsPage({ mode }: { mode: PageMode }) {
                                 </div>
                               </td>
                               <td className="px-4 py-3">
-                                <input
-                                  type="number"
+                                <MexicanNumberInput
                                   min="0"
                                   step="0.0001"
                                   value={item.quantity}

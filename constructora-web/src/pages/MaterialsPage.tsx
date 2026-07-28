@@ -11,6 +11,7 @@ import {
 import FormDrawer from '../components/FormDrawer'
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type Client = {
   id: number
@@ -667,8 +668,7 @@ export default function MaterialsPage() {
             </label>
             <label className="block">
               <span className="mb-2 block text-sm font-bold text-acsm-ink">Cantidad por vivienda</span>
-              <input
-                type="number"
+              <MexicanNumberInput
                 step="0.0001"
                 min="0.0001"
                 value={form.quantity_per_house}
@@ -703,8 +703,7 @@ export default function MaterialsPage() {
                 <span className="mb-2 block text-sm font-bold text-acsm-ink">
                   Factor a unidad base
                 </span>
-                <input
-                  type="number"
+                <MexicanNumberInput
                   step="0.00000001"
                   min="0.00000001"
                   value={form.conversion_factor}
@@ -731,9 +730,9 @@ export default function MaterialsPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-2 block text-sm font-bold text-acsm-ink">Precio unitario</span>
-              <input
-                type="number"
+              <MexicanNumberInput
                 step="0.0001"
+                minimumFractionDigits={2}
                 value={form.current_unit_price}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, current_unit_price: event.target.value }))

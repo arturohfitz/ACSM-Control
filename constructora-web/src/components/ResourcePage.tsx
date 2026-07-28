@@ -5,6 +5,7 @@ import { useAuth } from '../auth/AuthContext'
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
 import FormDrawer from './FormDrawer'
+import MexicanNumberInput from './MexicanNumberInput'
 
 export type FieldType =
   | 'text'
@@ -671,6 +672,19 @@ export default function ResourcePage({ config }: { config: ResourceConfig }) {
                     setValues((current) => ({ ...current, [field.name]: event.target.checked }))
                   }
                   className="h-4 w-4 rounded border-acsm-line text-acsm-green"
+                />
+              ) : field.type === 'number' ? (
+                <MexicanNumberInput
+                  value={String(values[field.name] ?? '')}
+                  onChange={(event) =>
+                    setValues((current) => ({ ...current, [field.name]: event.target.value }))
+                  }
+                  required={field.required}
+                  step={field.step}
+                  minimumFractionDigits={
+                    /(price|precio|cost|costo|amount|monto|total)/i.test(field.name) ? 2 : 0
+                  }
+                  className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
                 />
               ) : (
                 <input

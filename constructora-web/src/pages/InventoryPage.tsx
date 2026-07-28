@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 
 import FormDrawer from '../components/FormDrawer'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 import { apiRequest } from '../lib/api'
 
 type Project = {
@@ -1514,8 +1515,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                         {formatQuantity(row.pending_quantity)} {row.unit}
                       </td>
                       <td className="px-3 py-2">
-                        <input
-                          type="number"
+                        <MexicanNumberInput
                           min="0"
                           max={row.pending_quantity}
                           step="0.0001"
@@ -1531,8 +1531,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <input
-                          type="number"
+                        <MexicanNumberInput
                           min="0"
                           max={row.pending_quantity}
                           step="0.0001"
@@ -1548,8 +1547,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <input
-                          type="number"
+                        <MexicanNumberInput
                           min="0"
                           max={row.pending_quantity}
                           step="0.0001"
@@ -2081,11 +2079,11 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                   <td className="p-1"><input value={row.source_code} onChange={(event) => updateRow(index, 'source_code', event.target.value)} className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
                   <td className="p-1"><input value={row.description} onChange={(event) => updateRow(index, 'description', event.target.value)} title={row.description} className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
                   <td className="p-1"><input value={row.unit} onChange={(event) => updateRow(index, 'unit', event.target.value)} className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
-                  <td className="p-1"><input value={row.expected_quantity} onChange={(event) => updateRow(index, 'expected_quantity', event.target.value)} type="number" min="0" step="0.0001" className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
-                  <td className="p-1"><input value={row.unit_price} onChange={(event) => updateRow(index, 'unit_price', event.target.value)} type="number" min="0" step="0.0001" className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
-                  <td className="p-1"><input value={row.line_total} onChange={(event) => updateRow(index, 'line_total', event.target.value)} type="number" min="0" step="0.01" className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
+                  <td className="p-1"><MexicanNumberInput value={row.expected_quantity} onChange={(event) => updateRow(index, 'expected_quantity', event.target.value)} min="0" step="0.0001" className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
+                  <td className="p-1"><MexicanNumberInput value={row.unit_price} onChange={(event) => updateRow(index, 'unit_price', event.target.value)} min="0" step="0.0001" minimumFractionDigits={2} className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
+                  <td className="p-1"><MexicanNumberInput value={row.line_total} onChange={(event) => updateRow(index, 'line_total', event.target.value)} min="0" step="0.01" minimumFractionDigits={2} className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
                   <td className="p-1"><input value={row.delivery_date} onChange={(event) => updateRow(index, 'delivery_date', event.target.value)} type="date" className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
-                  <td className="p-1"><input value={row.received_quantity} onChange={(event) => updateRow(index, 'received_quantity', event.target.value)} type="number" min="0" step="0.0001" className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
+                  <td className="p-1"><MexicanNumberInput value={row.received_quantity} onChange={(event) => updateRow(index, 'received_quantity', event.target.value)} min="0" step="0.0001" className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
                   <td className="p-1"><input value={row.notes} onChange={(event) => updateRow(index, 'notes', event.target.value)} title={row.notes} className="h-9 w-full min-w-0 rounded-md border border-acsm-line px-2" /></td>
                   <td className="sticky right-0 z-10 border-l border-acsm-line bg-white p-1">
                     <button

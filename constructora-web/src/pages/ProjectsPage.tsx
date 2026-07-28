@@ -4,6 +4,7 @@ import { Check, Link2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
 import FormDrawer from '../components/FormDrawer'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type Client = {
   id: number
@@ -575,8 +576,7 @@ export default function ProjectsPage() {
               </label>
               <label className="mt-3 block text-sm">
                 <span className="mb-1.5 block font-medium text-acsm-ink">Cantidad de viviendas</span>
-                <input
-                  type="number"
+                <MexicanNumberInput
                   min="0.01"
                   step="0.01"
                   value={assignmentQuantity}

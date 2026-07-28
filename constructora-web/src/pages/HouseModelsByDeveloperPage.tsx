@@ -15,6 +15,7 @@ import { useAuth } from '../auth/AuthContext'
 import { apiRequest } from '../lib/api'
 import { showActionNotice } from '../lib/actionNotice'
 import FormDrawer from '../components/FormDrawer'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type Client = {
   id: number
@@ -1661,12 +1662,11 @@ export default function HouseModelsByDeveloperPage() {
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-sm">
               <span className="mb-1.5 block font-medium text-acsm-ink">m2</span>
-              <input
+              <MexicanNumberInput
                 value={form.construction_m2}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, construction_m2: event.target.value }))
                 }
-                type="number"
                 min="0"
                 step="0.01"
                 required
@@ -1675,36 +1675,33 @@ export default function HouseModelsByDeveloperPage() {
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block font-medium text-acsm-ink">Niveles</span>
-              <input
+              <MexicanNumberInput
                 value={form.levels}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, levels: event.target.value }))
                 }
-                type="number"
                 min="0"
                 className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
               />
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block font-medium text-acsm-ink">Recamaras</span>
-              <input
+              <MexicanNumberInput
                 value={form.bedrooms}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, bedrooms: event.target.value }))
                 }
-                type="number"
                 min="0"
                 className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
               />
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block font-medium text-acsm-ink">Banos</span>
-              <input
+              <MexicanNumberInput
                 value={form.bathrooms}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, bathrooms: event.target.value }))
                 }
-                type="number"
                 min="0"
                 step="0.5"
                 className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"

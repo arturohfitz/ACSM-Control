@@ -6,6 +6,7 @@ import FormDrawer from '../components/FormDrawer'
 import { useAuth } from '../auth/AuthContext'
 import { showActionNotice } from '../lib/actionNotice'
 import { apiRequest } from '../lib/api'
+import MexicanNumberInput from '../components/MexicanNumberInput'
 
 type Client = {
   id: number
@@ -579,8 +580,7 @@ export default function ConstructionConceptsPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-2 block text-sm font-bold text-acsm-ink">Cantidad por vivienda</span>
-              <input
-                type="number"
+              <MexicanNumberInput
                 min="0.000001"
                 step="0.000001"
                 value={form.quantity_per_house}
@@ -591,10 +591,10 @@ export default function ConstructionConceptsPage() {
             </label>
             <label className="block">
               <span className="mb-2 block text-sm font-bold text-acsm-ink">Precio unitario de referencia</span>
-              <input
-                type="number"
+              <MexicanNumberInput
                 min="0"
                 step="0.0001"
+                minimumFractionDigits={2}
                 value={form.unit_price_reference}
                 onChange={(event) => setForm((current) => ({ ...current, unit_price_reference: event.target.value }))}
                 className="h-11 w-full rounded-xl border border-sky-200 bg-white px-3 text-sm font-semibold outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
@@ -650,8 +650,7 @@ export default function ConstructionConceptsPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-2 block text-sm font-bold text-acsm-ink">Desperdicio</span>
-              <input
-                type="number"
+              <MexicanNumberInput
                 step="0.0001"
                 value={form.default_waste_percent}
                 onChange={(event) =>
@@ -662,8 +661,7 @@ export default function ConstructionConceptsPage() {
             </label>
             <label className="block">
               <span className="mb-2 block text-sm font-bold text-acsm-ink">Indirecto</span>
-              <input
-                type="number"
+              <MexicanNumberInput
                 step="0.0001"
                 value={form.default_indirect_percent}
                 onChange={(event) =>
