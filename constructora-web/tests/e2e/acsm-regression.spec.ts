@@ -996,7 +996,9 @@ test('login muestra el dashboard con sesion activa', async ({ page }) => {
   await page.getByLabel('Contrasena').fill('Admin12345!')
   await page.getByRole('button', { name: 'Entrar' }).click()
 
-  await expect(page.getByRole('heading', { name: 'Control Ejecutivo' })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Control Ejecutivo', level: 1 }),
+  ).toBeVisible()
   await expect(page.getByText('admin@acsm-control.local').first()).toBeVisible()
 })
 
