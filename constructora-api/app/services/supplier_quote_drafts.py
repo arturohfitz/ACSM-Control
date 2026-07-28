@@ -58,6 +58,17 @@ def create_quote_draft(
     confidence: Decimal,
     parser_version: str | None = None,
     initial_errors: list[str] | None = None,
+    item_metadata: dict[int, tuple[Decimal, str]] | None = None,
+    detected_supplier_name: str | None = None,
+    detected_supplier_tax_id: str | None = None,
+    detected_supplier_email: str | None = None,
+    supplier_match_status: str = "not_detected",
+    supplier_match_confidence: Decimal = Decimal("0"),
+    detected_rfq_number: str | None = None,
+    document_subtotal: Decimal | None = None,
+    document_tax_amount: Decimal | None = None,
+    document_total: Decimal | None = None,
+    extraction_metadata: dict | None = None,
 ) -> SupplierQuoteDraft:
     rfq_items = {item.id: item for item in link.rfq.items}
     submitted_items = {item.rfq_item_id: item for item in payload.items}
@@ -100,6 +111,16 @@ def create_quote_draft(
         tax_amount=_money(payload.tax_amount),
         notes=payload.notes,
         validation_errors=errors,
+        detected_supplier_name=detected_supplier_name,
+        detected_supplier_tax_id=detected_supplier_tax_id,
+        detected_supplier_email=detected_supplier_email,
+        supplier_match_status=supplier_match_status,
+        supplier_match_confidence=supplier_match_confidence,
+        detected_rfq_number=detected_rfq_number,
+        document_subtotal=_money(document_subtotal) if document_subtotal is not None else None,
+        document_tax_amount=_money(document_tax_amount) if document_tax_amount is not None else None,
+        document_total=_money(document_total) if document_total is not None else None,
+        extraction_metadata=extraction_metadata or {},
     )
     db.add(draft)
     db.flush()
@@ -121,8 +142,16 @@ def create_quote_draft(
                 line_total=line_total,
                 delivery_days=submitted.delivery_days if submitted else None,
                 notes=submitted.notes if submitted else None,
-                confidence=confidence if submitted else Decimal("0"),
-                match_method="rfq_item_id" if submitted else "missing",
+                confidence=(
+                    item_metadata.get(rfq_item.id, (confidence, "rfq_item_id"))[0]
+                    if submitted and item_metadata
+                    else confidence if submitted else Decimal("0")
+                ),
+                match_method=(
+                    item_metadata.get(rfq_item.id, (confidence, "rfq_item_id"))[1]
+                    if submitted and item_metadata
+                    else "rfq_item_id" if submitted else "missing"
+                ),
             )
         )
 

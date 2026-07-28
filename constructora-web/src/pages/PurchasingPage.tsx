@@ -232,6 +232,16 @@ type SupplierQuoteDraft = {
   total: string
   notes?: string | null
   validation_errors: string[]
+  detected_supplier_name?: string | null
+  detected_supplier_tax_id?: string | null
+  detected_supplier_email?: string | null
+  supplier_match_status: string
+  supplier_match_confidence: string
+  detected_rfq_number?: string | null
+  document_subtotal?: string | null
+  document_tax_amount?: string | null
+  document_total?: string | null
+  extraction_metadata: Record<string, unknown>
   supplier?: Supplier | null
   upload?: SupplierQuoteUpload | null
   items: SupplierQuoteDraftItem[]
@@ -802,6 +812,7 @@ export default function PurchasingPage() {
   const [quoteDrafts, setQuoteDrafts] = useState<SupplierQuoteDraft[]>([])
   const [activeQuoteDraftId, setActiveQuoteDraftId] = useState<number | null>(null)
   const [quoteDraftForm, setQuoteDraftForm] = useState<SupplierQuoteDraftForm | null>(null)
+  const [supplierIdentityAcknowledged, setSupplierIdentityAcknowledged] = useState(false)
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [materialRequisitions, setMaterialRequisitions] = useState<MaterialRequisition[]>([])
@@ -1413,6 +1424,7 @@ export default function PurchasingPage() {
 
   function beginQuoteDraftReview(draft: SupplierQuoteDraft) {
     setActiveQuoteDraftId(draft.id)
+    setSupplierIdentityAcknowledged(false)
     setQuoteDraftForm({
       quote_number: draft.quote_number ?? '',
       valid_until: draft.valid_until?.slice(0, 10) ?? '',
@@ -1764,6 +1776,7 @@ export default function PurchasingPage() {
           shipping_cost: Number(quoteDraftForm.shipping_cost || 0),
           tax_amount: Number(quoteDraftForm.tax_amount || 0),
           notes: quoteDraftForm.notes.trim() || null,
+          supplier_identity_acknowledged: supplierIdentityAcknowledged,
           items: pricedItems.map((item) => ({
             rfq_item_id: item.rfq_item_id,
             unit_price: Number(item.unit_price),
@@ -1775,6 +1788,7 @@ export default function PurchasingPage() {
       notifySuccess('Cotizacion confirmada e incorporada al comparativo.')
       setActiveQuoteDraftId(null)
       setQuoteDraftForm(null)
+      setSupplierIdentityAcknowledged(false)
       await loadRfqDetails(selectedRfq.id)
       await loadData(selectedRfq.id)
     } catch (err) {
@@ -1933,6 +1947,29 @@ export default function PurchasingPage() {
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible abrir el archivo')
+    }
+  }
+
+  async function reprocessSupplierQuoteUpload(uploadId: number) {
+    if (!selectedRfq) return
+    setLoading(true)
+    setError('')
+    try {
+      const draft = await apiRequest<SupplierQuoteDraft>(
+        `/purchasing/supplier-quote-uploads/${uploadId}/reprocess`,
+        { method: 'POST' },
+      )
+      notifySuccess(
+        draft.supplier_match_status === 'mismatch'
+          ? 'PDF interpretado. Revisa la alerta de identidad antes de confirmar.'
+          : 'PDF interpretado y listo para revision.',
+        draft.supplier_match_status === 'mismatch' ? 'warning' : 'success',
+      )
+      await loadRfqDetails(selectedRfq.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible interpretar el PDF')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -2871,7 +2908,14 @@ export default function PurchasingPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {quoteUploads.map((upload) => (
+                  {quoteUploads.map((upload) => {
+                    const uploadDraft = quoteDrafts.find((draft) => draft.upload_id === upload.id)
+                    const canInterpret =
+                      upload.file_extension.toLowerCase() === '.pdf' &&
+                      (!uploadDraft ||
+                        (uploadDraft.status === 'review_required' &&
+                          uploadDraft.source_type !== 'pdf_text'))
+                    return (
                     <tr key={upload.id} className="border-t border-acsm-line">
                       <td className="px-4 py-3 font-semibold text-acsm-ink">
                         {upload.supplier?.name ?? `Proveedor ${upload.supplier_id}`}
@@ -2886,17 +2930,31 @@ export default function PurchasingPage() {
                       <td className="px-4 py-3 text-acsm-muted">{formatDateTime(upload.uploaded_at)}</td>
                       <td className="px-4 py-3 text-acsm-muted">{formatBytes(upload.file_size_bytes)}</td>
                       <td className="px-4 py-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          {canInterpret ? (
+                            <button
+                              type="button"
+                              onClick={() => void reprocessSupplierQuoteUpload(upload.id)}
+                              disabled={loading}
+                              className="inline-flex h-9 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                            >
+                              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                              {uploadDraft ? 'Reinterpretar PDF' : 'Interpretar PDF'}
+                            </button>
+                          ) : null}
                         <button
                           type="button"
                           onClick={() => void openSupplierQuoteUpload(upload.id)}
-                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-800 hover:bg-blue-100"
+                          className="inline-flex h-9 items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-800 hover:bg-blue-100"
                         >
                           <Eye className="h-4 w-4" aria-hidden="true" />
                           Abrir archivo
                         </button>
+                        </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                   {!quoteUploads.length && (
                     <tr>
                       <td colSpan={6} className="px-4 py-8 text-center text-sm text-acsm-muted">
@@ -2950,7 +3008,12 @@ export default function PurchasingPage() {
                             {draft.supplier?.name ?? `Proveedor ${draft.supplier_id}`}
                           </p>
                           <p className="mt-1 text-xs text-acsm-muted">
-                            {draft.quote_number || 'Sin folio'} · {draft.source_type === 'xlsx_template' ? 'Excel ACSM' : 'Portal'}
+                            {draft.quote_number || 'Sin folio'} ·{' '}
+                            {draft.source_type === 'xlsx_template'
+                              ? 'Excel ACSM'
+                              : draft.source_type === 'pdf_text'
+                                ? 'PDF interpretado'
+                                : 'Portal'}
                           </p>
                         </div>
                         <span
@@ -2971,6 +3034,92 @@ export default function PurchasingPage() {
 
               {activeQuoteDraft && quoteDraftForm ? (
                 <div className="min-w-0">
+                  {activeQuoteDraft.source_type === 'pdf_text' ? (
+                    <>
+                      <div
+                        className={[
+                          'border-b px-4 py-3',
+                          activeQuoteDraft.supplier_match_status === 'matched'
+                            ? 'border-emerald-200 bg-emerald-50'
+                            : activeQuoteDraft.supplier_match_status === 'mismatch'
+                              ? 'border-red-200 bg-red-50'
+                              : 'border-amber-200 bg-amber-50',
+                        ].join(' ')}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.16em] text-acsm-muted">
+                              Identidad del documento
+                            </p>
+                            <p className="mt-1 text-sm font-bold text-acsm-ink">
+                              PDF: {activeQuoteDraft.detected_supplier_name || 'Emisor no identificado'}
+                            </p>
+                            <p className="text-xs text-acsm-muted">
+                              Enlace asignado a: {activeQuoteDraft.supplier?.name ?? `Proveedor ${activeQuoteDraft.supplier_id}`}
+                              {activeQuoteDraft.detected_supplier_email
+                                ? ` · ${activeQuoteDraft.detected_supplier_email}`
+                                : ''}
+                            </p>
+                          </div>
+                          <span
+                            className={[
+                              'rounded-full px-3 py-1 text-xs font-bold',
+                              activeQuoteDraft.supplier_match_status === 'matched'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : activeQuoteDraft.supplier_match_status === 'mismatch'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-amber-100 text-amber-800',
+                            ].join(' ')}
+                          >
+                            {activeQuoteDraft.supplier_match_status === 'matched'
+                              ? 'Proveedor verificado'
+                              : activeQuoteDraft.supplier_match_status === 'mismatch'
+                                ? 'Proveedor no coincide'
+                                : 'Identidad pendiente'}
+                          </span>
+                        </div>
+                        {activeQuoteDraft.supplier_match_status === 'mismatch' ? (
+                          <label className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-900">
+                            <input
+                              type="checkbox"
+                              checked={supplierIdentityAcknowledged}
+                              onChange={(event) => setSupplierIdentityAcknowledged(event.target.checked)}
+                              className="mt-0.5 h-4 w-4"
+                            />
+                            Revisé el documento y confirmo que debe registrarse para el proveedor asociado al enlace.
+                          </label>
+                        ) : null}
+                      </div>
+
+                      <div className="grid border-b border-acsm-line bg-white sm:grid-cols-2 xl:grid-cols-4">
+                        {[
+                          ['Solicitud detectada', activeQuoteDraft.detected_rfq_number || '-'],
+                          [
+                            'Confianza de lectura',
+                            `${Math.round(Number(activeQuoteDraft.confidence || 0) * 100)}%`,
+                          ],
+                          [
+                            'Subtotal del PDF',
+                            activeQuoteDraft.document_subtotal == null
+                              ? '-'
+                              : formatMoney(activeQuoteDraft.document_subtotal),
+                          ],
+                          [
+                            'Total del PDF',
+                            activeQuoteDraft.document_total == null
+                              ? '-'
+                              : formatMoney(activeQuoteDraft.document_total),
+                          ],
+                        ].map(([label, value]) => (
+                          <div key={label} className="border-b border-acsm-line px-4 py-3 sm:border-r xl:border-b-0">
+                            <p className="text-[11px] font-bold uppercase text-acsm-muted">{label}</p>
+                            <p className="mt-1 text-sm font-bold text-acsm-ink">{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
+
                   <div className="grid gap-3 border-b border-acsm-line p-4 md:grid-cols-4">
                     <label className="text-xs font-bold uppercase text-acsm-muted">
                       Folio
@@ -3043,6 +3192,7 @@ export default function PurchasingPage() {
                           <th className="px-3 py-2 text-left">Cantidad</th>
                           <th className="px-3 py-2 text-left">Precio unitario</th>
                           <th className="px-3 py-2 text-left">Entrega</th>
+                          <th className="px-3 py-2 text-left">Lectura</th>
                           <th className="px-3 py-2 text-left">Notas</th>
                         </tr>
                       </thead>
@@ -3080,6 +3230,21 @@ export default function PurchasingPage() {
                                   }
                                   className="h-9 w-full rounded-md border border-acsm-line px-2"
                                 />
+                              </td>
+                              <td className="px-3 py-2">
+                                <span
+                                  className={[
+                                    'inline-flex rounded-full px-2 py-1 text-[11px] font-bold',
+                                    Number(item.confidence) >= 0.9
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : Number(item.confidence) >= 0.7
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : 'bg-red-100 text-red-800',
+                                  ].join(' ')}
+                                  title={item.match_method}
+                                >
+                                  {Math.round(Number(item.confidence) * 100)}%
+                                </span>
                               </td>
                               <td className="px-3 py-2">
                                 <input
@@ -3176,7 +3341,12 @@ export default function PurchasingPage() {
                     <button
                       type="button"
                       onClick={() => void confirmQuoteDraft()}
-                      disabled={loading || !quoteDraftForm.quote_number.trim()}
+                      disabled={
+                        loading ||
+                        !quoteDraftForm.quote_number.trim() ||
+                        (activeQuoteDraft.supplier_match_status === 'mismatch' &&
+                          !supplierIdentityAcknowledged)
+                      }
                       className="inline-flex h-10 items-center gap-2 rounded-md bg-acsm-green px-5 text-sm font-semibold text-white hover:bg-acsm-green-hover disabled:opacity-60"
                     >
                       <ClipboardCheck className="h-4 w-4" aria-hidden="true" />

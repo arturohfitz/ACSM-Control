@@ -287,6 +287,20 @@ class SupplierQuoteDraft(TimestampMixin, Base):
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     validation_errors: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    detected_supplier_name: Mapped[str | None] = mapped_column(String(255))
+    detected_supplier_tax_id: Mapped[str | None] = mapped_column(String(80))
+    detected_supplier_email: Mapped[str | None] = mapped_column(String(255))
+    supplier_match_status: Mapped[str] = mapped_column(
+        String(40), default="not_detected", nullable=False
+    )
+    supplier_match_confidence: Mapped[Decimal] = mapped_column(
+        Numeric(5, 4), default=0, nullable=False
+    )
+    detected_rfq_number: Mapped[str | None] = mapped_column(String(80))
+    document_subtotal: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    document_tax_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    document_total: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    extraction_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

@@ -35,6 +35,17 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Para interpretar cotizaciones PDF se recomienda instalar Poppler. El OCR de
+documentos escaneados es opcional y requiere Tesseract:
+
+```bash
+sudo apt install poppler-utils tesseract-ocr tesseract-ocr-spa
+```
+
+Los PDF con texto digital se procesan aunque Tesseract no este instalado. Si un
+archivo escaneado requiere OCR y la dependencia no existe, el sistema lo deja
+en revision manual sin incorporar precios.
+
 ## Configuracion `.env`
 
 El archivo `.env` ya trae valores locales de arranque. Ajusta al menos:
@@ -237,7 +248,8 @@ El sistema controla el proceso:
 
 1. Compras crea una solicitud de cotizacion de materiales para un desarrollo.
 2. La solicitud exige al menos 3 proveedores invitados.
-3. Se capturan las cotizaciones recibidas por proveedor.
+3. El proveedor carga su PDF y el sistema propone folio, identidad, precios,
+   entrega e importes. Compras revisa la evidencia antes de incorporarla.
 4. El comparativo permite aprobar una cotizacion.
 5. Al aprobar, se genera una orden de compra y una lista esperada en inventario.
 6. Inventario recibe material contra esa lista y actualiza el avance de la orden.

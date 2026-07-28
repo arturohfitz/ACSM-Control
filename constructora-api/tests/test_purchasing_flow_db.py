@@ -83,6 +83,7 @@ from app.schemas.purchasing import (
     SupplierPaymentUpdate,
     FinancialReconciliationCreate,
     SupplierQuoteCreate,
+    SupplierQuoteDraftConfirmation,
     SupplierQuoteDraftInput,
     SupplierQuoteItemCreate,
     SupplierRFQApprovalRequest,
@@ -776,9 +777,28 @@ class PurchasingFlowDBTest(unittest.TestCase):
             )
         )
 
+        draft.supplier_match_status = "mismatch"
+        with self.assertRaisesRegex(HTTPException, "Confirma expresamente"):
+            confirm_supplier_quote_draft(
+                draft.id,
+                SupplierQuoteDraftConfirmation.model_validate(
+                    {
+                        **draft_payload.model_dump(),
+                        "supplier_identity_acknowledged": False,
+                    }
+                ),
+                self.db,
+                self.user,
+            )
+
         quote = confirm_supplier_quote_draft(
             draft.id,
-            draft_payload,
+            SupplierQuoteDraftConfirmation.model_validate(
+                {
+                    **draft_payload.model_dump(),
+                    "supplier_identity_acknowledged": True,
+                }
+            ),
             self.db,
             self.user,
         )

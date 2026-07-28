@@ -26,6 +26,13 @@ from app.services.supplier_quote_drafts import (
     create_quote_draft,
     parse_quote_template,
 )
+from app.services.supplier_quote_pdf import (
+    PARSER_VERSION as PDF_PARSER_VERSION,
+    SupplierQuotePDFError,
+    SupplierQuotePDFMismatchError,
+    SupplierQuotePDFRequiresOCRError,
+    parse_supplier_quote_pdf,
+)
 
 
 router = APIRouter()
@@ -267,6 +274,8 @@ async def upload_supplier_quote_document(
         draft_payload = None
         draft_source = "portal"
         draft_confidence = Decimal("1")
+        draft_analysis = None
+        processing_note = None
         if quote_payload:
             try:
                 draft_payload = SupplierQuoteDraftInput.model_validate(json.loads(quote_payload))
@@ -281,6 +290,22 @@ async def upload_supplier_quote_document(
                 draft_source = "xlsx_template"
             except (ValueError, ValidationError):
                 upload.status = "manual_capture_required"
+                processing_note = "La plantilla Excel no pudo interpretarse; requiere captura manual."
+        elif extension == ".pdf":
+            try:
+                draft_analysis = parse_supplier_quote_pdf(content, safe_name, link)
+                draft_payload = draft_analysis.payload
+                draft_source = "pdf_text"
+                draft_confidence = draft_analysis.confidence
+            except SupplierQuotePDFRequiresOCRError as exc:
+                upload.status = "requires_ocr"
+                processing_note = str(exc)
+            except SupplierQuotePDFMismatchError as exc:
+                upload.status = "rfq_mismatch"
+                processing_note = str(exc)
+            except SupplierQuotePDFError as exc:
+                upload.status = "manual_capture_required"
+                processing_note = str(exc)
 
         if draft_payload is not None:
             upload.quote_number = draft_payload.quote_number
@@ -291,7 +316,43 @@ async def upload_supplier_quote_document(
                 payload=draft_payload,
                 source_type=draft_source,
                 confidence=draft_confidence,
-                parser_version="structured-v1",
+                parser_version=PDF_PARSER_VERSION if draft_analysis else "structured-v1",
+                initial_errors=draft_analysis.validation_errors if draft_analysis else None,
+                item_metadata=draft_analysis.item_metadata if draft_analysis else None,
+                detected_supplier_name=(
+                    draft_analysis.detected_supplier_name if draft_analysis else None
+                ),
+                detected_supplier_tax_id=(
+                    draft_analysis.detected_supplier_tax_id if draft_analysis else None
+                ),
+                detected_supplier_email=(
+                    draft_analysis.detected_supplier_email if draft_analysis else None
+                ),
+                supplier_match_status=(
+                    draft_analysis.supplier_match_status if draft_analysis else "not_detected"
+                ),
+                supplier_match_confidence=(
+                    draft_analysis.supplier_match_confidence
+                    if draft_analysis
+                    else Decimal("0")
+                ),
+                detected_rfq_number=(
+                    draft_analysis.detected_rfq_number if draft_analysis else None
+                ),
+                document_subtotal=(
+                    draft_analysis.document_subtotal if draft_analysis else None
+                ),
+                document_tax_amount=(
+                    draft_analysis.document_tax_amount if draft_analysis else None
+                ),
+                document_total=draft_analysis.document_total if draft_analysis else None,
+                extraction_metadata=(
+                    draft_analysis.extraction_metadata if draft_analysis else None
+                ),
+            )
+        if processing_note:
+            upload.security_notes = "; ".join(
+                note for note in (upload.security_notes, processing_note) if note
             )
 
         link.status = "responded"
@@ -303,18 +364,37 @@ async def upload_supplier_quote_document(
             module="supplier_quotes",
             action="create",
             notification_type="supplier_quote_document_uploaded",
-            title="Cotizacion lista para revisar" if draft else "Cotizacion cargada por proveedor",
+            title=(
+                "Cotizacion con identidad por validar"
+                if draft and draft.supplier_match_status == "mismatch"
+                else "Cotizacion lista para revisar"
+                if draft
+                else "Cotizacion cargada por proveedor"
+            ),
             body=(
-                f"{link.supplier.name if link.supplier else 'Proveedor'} envio datos estructurados "
-                f"para {link.rfq.rfq_number}."
+                (
+                    f"El PDF indica {draft.detected_supplier_name}, pero el enlace pertenece a "
+                    f"{link.supplier.name}. Compras debe validar la identidad."
+                    if draft and draft.supplier_match_status == "mismatch"
+                    else (
+                        f"{link.supplier.name if link.supplier else 'Proveedor'} envio datos "
+                        f"interpretados para {link.rfq.rfq_number}; requieren revision."
+                    )
+                )
                 if draft
                 else (
                     f"{link.supplier.name if link.supplier else 'Proveedor'} cargo un archivo "
-                    f"para {link.rfq.rfq_number}; requiere captura manual."
+                    f"para {link.rfq.rfq_number}; {processing_note or 'requiere captura manual'}"
                 )
             ),
-            category="info",
-            priority="normal",
+            category=(
+                "warning"
+                if (draft and draft.supplier_match_status == "mismatch") or processing_note
+                else "info"
+            ),
+            priority=(
+                "high" if draft and draft.supplier_match_status == "mismatch" else "normal"
+            ),
             source_module="compras",
             entity_type="SupplierQuoteUpload",
             entity_id=upload.id,
@@ -326,6 +406,10 @@ async def upload_supplier_quote_document(
                 "supplier_id": link.supplier_id,
                 "draft_id": draft.id if draft else None,
                 "structured": draft is not None,
+                "supplier_match_status": (
+                    draft.supplier_match_status if draft else None
+                ),
+                "processing_note": processing_note,
             },
         )
         db.commit()

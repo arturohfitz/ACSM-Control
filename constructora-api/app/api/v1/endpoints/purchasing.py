@@ -75,7 +75,7 @@ from app.schemas.purchasing import (
     SupplierPaymentRead,
     SupplierPaymentUpdate,
     SupplierQuoteCreate,
-    SupplierQuoteDraftInput,
+    SupplierQuoteDraftConfirmation,
     SupplierQuoteDraftRead,
     SupplierQuoteApprovalDecision,
     SupplierQuoteApprovalRead,
@@ -125,6 +125,12 @@ from app.services.permissions import user_has_permission
 from app.services.project_financials import (
     approve_project_material_budget,
     project_financial_progress,
+)
+from app.services.supplier_quote_drafts import create_quote_draft
+from app.services.supplier_quote_pdf import (
+    PARSER_VERSION as PDF_PARSER_VERSION,
+    SupplierQuotePDFError,
+    parse_supplier_quote_pdf,
 )
 from app.services.tenancy import (
     allowed_client_ids,
@@ -2171,6 +2177,99 @@ def _quote_draft_query():
     )
 
 
+@router.post(
+    "/supplier-quote-uploads/{upload_id}/reprocess",
+    response_model=SupplierQuoteDraftRead,
+)
+def reprocess_supplier_quote_upload(
+    upload_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "create")),
+) -> SupplierQuoteDraft:
+    existing = db.scalar(
+        _quote_draft_query().where(SupplierQuoteDraft.upload_id == upload_id)
+    )
+    if existing is not None:
+        ensure_same_company(current_user, existing, db=db)
+        if existing.status == "confirmed":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La cotizacion ya fue confirmada y no puede reinterpretarse",
+            )
+
+    upload = db.scalar(
+        select(SupplierQuoteUpload)
+        .where(SupplierQuoteUpload.id == upload_id)
+        .options(
+            selectinload(SupplierQuoteUpload.rfq_supplier).selectinload(
+                SupplierRFQSupplier.supplier
+            ),
+            selectinload(SupplierQuoteUpload.rfq_supplier)
+            .selectinload(SupplierRFQSupplier.rfq)
+            .selectinload(SupplierRFQ.items),
+        )
+    )
+    if upload is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo no encontrado")
+    ensure_same_company(current_user, upload, db=db)
+    if upload.file_extension.lower() != ".pdf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El reprocesamiento automatico solo aplica a archivos PDF",
+        )
+    path = Path(upload.stored_file_path)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo no disponible")
+
+    try:
+        analysis = parse_supplier_quote_pdf(
+            path.read_bytes(),
+            upload.original_file_name,
+            upload.rfq_supplier,
+        )
+    except SupplierQuotePDFError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    if existing is not None:
+        db.delete(existing)
+        db.flush()
+
+    upload.quote_number = analysis.payload.quote_number
+    draft = create_quote_draft(
+        db,
+        link=upload.rfq_supplier,
+        upload=upload,
+        payload=analysis.payload,
+        source_type="pdf_text",
+        confidence=analysis.confidence,
+        parser_version=PDF_PARSER_VERSION,
+        initial_errors=analysis.validation_errors,
+        item_metadata=analysis.item_metadata,
+        detected_supplier_name=analysis.detected_supplier_name,
+        detected_supplier_tax_id=analysis.detected_supplier_tax_id,
+        detected_supplier_email=analysis.detected_supplier_email,
+        supplier_match_status=analysis.supplier_match_status,
+        supplier_match_confidence=analysis.supplier_match_confidence,
+        detected_rfq_number=analysis.detected_rfq_number,
+        document_subtotal=analysis.document_subtotal,
+        document_tax_amount=analysis.document_tax_amount,
+        document_total=analysis.document_total,
+        extraction_metadata=analysis.extraction_metadata,
+    )
+    record_update(
+        db,
+        current_user,
+        module="compras",
+        item=upload,
+        before={"status": "manual_capture_required"},
+    )
+    db.commit()
+    return db.scalar(_quote_draft_query().where(SupplierQuoteDraft.id == draft.id))
+
+
 @router.get(
     "/supplier-rfqs/{rfq_id}/quote-drafts",
     response_model=list[SupplierQuoteDraftRead],
@@ -2197,7 +2296,7 @@ def list_supplier_quote_drafts(
 )
 def confirm_supplier_quote_draft(
     draft_id: int,
-    payload: SupplierQuoteDraftInput,
+    payload: SupplierQuoteDraftConfirmation,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("supplier_quotes", "create")),
 ) -> SupplierQuote:
@@ -2209,6 +2308,14 @@ def confirm_supplier_quote_draft(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="La cotizacion ya fue confirmada",
+        )
+    if draft.supplier_match_status == "mismatch" and not payload.supplier_identity_acknowledged:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "El proveedor detectado en el documento no coincide con el proveedor asociado. "
+                "Confirma expresamente la identidad antes de incorporar la cotizacion."
+            ),
         )
     rfq = get_supplier_rfq(draft.rfq_id, db, current_user)
     if draft.supplier_id not in {link.supplier_id for link in rfq.supplier_links}:

@@ -392,6 +392,10 @@ class SupplierQuoteDraftInput(BaseModel):
     items: list[SupplierQuoteDraftItemInput] = Field(min_length=1)
 
 
+class SupplierQuoteDraftConfirmation(SupplierQuoteDraftInput):
+    supplier_identity_acknowledged: bool = False
+
+
 class SupplierQuoteDraftItemRead(ORMModel):
     id: int
     draft_id: int
@@ -433,6 +437,16 @@ class SupplierQuoteDraftRead(TimestampRead):
     total: Decimal
     notes: str | None = None
     validation_errors: list[str] = Field(default_factory=list)
+    detected_supplier_name: str | None = None
+    detected_supplier_tax_id: str | None = None
+    detected_supplier_email: str | None = None
+    supplier_match_status: str
+    supplier_match_confidence: Decimal
+    detected_rfq_number: str | None = None
+    document_subtotal: Decimal | None = None
+    document_tax_amount: Decimal | None = None
+    document_total: Decimal | None = None
+    extraction_metadata: dict = Field(default_factory=dict)
     confirmed_by: int | None = None
     confirmed_at: datetime | None = None
     supplier: SupplierRead | None = None
