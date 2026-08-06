@@ -1,0 +1,14 @@
+[Unit]
+Description=ACSM Control Web
+After=acsm-control-api.service
+Wants=acsm-control-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT_DIR@/constructora-web
+ExecStart="@NODE_BIN@" "@ROOT_DIR@/constructora-web/node_modules/vite/bin/vite.js" --host 127.0.0.1 --port 5173
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

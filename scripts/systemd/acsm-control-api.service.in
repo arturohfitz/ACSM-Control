@@ -1,0 +1,14 @@
+[Unit]
+Description=ACSM Control API
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT_DIR@/constructora-api
+Environment=PYTHONPATH=.
+ExecStartPre=/usr/bin/docker start acsm-control-postgres
+ExecStart="@ROOT_DIR@/constructora-api/.venv/bin/uvicorn" app.main:app --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
