@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  ClipboardCheck,
   ClipboardList,
   ExternalLink,
   FolderKanban,
@@ -66,6 +67,7 @@ const navItems = [
     icon: Warehouse,
     permission: [
       'inventory_receiving:view',
+      'inventory_reception_history:view',
       'inventory_progress:view',
       'inventory_missing:view',
       'inventory_stock:view',
@@ -186,6 +188,13 @@ const inventorySubItems = [
     indent: true,
   },
   {
+    to: '/inventory/reception-history',
+    label: 'Historial de recepciones',
+    icon: ClipboardCheck,
+    permission: 'inventory_reception_history:view',
+    indent: true,
+  },
+  {
     to: '/inventory/model-progress',
     label: 'Control de avance',
     icon: Package,
@@ -227,6 +236,7 @@ const titles: Record<string, string> = {
   '/purchasing/orders': 'Ordenes de compra',
   '/inventory': 'Inventario',
   '/inventory/material-receiving': 'Recepcion de materiales',
+  '/inventory/reception-history': 'Historial de recepciones',
   '/inventory/model-progress': 'Control de avance por modelo',
   '/inventory/purchase-order-receiving': 'Recepcion por orden de compra',
   '/inventory/external-receiving': 'Recepcion sin orden de compra',

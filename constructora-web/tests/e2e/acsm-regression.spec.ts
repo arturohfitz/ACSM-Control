@@ -999,17 +999,28 @@ async function mockApi(
           }
           return {
             id: 1100 + index,
+            expected_item_id: expectedItem.id,
             description: expectedItem.description,
             received_quantity: String(receivedQuantity),
+            accepted_quantity: String(receivedQuantity),
+            rejected_quantity: '0',
+            condition_status: 'ok',
+            notes: null,
             unit: expectedItem.unit,
           }
         },
-      ).filter(Boolean) as Array<{ id: number; description: string; received_quantity: string; unit: string }>
+      ).filter(Boolean)
       const reception = {
         id: 100,
+        project_id: 1,
+        warehouse_id: Number(payload.warehouse_id),
+        expected_list_id: expectedList.id,
         received_at: '2026-06-05',
         delivery_reference: payload.delivery_reference,
+        delivered_by: payload.delivered_by,
         received_by: payload.received_by,
+        notes: payload.notes,
+        status: 'processed',
         items: receptionItems,
       }
       receptions = [reception, ...receptions]
@@ -1185,8 +1196,10 @@ test('inventario recibe parcialmente una orden de compra generada desde compras'
   await page.getByLabel('Entregado Cemento gris 50kg').fill('40')
   await page.getByRole('button', { name: 'Registrar recepcion' }).click()
   await expect(page.getByText('Recepcion registrada contra OC-202606-0001')).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Recepciones procesadas' })).toBeVisible()
-  await expect(page.locator('section', { hasText: 'Recepciones procesadas' }).getByText('OC-202606-0001')).toBeVisible()
+
+  await page.goto('/inventory/reception-history')
+  await expect(page.getByRole('heading', { name: 'Historial de recepciones' })).toBeVisible()
+  await expect(page.getByRole('table').first().getByText('OC-202606-0001')).toBeVisible()
 
   await page.goto('/inventory/missing')
   await expect(page.getByRole('heading', { name: 'Faltantes' })).toBeVisible()

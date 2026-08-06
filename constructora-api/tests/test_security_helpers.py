@@ -43,6 +43,7 @@ class SecurityHelpersTest(unittest.TestCase):
         self.assertNotIn("settings:edit", compras)
 
         self.assertIn("inventory_receiving:receive", inventarios)
+        self.assertIn("inventory_reception_history:view", inventarios)
         self.assertIn("inventory_progress:view", inventarios)
         self.assertIn("inventory_missing:view", inventarios)
         self.assertIn("inventory_stock:view", inventarios)

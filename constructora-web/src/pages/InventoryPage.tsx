@@ -1,8 +1,12 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react'
+import { ChangeEvent, FormEvent, Fragment, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
   ClipboardCheck,
   FileUp,
   PackageCheck,
@@ -187,6 +191,7 @@ type ProjectModelMaterialControlItem = {
 
 type InventoryMode =
   | 'material_receiving'
+  | 'reception_history'
   | 'model_control'
   | 'purchase_order'
   | 'external_document'
@@ -241,6 +246,30 @@ function formatDate(value: string | null | undefined) {
     month: 'short',
     year: 'numeric',
   })
+}
+
+function receptionConditionLabel(value: string) {
+  const labels: Record<string, string> = {
+    ok: 'Correcto',
+    correct: 'Correcto',
+    correcto: 'Correcto',
+    not_delivered: 'No entregado',
+    damaged: 'Danado',
+    incomplete: 'Incompleto',
+    extra: 'Extra',
+    other: 'Otro',
+  }
+  return labels[value.toLowerCase()] ?? value.replace(/_/g, ' ')
+}
+
+function receptionStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    processed: 'Registrada',
+    received: 'Recibida',
+    partial: 'Parcial',
+    complete: 'Completa',
+  }
+  return labels[value.toLowerCase()] ?? value.replace(/_/g, ' ')
 }
 
 function numberOrNull(value: string) {
@@ -381,7 +410,9 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const [receptionDateFrom, setReceptionDateFrom] = useState('')
   const [receptionDateTo, setReceptionDateTo] = useState('')
   const [receptionTypeFilter, setReceptionTypeFilter] = useState('')
-  const [receptionHistoryExpanded, setReceptionHistoryExpanded] = useState(false)
+  const [receptionPage, setReceptionPage] = useState(1)
+  const [receptionPageSize, setReceptionPageSize] = useState(10)
+  const [expandedReceptionId, setExpandedReceptionId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -547,6 +578,11 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
         const rejectedItemCount = reception.items.filter(
           (item) => Number(item.rejected_quantity || 0) > 0,
         ).length
+        const issueItemCount = reception.items.filter(
+          (item) =>
+            Number(item.rejected_quantity || 0) > 0 ||
+            !['ok', 'correct', 'correcto'].includes(item.condition_status.toLowerCase()),
+        ).length
         return {
           ...reception,
           type,
@@ -555,6 +591,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           materialSummary: materialSummary || '-',
           acceptedItemCount,
           rejectedItemCount,
+          issueItemCount,
           searchText: [
             provider,
             documentReference,
@@ -574,25 +611,43 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
   const filteredReceptionHistory = useMemo(() => {
     const search = receptionSearch.trim().toLowerCase()
     return receptionHistoryRows.filter((reception) => {
+      if (warehouseId && String(reception.warehouse_id) !== warehouseId) return false
       if (receptionTypeFilter && reception.type !== receptionTypeFilter) return false
-      if (receptionDateFrom && reception.received_at < receptionDateFrom) return false
-      if (receptionDateTo && reception.received_at > receptionDateTo) return false
+      const receivedDate = reception.received_at.slice(0, 10)
+      if (receptionDateFrom && receivedDate < receptionDateFrom) return false
+      if (receptionDateTo && receivedDate > receptionDateTo) return false
       if (!search) return true
       return reception.searchText.includes(search)
     })
-  }, [receptionDateFrom, receptionDateTo, receptionHistoryRows, receptionSearch, receptionTypeFilter])
+  }, [receptionDateFrom, receptionDateTo, receptionHistoryRows, receptionSearch, receptionTypeFilter, warehouseId])
+
+  const receptionPageCount = Math.max(
+    Math.ceil(filteredReceptionHistory.length / receptionPageSize),
+    1,
+  )
+  const currentReceptionPage = Math.min(receptionPage, receptionPageCount)
 
   const visibleReceptionHistory = useMemo(
-    () =>
-      receptionHistoryExpanded
-        ? filteredReceptionHistory
-        : filteredReceptionHistory.slice(0, 5),
-    [filteredReceptionHistory, receptionHistoryExpanded],
+    () => {
+      const safePage = Math.min(receptionPage, receptionPageCount)
+      const start = (safePage - 1) * receptionPageSize
+      return filteredReceptionHistory.slice(start, start + receptionPageSize)
+    },
+    [filteredReceptionHistory, receptionPage, receptionPageCount, receptionPageSize],
   )
 
-  const hiddenReceptionCount = Math.max(
-    filteredReceptionHistory.length - visibleReceptionHistory.length,
-    0,
+  const receptionHistoryTotals = useMemo(
+    () => ({
+      total: filteredReceptionHistory.length,
+      purchaseOrder: filteredReceptionHistory.filter(
+        (reception) => reception.type === 'purchase_order',
+      ).length,
+      external: filteredReceptionHistory.filter(
+        (reception) => reception.type === 'external_document',
+      ).length,
+      issues: filteredReceptionHistory.filter((reception) => reception.issueItemCount > 0).length,
+    }),
+    [filteredReceptionHistory],
   )
 
   const controlTotals = useMemo(
@@ -617,6 +672,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
 
   const showMaterialReceiving =
     mode === 'material_receiving' || mode === 'purchase_order' || mode === 'external_document'
+  const showReceptionHistory = mode === 'reception_history'
   const showReceivingTypeSelector = mode === 'material_receiving'
   const showPurchaseOrderReceiving =
     showMaterialReceiving && receivingType === 'purchase_order'
@@ -673,7 +729,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       ] =
         await Promise.all([
           apiRequest<ProjectWarehouse[]>(`/inventory/projects/${currentProjectId}/warehouses`),
-          showMaterialReceiving || showMissing
+          showMaterialReceiving || showMissing || showReceptionHistory
             ? apiRequest<ExpectedMaterialList[]>(
                 `/inventory/projects/${currentProjectId}/expected-materials`,
               )
@@ -694,7 +750,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                 `/inventory/projects/${currentProjectId}/model-material-control`,
               )
             : Promise.resolve([]),
-          showMaterialReceiving
+          showReceptionHistory
             ? apiRequest<MaterialReception[]>(
                 `/inventory/projects/${currentProjectId}/receptions`,
               )
@@ -774,7 +830,8 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       setControlStatus('')
       setControlSort('material')
       setControlExpanded(false)
-      setReceptionHistoryExpanded(false)
+      setReceptionPage(1)
+      setExpandedReceptionId(null)
       setDocumentHouseModelId('')
       void loadProjectInventory(projectId)
     }
@@ -1194,7 +1251,7 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       </section>
       ) : null}
 
-      {!showPurchaseOrderReceiving && !showModelControl ? (
+      {!showPurchaseOrderReceiving && !showModelControl && !showReceptionHistory ? (
       <section className="overflow-hidden rounded-md border border-acsm-line bg-white p-3 shadow-panel">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
           <label className="min-w-0 text-sm">
@@ -2114,23 +2171,78 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
       </form>
       ) : null}
 
-      {showMaterialReceiving ? (
+      {showReceptionHistory ? (
       <section className="overflow-hidden rounded-md border border-acsm-line bg-white shadow-panel">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-acsm-line px-4 py-3">
+        <header className="flex flex-col gap-4 border-b border-acsm-line bg-acsm-paper/70 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-acsm-line bg-acsm-paper text-acsm-green">
-              <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-sky-200 bg-sky-50 text-sky-700">
+              <ClipboardCheck className="h-5 w-5" aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <h2 className="text-base font-semibold">Recepciones procesadas</h2>
-              <p className="text-xs text-acsm-muted">
-                Consulta entradas registradas con OC o sin OC por fecha, proveedor y material.
+              <p className="text-xs font-bold uppercase tracking-widest text-acsm-muted">Consulta y auditoria</p>
+              <h1 className="text-xl font-black text-acsm-ink">Historial de recepciones</h1>
+              <p className="text-sm text-acsm-muted">
+                Revisa entregas procesadas, responsables e incidencias sin interrumpir la captura.
               </p>
             </div>
           </div>
-          <span className="rounded-full border border-acsm-line bg-acsm-paper px-3 py-1 text-xs font-semibold text-acsm-muted">
-            {filteredReceptionHistory.length} registros
-          </span>
+          <button
+            type="button"
+            onClick={() => void loadProjectInventory()}
+            disabled={!projectId}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-acsm-line bg-white px-4 text-sm font-bold text-acsm-ink hover:bg-acsm-paper disabled:opacity-50"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            Actualizar
+          </button>
+        </header>
+
+        <div className="grid gap-3 border-b border-acsm-line bg-white p-4 md:grid-cols-2">
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Desarrollo</span>
+            <select
+              value={projectId}
+              onChange={(event) => setProjectId(event.target.value)}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
+            >
+              <option value="">Seleccionar desarrollo</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="min-w-0 text-sm">
+            <span className="mb-1.5 block font-medium text-acsm-ink">Bodega</span>
+            <select
+              value={warehouseId}
+              onChange={(event) => {
+                setWarehouseId(event.target.value)
+                setReceptionPage(1)
+                setExpandedReceptionId(null)
+              }}
+              disabled={!projectId}
+              className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm disabled:bg-zinc-100"
+            >
+              <option value="">Todas las bodegas</option>
+              {warehouses.map((warehouse) => (
+                <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 border-b border-acsm-line md:grid-cols-4">
+          {[
+            ['Recepciones', receptionHistoryTotals.total, 'text-acsm-ink'],
+            ['Con OC', receptionHistoryTotals.purchaseOrder, 'text-sky-800'],
+            ['Sin OC', receptionHistoryTotals.external, 'text-indigo-800'],
+            ['Con incidencias', receptionHistoryTotals.issues, 'text-amber-800'],
+          ].map(([label, value, color], index) => (
+            <div key={String(label)} className={`min-h-20 border-acsm-line px-4 py-3 ${index < 3 ? 'border-r' : ''}`}>
+              <span className="block text-xs font-bold uppercase text-acsm-muted">{label}</span>
+              <span className={`mt-1 block text-2xl font-black ${color}`}>{value}</span>
+            </div>
+          ))}
         </div>
 
         <div className="grid gap-3 border-b border-acsm-line bg-acsm-paper/40 p-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_160px_160px_180px_auto] xl:items-end">
@@ -2140,9 +2252,10 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               value={receptionSearch}
               onChange={(event) => {
                 setReceptionSearch(event.target.value)
-                setReceptionHistoryExpanded(false)
+                setReceptionPage(1)
+                setExpandedReceptionId(null)
               }}
-              placeholder="Proveedor, material o documento"
+              placeholder="Proveedor, material, documento o responsable"
               className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
             />
           </label>
@@ -2153,7 +2266,8 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               value={receptionDateFrom}
               onChange={(event) => {
                 setReceptionDateFrom(event.target.value)
-                setReceptionHistoryExpanded(false)
+                setReceptionPage(1)
+                setExpandedReceptionId(null)
               }}
               className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
             />
@@ -2165,7 +2279,8 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               value={receptionDateTo}
               onChange={(event) => {
                 setReceptionDateTo(event.target.value)
-                setReceptionHistoryExpanded(false)
+                setReceptionPage(1)
+                setExpandedReceptionId(null)
               }}
               className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
             />
@@ -2176,7 +2291,8 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
               value={receptionTypeFilter}
               onChange={(event) => {
                 setReceptionTypeFilter(event.target.value)
-                setReceptionHistoryExpanded(false)
+                setReceptionPage(1)
+                setExpandedReceptionId(null)
               }}
               className="h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm"
             >
@@ -2188,11 +2304,13 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           <button
             type="button"
             onClick={() => {
+              setWarehouseId('')
               setReceptionSearch('')
               setReceptionDateFrom('')
               setReceptionDateTo('')
               setReceptionTypeFilter('')
-              setReceptionHistoryExpanded(false)
+              setReceptionPage(1)
+              setExpandedReceptionId(null)
             }}
             className="inline-flex h-10 w-full items-center justify-center rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper md:w-auto"
           >
@@ -2200,8 +2318,104 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           </button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] text-sm">
+        {error ? (
+          <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800">{error}</div>
+        ) : null}
+
+        <div className="divide-y divide-acsm-line md:hidden">
+          {visibleReceptionHistory.map((reception) => (
+            <article key={reception.id} className="bg-white px-4 py-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
+                    <span className="text-acsm-muted">{formatDate(reception.received_at)}</span>
+                    <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-acsm-muted">
+                      {reception.type === 'purchase_order' ? 'Con OC' : 'Sin OC'}
+                    </span>
+                  </div>
+                  <h2 className="mt-2 break-words text-base font-bold text-acsm-ink">{reception.provider}</h2>
+                  <p className="mt-0.5 break-all text-sm font-semibold text-sky-800">{reception.documentReference}</p>
+                </div>
+                <span className="shrink-0 rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
+                  {receptionStatusLabel(reception.status)}
+                </span>
+              </div>
+
+              <div className="mt-3 border-y border-acsm-line py-3">
+                <p className="text-xs font-bold uppercase text-acsm-muted">Materiales</p>
+                <p className="mt-1 text-sm text-acsm-ink">{reception.materialSummary}</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">
+                    {reception.acceptedItemCount} aceptada(s)
+                  </span>
+                  {reception.issueItemCount > 0 ? (
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
+                      {reception.issueItemCount} incidencia(s)
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <div className="min-w-0 text-sm">
+                  <span className="text-acsm-muted">Recibio: </span>
+                  <span className="font-semibold text-acsm-ink">{reception.received_by || '-'}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExpandedReceptionId((current) => current === reception.id ? null : reception.id)}
+                  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
+                >
+                  {expandedReceptionId === reception.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {expandedReceptionId === reception.id ? 'Cerrar' : 'Ver detalle'}
+                </button>
+              </div>
+
+              {expandedReceptionId === reception.id ? (
+                <div className="mt-4 border-t border-acsm-line pt-4">
+                  <dl className="grid gap-3 text-sm">
+                    <div>
+                      <dt className="text-xs font-bold uppercase text-acsm-muted">Bodega</dt>
+                      <dd className="mt-1 font-semibold text-acsm-ink">
+                        {warehouses.find((warehouse) => warehouse.id === reception.warehouse_id)?.name ?? '-'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-bold uppercase text-acsm-muted">Entrego</dt>
+                      <dd className="mt-1 font-semibold text-acsm-ink">{reception.delivered_by || '-'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-bold uppercase text-acsm-muted">Notas de recepcion</dt>
+                      <dd className="mt-1 text-acsm-ink">{reception.notes || 'Sin notas generales'}</dd>
+                    </div>
+                  </dl>
+                  <div className="mt-4 divide-y divide-acsm-line border-y border-acsm-line">
+                    {reception.items.map((item) => (
+                      <div key={item.id} className="py-3 text-sm">
+                        <div className="font-semibold text-acsm-ink">{item.description}</div>
+                        <div className="mt-1 text-xs text-acsm-muted">
+                          {formatQuantity(item.accepted_quantity)} {item.unit} aceptado(s) · {formatQuantity(item.rejected_quantity)} rechazado(s)
+                        </div>
+                        <div className="mt-1 font-medium text-acsm-ink">{receptionConditionLabel(item.condition_status)}</div>
+                        {item.notes ? <div className="mt-1 text-acsm-muted">{item.notes}</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          ))}
+          {!filteredReceptionHistory.length ? (
+            <div className="px-4 py-10 text-center text-sm text-acsm-muted">
+              {projectId
+                ? 'No hay recepciones registradas con los filtros seleccionados.'
+                : 'Selecciona un desarrollo para consultar su historial.'}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="hidden overflow-x-auto md:block">
+          <table className="w-full min-w-[1180px] text-sm">
             <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
               <tr>
                 <th className="px-4 py-3">Fecha</th>
@@ -2213,58 +2427,115 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
                 <th className="px-4 py-3">Resultado</th>
                 <th className="px-4 py-3">Recibio</th>
                 <th className="px-4 py-3">Estado</th>
+                <th className="px-4 py-3 text-right">Detalle</th>
               </tr>
             </thead>
             <tbody>
               {visibleReceptionHistory.map((reception) => (
-                <tr key={reception.id} className="border-b border-acsm-line last:border-0">
-                  <td className="px-4 py-3 font-semibold text-acsm-ink">
-                    {formatDate(reception.received_at)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
-                      {reception.type === 'purchase_order' ? 'Con OC' : 'Sin OC'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-semibold text-acsm-ink">{reception.provider}</div>
-                    <div className="text-xs text-acsm-muted">
-                      {reception.delivered_by || '-'}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 font-semibold text-acsm-ink">
-                    {reception.documentReference}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="max-w-[360px] truncate" title={reception.materialSummary}>
-                      {reception.materialSummary}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">{reception.items.length}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1.5">
-                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">
-                        {reception.acceptedItemCount} aceptada(s)
+                <Fragment key={reception.id}>
+                  <tr className="border-b border-acsm-line">
+                    <td className="px-4 py-3 font-semibold text-acsm-ink">{formatDate(reception.received_at)}</td>
+                    <td className="px-4 py-3">
+                      <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
+                        {reception.type === 'purchase_order' ? 'Con OC' : 'Sin OC'}
                       </span>
-                      {reception.rejectedItemCount > 0 ? (
-                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
-                          {reception.rejectedItemCount} con rechazo
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-acsm-ink">{reception.provider}</div>
+                      <div className="text-xs text-acsm-muted">{reception.delivered_by || '-'}</div>
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-acsm-ink">{reception.documentReference}</td>
+                    <td className="px-4 py-3">
+                      <div className="max-w-[300px] truncate" title={reception.materialSummary}>{reception.materialSummary}</div>
+                    </td>
+                    <td className="px-4 py-3">{reception.items.length}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">
+                          {reception.acceptedItemCount} aceptada(s)
                         </span>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">{reception.received_by || '-'}</td>
-                  <td className="px-4 py-3">
-                    <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
-                      {reception.status}
-                    </span>
-                  </td>
-                </tr>
+                        {reception.issueItemCount > 0 ? (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
+                            {reception.issueItemCount} incidencia(s)
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">{reception.received_by || '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className="rounded-full border border-acsm-line bg-acsm-paper px-2 py-1 text-xs font-semibold text-acsm-muted">
+                        {receptionStatusLabel(reception.status)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedReceptionId((current) => current === reception.id ? null : reception.id)}
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
+                      >
+                        {expandedReceptionId === reception.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        {expandedReceptionId === reception.id ? 'Cerrar' : 'Ver'}
+                      </button>
+                    </td>
+                  </tr>
+                  {expandedReceptionId === reception.id ? (
+                    <tr className="border-b border-acsm-line bg-sky-50/50">
+                      <td colSpan={10} className="p-4">
+                        <div className="mb-3 grid gap-3 md:grid-cols-3">
+                          <div className="rounded-md border border-acsm-line bg-white p-3">
+                            <div className="text-xs font-bold uppercase text-acsm-muted">Bodega</div>
+                            <div className="mt-1 font-semibold text-acsm-ink">
+                              {warehouses.find((warehouse) => warehouse.id === reception.warehouse_id)?.name ?? '-'}
+                            </div>
+                          </div>
+                          <div className="rounded-md border border-acsm-line bg-white p-3">
+                            <div className="text-xs font-bold uppercase text-acsm-muted">Referencia</div>
+                            <div className="mt-1 font-semibold text-acsm-ink">{reception.documentReference}</div>
+                          </div>
+                          <div className="rounded-md border border-acsm-line bg-white p-3">
+                            <div className="text-xs font-bold uppercase text-acsm-muted">Notas de recepcion</div>
+                            <div className="mt-1 font-semibold text-acsm-ink">{reception.notes || 'Sin notas generales'}</div>
+                          </div>
+                        </div>
+                        <div className="overflow-hidden rounded-md border border-acsm-line bg-white">
+                          <table className="w-full min-w-[820px] text-sm">
+                            <thead className="bg-acsm-paper text-left text-xs uppercase text-acsm-muted">
+                              <tr>
+                                <th className="px-3 py-2">Material</th>
+                                <th className="px-3 py-2">Unidad</th>
+                                <th className="px-3 py-2">Entregado</th>
+                                <th className="px-3 py-2">Aceptado</th>
+                                <th className="px-3 py-2">Rechazado</th>
+                                <th className="px-3 py-2">Condicion</th>
+                                <th className="px-3 py-2">Notas</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {reception.items.map((item) => (
+                                <tr key={item.id} className="border-t border-acsm-line">
+                                  <td className="px-3 py-2 font-semibold text-acsm-ink">{item.description}</td>
+                                  <td className="px-3 py-2">{item.unit}</td>
+                                  <td className="px-3 py-2">{formatQuantity(item.received_quantity)}</td>
+                                  <td className="px-3 py-2 text-emerald-800">{formatQuantity(item.accepted_quantity)}</td>
+                                  <td className="px-3 py-2 text-amber-800">{formatQuantity(item.rejected_quantity)}</td>
+                                  <td className="px-3 py-2">{receptionConditionLabel(item.condition_status)}</td>
+                                  <td className="px-3 py-2">{item.notes || '-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
               ))}
               {!filteredReceptionHistory.length ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-6 text-center text-acsm-muted">
-                    No hay recepciones registradas con los filtros seleccionados.
+                  <td colSpan={10} className="px-4 py-10 text-center text-acsm-muted">
+                    {projectId
+                      ? 'No hay recepciones registradas con los filtros seleccionados.'
+                      : 'Selecciona un desarrollo para consultar su historial.'}
                   </td>
                 </tr>
               ) : null}
@@ -2272,22 +2543,58 @@ export default function InventoryPage({ mode = 'purchase_order' }: { mode?: Inve
           </table>
         </div>
 
-        {filteredReceptionHistory.length > 5 ? (
-          <div className="flex flex-col gap-3 border-t border-acsm-line bg-acsm-paper/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-acsm-muted">
-              {receptionHistoryExpanded
-                ? `Mostrando ${visibleReceptionHistory.length} recepciones filtradas`
-                : `Mostrando 5 de ${filteredReceptionHistory.length} recepciones. ${hiddenReceptionCount} ocultas.`}
-            </div>
+        <footer className="flex flex-col gap-3 border-t border-acsm-line bg-acsm-paper/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-acsm-muted">
+            {filteredReceptionHistory.length
+              ? `Mostrando ${(currentReceptionPage - 1) * receptionPageSize + 1}-${Math.min(currentReceptionPage * receptionPageSize, filteredReceptionHistory.length)} de ${filteredReceptionHistory.length}`
+              : 'Sin registros para mostrar'}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-acsm-muted">
+              Renglones
+              <select
+                value={receptionPageSize}
+                onChange={(event) => {
+                  setReceptionPageSize(Number(event.target.value))
+                  setReceptionPage(1)
+                  setExpandedReceptionId(null)
+                }}
+                className="h-9 rounded-md border border-acsm-line bg-white px-2 text-sm text-acsm-ink"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </label>
             <button
               type="button"
-              onClick={() => setReceptionHistoryExpanded((current) => !current)}
-              className="inline-flex h-9 items-center justify-center rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold text-acsm-ink hover:bg-acsm-paper"
+              onClick={() => {
+                setReceptionPage(Math.max(currentReceptionPage - 1, 1))
+                setExpandedReceptionId(null)
+              }}
+              disabled={currentReceptionPage <= 1}
+              title="Pagina anterior"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-white text-acsm-ink hover:bg-acsm-paper disabled:opacity-40"
             >
-              {receptionHistoryExpanded ? 'Ver menos' : 'Ver mas'}
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <span className="min-w-24 text-center text-sm font-semibold text-acsm-ink">
+              {currentReceptionPage} de {receptionPageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setReceptionPage(Math.min(currentReceptionPage + 1, receptionPageCount))
+                setExpandedReceptionId(null)
+              }}
+              disabled={currentReceptionPage >= receptionPageCount}
+              title="Pagina siguiente"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-acsm-line bg-white text-acsm-ink hover:bg-acsm-paper disabled:opacity-40"
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
-        ) : null}
+        </footer>
       </section>
       ) : null}
 

@@ -92,6 +92,7 @@ INVOICE_RECEIVABLE_STATUSES = ("received", "approved_for_payment", "scheduled", 
 INVENTORY_CONTEXT_VIEW = require_any_permission(
     ("inventory", "view"),
     ("inventory_receiving", "view"),
+    ("inventory_reception_history", "view"),
     ("inventory_progress", "view"),
     ("inventory_missing", "view"),
     ("inventory_stock", "view"),
@@ -2194,7 +2195,7 @@ def create_reception(
 def list_project_receptions(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("inventory_receiving", "view")),
+    current_user: User = Depends(require_permission("inventory_reception_history", "view")),
 ) -> list[MaterialReception]:
     project = _project_for_user(db, project_id, current_user)
     return list(

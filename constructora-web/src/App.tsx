@@ -119,6 +119,10 @@ export default function App() {
             element={protect(<InventoryPage mode="material_receiving" />, 'inventory_receiving:view')}
           />
           <Route
+            path="/inventory/reception-history"
+            element={protect(<InventoryPage mode="reception_history" />, 'inventory_reception_history:view')}
+          />
+          <Route
             path="/inventory/model-progress"
             element={protect(<InventoryPage mode="model_control" />, 'inventory_progress:view')}
           />

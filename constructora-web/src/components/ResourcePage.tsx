@@ -114,6 +114,7 @@ const permissionModuleLabels: Record<string, string> = {
   construction_concepts: 'Conceptos',
   inventory: 'Inventario',
   inventory_receiving: 'Recepcion de materiales',
+  inventory_reception_history: 'Historial de recepciones',
   inventory_progress: 'Control de avance',
   inventory_missing: 'Faltantes de material',
   inventory_stock: 'Existencias',
