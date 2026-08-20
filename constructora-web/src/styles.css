@@ -142,7 +142,15 @@ textarea:focus-visible {
 }
 
 ::selection {
-  background: #dbeafe;
+  color: #ffffff;
+  background-color: #1769aa;
+  text-shadow: none;
+}
+
+::-moz-selection {
+  color: #ffffff;
+  background-color: #1769aa;
+  text-shadow: none;
 }
 
 .bg-acsm-green {

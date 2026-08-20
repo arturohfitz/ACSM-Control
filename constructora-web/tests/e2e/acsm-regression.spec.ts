@@ -1071,6 +1071,29 @@ test('login muestra el dashboard con sesion activa', async ({ page }) => {
   await expect(page.getByText('admin@acsm-control.local').first()).toBeVisible()
 })
 
+test('el texto seleccionado mantiene contraste visible en todo el sistema', async ({ page }) => {
+  await page.goto('/login')
+
+  const selectionStyle = await page.getByText('ACSM Control').evaluate((element) => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+
+    const style = window.getComputedStyle(element, '::selection')
+    return {
+      backgroundColor: style.backgroundColor,
+      color: style.color,
+      selectedText: selection?.toString(),
+    }
+  })
+
+  expect(selectionStyle.selectedText).toBe('ACSM Control')
+  expect(selectionStyle.backgroundColor).toBe('rgb(23, 105, 170)')
+  expect(selectionStyle.color).toBe('rgb(255, 255, 255)')
+})
+
 test('control ejecutivo abre el detalle financiero del desarrollo', async ({ page }) => {
   await mockApi(page)
   await authenticate(page)
