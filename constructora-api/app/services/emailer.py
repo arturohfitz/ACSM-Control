@@ -141,6 +141,61 @@ def rfq_email_content(rfq: SupplierRFQ, portal_url: str | None = None) -> tuple[
     return subject, text_body, html_body
 
 
+def supplier_quote_correction_email_content(
+    rfq: SupplierRFQ,
+    *,
+    supplier_name: str,
+    quote_number: str | None,
+    reason: str,
+    portal_url: str,
+) -> tuple[str, str, str]:
+    subject = f"Se requiere una nueva cotizacion para {rfq.rfq_number}"
+    quote_label = quote_number or "Sin folio capturado"
+    deadline = rfq.response_deadline.isoformat() if rfq.response_deadline else "Sin fecha definida"
+    text_body = "\n".join(
+        [
+            f"Buen dia, {supplier_name}.",
+            "",
+            "La cotizacion enviada requiere correcciones y dejo de participar en el comparativo.",
+            "",
+            f"Solicitud: {rfq.rfq_number}",
+            f"Cotizacion sustituida: {quote_label}",
+            f"Limite de respuesta: {deadline}",
+            "",
+            "Motivo y observaciones de Compras:",
+            reason,
+            "",
+            "Cargue una nueva cotizacion en la siguiente liga segura:",
+            portal_url,
+            "",
+            "La nueva carga sustituira a la version anterior; el historial se conservara para auditoria.",
+        ]
+    )
+    html_reason = escape(reason).replace("\n", "<br>")
+    safe_url = escape(portal_url)
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; color:#172033; line-height:1.5;">
+      <h2 style="margin:0 0 12px;">Se requiere una nueva cotizacion</h2>
+      <p>Buen dia, <strong>{escape(supplier_name)}</strong>.</p>
+      <p>La cotizacion enviada requiere correcciones y dejo de participar en el comparativo.</p>
+      <table style="border-collapse:collapse; width:100%; margin:16px 0;">
+        <tbody>
+          <tr><td style="font-weight:700; padding:5px 0;">Solicitud</td><td>{escape(rfq.rfq_number)}</td></tr>
+          <tr><td style="font-weight:700; padding:5px 0;">Cotizacion sustituida</td><td>{escape(quote_label)}</td></tr>
+          <tr><td style="font-weight:700; padding:5px 0;">Limite de respuesta</td><td>{escape(deadline)}</td></tr>
+        </tbody>
+      </table>
+      <div style="margin:16px 0; padding:14px; border:1px solid #f5c66c; border-radius:10px; background:#fff8e6;">
+        <strong>Motivo y observaciones de Compras</strong><br>
+        <span>{html_reason}</span>
+      </div>
+      <a href="{safe_url}" style="display:inline-block; padding:12px 16px; border-radius:10px; background:#006da8; color:white; text-decoration:none; font-weight:700;">Cargar nueva cotizacion</a>
+      <p style="margin-top:14px; color:#53657d; font-size:12px;">La nueva carga sustituira a la version anterior; el historial se conservara para auditoria.</p>
+    </div>
+    """
+    return subject, text_body, html_body
+
+
 def _decimal_text(value) -> str:
     return f"{value.normalize():f}".rstrip("0").rstrip(".")
 

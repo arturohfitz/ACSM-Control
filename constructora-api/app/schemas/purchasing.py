@@ -30,6 +30,7 @@ RFQSupplierStatus = Literal[
     "missing_email",
     "email_error",
     "responded",
+    "correction_requested",
     "declined",
     "awarded",
 ]
@@ -466,8 +467,20 @@ class SupplierPortalRFQRead(BaseModel):
     required_by: date | None = None
     response_deadline: date | None = None
     supplier_name: str
+    correction_requested: bool = False
+    correction_reason: str | None = None
     items: list[SupplierRFQItemRead] = Field(default_factory=list)
     previous_uploads: list[SupplierQuoteUploadRead] = Field(default_factory=list)
+
+
+class SupplierQuoteCorrectionRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=2000)
+
+
+class SupplierQuoteCorrectionResponse(BaseModel):
+    message: str
+    supplier_email: str
+    email_queued: bool = True
 
 
 class SupplierQuoteApprovalRequest(BaseModel):

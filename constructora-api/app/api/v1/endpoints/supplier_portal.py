@@ -189,6 +189,8 @@ def get_supplier_quote_request(
         required_by=link.rfq.required_by,
         response_deadline=link.rfq.response_deadline,
         supplier_name=link.supplier.name if link.supplier else "Proveedor",
+        correction_requested=link.status == "correction_requested",
+        correction_reason=link.notes if link.status == "correction_requested" else None,
         items=link.rfq.items,
         previous_uploads=link.quote_uploads,
     )
@@ -219,7 +221,8 @@ async def upload_supplier_quote_document(
     db: Session = Depends(get_db),
 ) -> SupplierQuoteUpload:
     link = _link_from_token(db, token)
-    if link.quote_uploads:
+    replacement_requested = link.status == "correction_requested"
+    if link.quote_uploads and not replacement_requested:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -248,6 +251,10 @@ async def upload_supplier_quote_document(
     stored_path = upload_dir / stored_file_name
     stored_path.write_bytes(content)
     try:
+        if replacement_requested:
+            for previous_upload in link.quote_uploads:
+                if previous_upload.status == "correction_requested":
+                    previous_upload.status = "superseded"
         scan_note = _scan_with_clamav_if_available(stored_path)
         security_notes = "; ".join(note for note in (security_note, scan_note) if note) or None
         upload = SupplierQuoteUpload(
@@ -356,6 +363,7 @@ async def upload_supplier_quote_document(
             )
 
         link.status = "responded"
+        link.notes = "Cotizacion de reemplazo recibida." if replacement_requested else None
         if link.rfq.status == "sent":
             link.rfq.status = "partially_quoted"
         notify_permission(

@@ -856,6 +856,10 @@ export default function PurchasingPage() {
   const [quoteRows, setQuoteRows] = useState<QuoteDraftItem[]>([])
   const [exceptionOpen, setExceptionOpen] = useState(false)
   const [exceptionNotes, setExceptionNotes] = useState('')
+  const [quoteCorrectionRow, setQuoteCorrectionRow] = useState<ComparisonRow | null>(null)
+  const [quoteCorrectionReason, setQuoteCorrectionReason] = useState('')
+  const [quoteCorrectionError, setQuoteCorrectionError] = useState('')
+  const [quoteCorrectionSubmitting, setQuoteCorrectionSubmitting] = useState(false)
   const [rfqExceptionOpen, setRfqExceptionOpen] = useState(false)
   const [rfqExceptionNotes, setRfqExceptionNotes] = useState('')
   const [rfqExceptionError, setRfqExceptionError] = useState('')
@@ -2004,25 +2008,40 @@ export default function PurchasingPage() {
     }
   }
 
-  async function deleteSupplierQuoteForRecapture(row: ComparisonRow) {
-    setError('')
-    setMessage('')
+  async function requestSupplierQuoteCorrection() {
+    if (!quoteCorrectionRow) return
+    const reason = quoteCorrectionReason.trim()
+    if (reason.length < 10) {
+      setQuoteCorrectionError('Describe el motivo de la correccion con al menos 10 caracteres.')
+      return
+    }
+    setQuoteCorrectionSubmitting(true)
+    setQuoteCorrectionError('')
     try {
-      await apiRequest<void>(`/purchasing/supplier-quotes/${row.supplier_quote_id}`, {
-        method: 'DELETE',
+      const response = await apiRequest<{
+        message: string
+        supplier_email: string
+        email_queued: boolean
+      }>(`/purchasing/supplier-quotes/${quoteCorrectionRow.supplier_quote_id}/request-correction`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
       })
       resetQuoteCapture(selectedRfq)
+      const supplierName = quoteCorrectionRow.supplier_name
+      setQuoteCorrectionRow(null)
+      setQuoteCorrectionReason('')
       notifySuccess(
-        `Cotizacion de ${row.supplier_name} borrada. Tienes que volver a seleccionar el proveedor y recapturar los datos.`,
+        `Cotizacion de ${supplierName} cancelada. La solicitud de reemplazo se envio a ${response.supplier_email}.`,
         'warning',
       )
       await loadData(selectedRfq?.id)
       if (selectedRfq?.id) await loadRfqDetails(selectedRfq.id)
-      window.setTimeout(() => {
-        quoteCaptureRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 80)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible borrar la cotizacion')
+      setQuoteCorrectionError(
+        err instanceof Error ? err.message : 'No fue posible solicitar la nueva cotizacion',
+      )
+    } finally {
+      setQuoteCorrectionSubmitting(false)
     }
   }
 
@@ -3593,13 +3612,17 @@ export default function PurchasingPage() {
                       <td className="px-4 py-3 text-right">
                         <button
                           type="button"
-                          onClick={() => void deleteSupplierQuoteForRecapture(row)}
+                          onClick={() => {
+                            setQuoteCorrectionRow(row)
+                            setQuoteCorrectionReason('')
+                            setQuoteCorrectionError('')
+                          }}
                           disabled={!canCorrectQuote}
-                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
-                          title="Borrar esta captura para volver a registrar la cotizacion"
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-xs font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                          title="Cancelar esta version y pedir una nueva al proveedor"
                         >
-                          <Trash2 className="h-4 w-4" aria-hidden="true" />
-                          Volver a registrar
+                          <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                          Solicitar nueva
                         </button>
                       </td>
                     </tr>
@@ -3689,6 +3712,101 @@ export default function PurchasingPage() {
           </div>
         </div>
       </section>
+
+      {quoteCorrectionRow ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="quote-correction-title"
+          onClick={() => {
+            if (!quoteCorrectionSubmitting) setQuoteCorrectionRow(null)
+          }}
+        >
+          <div
+            className="w-full max-w-2xl overflow-hidden rounded-[22px] border border-white/20 bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-amber-200 bg-amber-50 px-6 py-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl border border-amber-300 bg-white text-amber-700">
+                  <RotateCcw className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">
+                    Correccion a proveedor
+                  </p>
+                  <h2 id="quote-correction-title" className="mt-1 text-xl font-bold text-acsm-ink">
+                    Cancelar y solicitar nueva cotizacion
+                  </h2>
+                  <p className="mt-1 text-sm text-acsm-muted">
+                    {quoteCorrectionRow.supplier_name} ·{' '}
+                    {quotes.find((quote) => quote.id === quoteCorrectionRow.supplier_quote_id)?.quote_number ||
+                      selectedRfq?.rfq_number}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuoteCorrectionRow(null)}
+                disabled={quoteCorrectionSubmitting}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-acsm-line bg-white text-acsm-ink hover:bg-acsm-paper disabled:opacity-50"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="space-y-4 p-6">
+              <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+                Esta version saldra del comparativo. El documento, los datos y el motivo se conservaran en el historial, y el proveedor recibira una liga nueva para cargar su reemplazo.
+              </div>
+              <label className="block text-sm font-bold text-acsm-ink">
+                Motivo y correcciones solicitadas *
+                <textarea
+                  value={quoteCorrectionReason}
+                  onChange={(event) => {
+                    setQuoteCorrectionReason(event.target.value)
+                    setQuoteCorrectionError('')
+                  }}
+                  rows={5}
+                  maxLength={2000}
+                  autoFocus
+                  placeholder="Ej. Corregir cantidades de las partidas 2 y 4, confirmar vigencia y reenviar el documento firmado."
+                  className="mt-2 w-full rounded-xl border border-acsm-line px-3 py-3 text-sm"
+                />
+              </label>
+              <div className="flex items-center justify-between gap-3 text-xs text-acsm-muted">
+                <span>El proveedor vera estas indicaciones en el correo y en su portal.</span>
+                <span>{quoteCorrectionReason.length}/2000</span>
+              </div>
+              {quoteCorrectionError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                  {quoteCorrectionError}
+                </div>
+              ) : null}
+              <div className="flex flex-wrap justify-end gap-3 border-t border-acsm-line pt-4">
+                <button
+                  type="button"
+                  onClick={() => setQuoteCorrectionRow(null)}
+                  disabled={quoteCorrectionSubmitting}
+                  className="inline-flex h-11 items-center rounded-xl border border-acsm-line bg-white px-5 text-sm font-bold text-acsm-ink hover:bg-acsm-paper disabled:opacity-50"
+                >
+                  Conservar cotizacion
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void requestSupplierQuoteCorrection()}
+                  disabled={quoteCorrectionSubmitting || quoteCorrectionReason.trim().length < 10}
+                  className="inline-flex h-11 items-center gap-2 rounded-xl bg-acsm-green px-5 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover disabled:opacity-60"
+                >
+                  <Send className="h-4 w-4" aria-hidden="true" />
+                  {quoteCorrectionSubmitting ? 'Enviando...' : 'Enviar solicitud al proveedor'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {rfqExceptionOpen ? (
         <div

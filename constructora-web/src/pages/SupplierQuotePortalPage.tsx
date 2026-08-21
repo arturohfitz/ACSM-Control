@@ -37,6 +37,8 @@ type PortalRFQ = {
   required_by?: string | null
   response_deadline?: string | null
   supplier_name: string
+  correction_requested: boolean
+  correction_reason?: string | null
   items: PortalItem[]
   previous_uploads: PortalUpload[]
 }
@@ -97,7 +99,9 @@ export default function SupplierQuotePortalPage() {
     () => [...(data?.previous_uploads ?? [])].sort((left, right) => right.id - left.id),
     [data?.previous_uploads],
   )
-  const hasExistingUpload = sortedUploads.length > 0
+  const hasExistingUpload = sortedUploads.some(
+    (upload) => !['correction_requested', 'superseded'].includes(upload.status),
+  )
 
   async function loadPortal() {
     setLoading(true)
@@ -253,6 +257,24 @@ export default function SupplierQuotePortalPage() {
               <div className="rounded-[18px] border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
                 {error}
               </div>
+            ) : null}
+
+            {data.correction_requested ? (
+              <section className="rounded-[20px] border border-amber-300 bg-amber-50 px-5 py-4 text-amber-950 shadow-panel">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 flex-none text-amber-700" aria-hidden="true" />
+                  <div>
+                    <p className="font-bold">Compras solicito una nueva cotizacion</p>
+                    <p className="mt-1 text-sm">
+                      La version anterior dejo de participar en el comparativo. Carga el documento corregido desde esta misma liga.
+                    </p>
+                    <div className="mt-3 rounded-md border border-amber-200 bg-white/70 px-3 py-2 text-sm">
+                      <span className="font-bold">Motivo:</span>{' '}
+                      {data.correction_reason || 'Revisa la solicitud enviada por Compras.'}
+                    </div>
+                  </div>
+                </div>
+              </section>
             ) : null}
 
             <section className="overflow-hidden rounded-[24px] border border-acsm-line bg-white shadow-panel">
@@ -577,6 +599,11 @@ export default function SupplierQuotePortalPage() {
                             {upload.quote_number || 'Sin folio'} · {formatBytes(upload.file_size_bytes)}
                           </p>
                           <p className="mt-1 text-xs text-acsm-muted">{formatDateTime(upload.uploaded_at)}</p>
+                          {['correction_requested', 'superseded'].includes(upload.status) ? (
+                            <span className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800">
+                              Version sustituida
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     </div>

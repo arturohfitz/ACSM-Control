@@ -783,6 +783,29 @@ async function mockApi(
       return json(quote)
     }
 
+    const quoteCorrectionMatch = pathname.match(
+      /^\/purchasing\/supplier-quotes\/(\d+)\/request-correction$/,
+    )
+    if (quoteCorrectionMatch && method === 'POST') {
+      const quoteId = Number(quoteCorrectionMatch[1])
+      const quote = Object.values(quotesByRfq)
+        .flat()
+        .find((entry) => entry.id === quoteId)
+      if (!quote) return json({ detail: 'Cotizacion no encontrada' }, 404)
+      const payload = await request.postDataJSON()
+      if (String(payload.reason ?? '').trim().length < 10) {
+        return json({ detail: 'El motivo es obligatorio' }, 422)
+      }
+      quotesByRfq[quote.rfq_id] = (quotesByRfq[quote.rfq_id] ?? []).filter(
+        (entry) => entry.id !== quoteId,
+      )
+      return json({
+        message: 'Solicitud de nueva cotizacion enviada al proveedor.',
+        supplier_email: 'compras@aceros-bajio.example.com',
+        email_queued: true,
+      })
+    }
+
     const comparisonMatch = pathname.match(/^\/purchasing\/supplier-rfqs\/(\d+)\/comparison$/)
     if (comparisonMatch) {
       return json(comparisonFromQuotes(quotesByRfq[Number(comparisonMatch[1])] ?? []))
@@ -1280,6 +1303,32 @@ test('compras separa detalle de solicitud y captura de cotizacion', async ({ pag
   await page.getByRole('button', { name: 'Guardar cotizacion' }).click()
 
   await expect(page.getByText('Datos guardados para su comparativo.')).toBeVisible()
+})
+
+test('compras cancela una cotizacion y solicita reemplazo con motivo obligatorio', async ({
+  page,
+}) => {
+  await mockApi(page)
+  await authenticate(page)
+  await page.goto('/purchasing/operations?rfq_id=10&focus=comparison')
+
+  await page.getByRole('button', { name: 'Solicitar nueva' }).first().click()
+  const dialog = page.getByRole('dialog', { name: 'Cancelar y solicitar nueva cotizacion' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Enviar solicitud al proveedor' })).toBeDisabled()
+
+  await dialog
+    .getByLabel('Motivo y correcciones solicitadas *')
+    .fill('Corregir cantidades, vigencia y reenviar el documento firmado.')
+  await dialog.getByRole('button', { name: 'Enviar solicitud al proveedor' }).click()
+
+  await expect(dialog).toHaveCount(0)
+  await expect(
+    page.getByText(
+      'Cotizacion de Aceros del Bajio cancelada. La solicitud de reemplazo se envio a compras@aceros-bajio.example.com.',
+    ),
+  ).toBeVisible()
+  await expect(page.getByText('2 cotizaciones completas de 3 requeridas')).toBeVisible()
 })
 
 test('captura asistida abre desde la alerta y permite continuar manualmente', async ({

@@ -76,6 +76,8 @@ from app.schemas.purchasing import (
     SupplierPaymentRead,
     SupplierPaymentUpdate,
     SupplierQuoteCreate,
+    SupplierQuoteCorrectionRequest,
+    SupplierQuoteCorrectionResponse,
     SupplierQuoteDraftConfirmation,
     SupplierQuoteDraftRead,
     SupplierQuoteApprovalDecision,
@@ -102,7 +104,11 @@ from app.services.email_outbox import (
     process_email_outbox_for_company,
     queue_email,
 )
-from app.services.emailer import purchase_order_email_content, rfq_email_content
+from app.services.emailer import (
+    purchase_order_email_content,
+    rfq_email_content,
+    supplier_quote_correction_email_content,
+)
 from app.services.financial_reconciliations import (
     apply_reconciliation_case,
     create_reconciliation_case,
@@ -2507,12 +2513,17 @@ def download_supplier_quote_upload(
     )
 
 
-@router.delete("/supplier-quotes/{quote_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_supplier_quote(
+@router.post(
+    "/supplier-quotes/{quote_id}/request-correction",
+    response_model=SupplierQuoteCorrectionResponse,
+)
+def request_supplier_quote_correction(
     quote_id: int,
+    payload: SupplierQuoteCorrectionRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("supplier_quotes", "edit")),
-) -> None:
+) -> SupplierQuoteCorrectionResponse:
     quote = db.scalar(
         select(SupplierQuote)
         .where(SupplierQuote.id == quote_id)
@@ -2532,40 +2543,123 @@ def delete_supplier_quote(
     if quote.rfq.status in {"approval_pending", "awarded"}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="No se puede borrar una cotizacion que ya esta en aprobacion o adjudicada",
+            detail="No se puede cancelar una cotizacion que ya esta en aprobacion o adjudicada",
         )
     if quote.purchase_order is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="No se puede borrar una cotizacion con orden de compra",
+            detail="No se puede cancelar una cotizacion con orden de compra",
         )
     if quote.approval is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="No se puede borrar una cotizacion con historial de aprobacion",
+            detail="No se puede cancelar una cotizacion con historial de aprobacion",
         )
     if quote.status != "received":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Solo se pueden corregir cotizaciones recibidas antes de aprobacion",
+            detail="Solo se pueden solicitar correcciones antes de la aprobacion",
         )
 
+    reason = payload.reason.strip()
+    company_id = quote.company_id
     rfq = quote.rfq
-    supplier_name = quote.supplier.name if quote.supplier else str(quote.supplier_id)
+    supplier = quote.supplier
+    supplier_name = supplier.name if supplier else str(quote.supplier_id)
+    recipient = (supplier.contact_email or "").strip() if supplier else ""
+    if not recipient:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El proveedor no tiene correo de contacto. Actualizalo antes de solicitar una nueva cotizacion.",
+        )
     link = next((item for item in rfq.supplier_links if item.supplier_id == quote.supplier_id), None)
-    if link is not None:
-        link.status = "sent" if rfq.status in {"sent", "quoted", "partially_quoted"} else "invited"
+    if link is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No existe un enlace de cotizacion para este proveedor",
+        )
+
+    previous_uploads = list(
+        db.scalars(
+            select(SupplierQuoteUpload).where(
+                SupplierQuoteUpload.rfq_supplier_id == link.id,
+            )
+        ).all()
+    )
+    previous_drafts = list(
+        db.scalars(
+            select(SupplierQuoteDraft).where(
+                SupplierQuoteDraft.rfq_supplier_id == link.id,
+            )
+        ).all()
+    )
+    for upload in previous_uploads:
+        if upload.status != "superseded":
+            upload.status = "correction_requested"
+    for draft in previous_drafts:
+        if draft.status != "correction_requested":
+            draft.status = "correction_requested"
+        if draft.supplier_quote_id == quote.id:
+            draft.supplier_quote_id = None
+
+    token = _new_supplier_portal_token(link, rfq)
+    link.status = "correction_requested"
+    link.notes = reason
+    subject, text_body, html_body = supplier_quote_correction_email_content(
+        rfq,
+        supplier_name=supplier_name,
+        quote_number=quote.quote_number,
+        reason=reason,
+        portal_url=_supplier_portal_url(token),
+    )
+    queue_email(
+        db,
+        company_id=company_id,
+        recipient_email=recipient,
+        recipient_name=supplier_name,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+        message_type="supplier_quote_correction",
+        related_entity_type="SupplierQuoteCorrection",
+        related_entity_id=quote.id,
+        requested_by=current_user.id,
+    )
     record_event(
         db,
         current_user,
         module="compras",
-        action="delete",
+        action="request_correction",
         entity_type="SupplierQuote",
         entity_id=quote.id,
-        company_id=quote.company_id,
+        company_id=company_id,
         label=quote.quote_number or rfq.rfq_number,
-        description=f"{current_user.full_name} borro la cotizacion de {supplier_name} para recaptura",
-        metadata={"rfq_id": rfq.id, "supplier_id": quote.supplier_id},
+        description=(
+            f"{current_user.full_name} cancelo la cotizacion de {supplier_name} "
+            "y solicito una nueva version"
+        ),
+        metadata={
+            "rfq_id": rfq.id,
+            "supplier_id": quote.supplier_id,
+            "supplier_email": recipient,
+            "quote_number": quote.quote_number,
+            "reason": reason,
+            "subtotal": str(quote.subtotal),
+            "total": str(quote.total),
+            "upload_ids": [upload.id for upload in previous_uploads],
+            "items": [
+                {
+                    "rfq_item_id": item.rfq_item_id,
+                    "description": item.description,
+                    "quantity": str(item.quantity),
+                    "unit": item.unit,
+                    "unit_price": str(item.unit_price),
+                    "line_total": str(item.line_total),
+                    "delivery_days": item.delivery_days,
+                }
+                for item in quote.items
+            ],
+        },
     )
     db.delete(quote)
     db.flush()
@@ -2577,6 +2671,11 @@ def delete_supplier_quote(
     else:
         rfq.status = "partially_quoted"
     db.commit()
+    background_tasks.add_task(process_email_outbox_for_company, company_id)
+    return SupplierQuoteCorrectionResponse(
+        message="Solicitud de nueva cotizacion enviada al proveedor.",
+        supplier_email=recipient,
+    )
 
 
 @router.get("/supplier-rfqs/{rfq_id}/comparison", response_model=list[SupplierRFQComparisonRow])
