@@ -197,14 +197,19 @@ def supplier_quote_correction_email_content(
 
 
 def _decimal_text(value) -> str:
-    return f"{value.normalize():f}".rstrip("0").rstrip(".")
+    text = f"{value:f}"
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 def _money_text(value) -> str:
     return f"${value:,.2f}"
 
 
-def purchase_order_email_content(purchase_order: PurchaseOrder) -> tuple[str, str, str]:
+def purchase_order_email_content(
+    purchase_order: PurchaseOrder,
+    *,
+    invoice_portal_url: str | None = None,
+) -> tuple[str, str, str]:
     supplier_name = purchase_order.supplier.name if purchase_order.supplier else "Proveedor"
     project_name = purchase_order.project.name if purchase_order.project else "Sin desarrollo"
     issued_at = purchase_order.issued_at.isoformat() if purchase_order.issued_at else "Sin fecha"
@@ -239,6 +244,15 @@ def purchase_order_email_content(purchase_order: PurchaseOrder) -> tuple[str, st
         )
     if purchase_order.notes:
         lines.extend(["", f"Notas: {purchase_order.notes}"])
+    if invoice_portal_url:
+        lines.extend(
+            [
+                "",
+                "Portal seguro para enviar facturas PDF o XML:",
+                invoice_portal_url,
+                "La factura sera revisada por Compras antes de autorizar cualquier pago.",
+            ]
+        )
     lines.extend(["", "Favor de confirmar recepcion de esta orden de compra.", "", "Gracias."])
     text_body = "\n".join(lines)
 
@@ -257,6 +271,16 @@ def purchase_order_email_content(purchase_order: PurchaseOrder) -> tuple[str, st
         notes_block = f"""
         <div style="margin-top:16px; padding:12px; border-radius:10px; background:#eef8ff; border:1px solid #b7d8f4;">
           <strong>Notas</strong><br>{escape(purchase_order.notes)}
+        </div>
+        """
+    invoice_portal_block = ""
+    if invoice_portal_url:
+        safe_invoice_url = escape(invoice_portal_url, quote=True)
+        invoice_portal_block = f"""
+        <div style="margin-top:16px; padding:16px; border-radius:10px; background:#eef8ff; border:1px solid #9bcbea;">
+          <strong>Envio seguro de factura</strong>
+          <p style="margin:6px 0 14px;">Cuando corresponda, adjunte el PDF o XML. Compras revisara el documento antes de autorizar el pago.</p>
+          <a href="{safe_invoice_url}" style="display:inline-block; padding:12px 16px; border-radius:8px; background:#006da8; color:white; text-decoration:none; font-weight:700;">Enviar factura</a>
         </div>
         """
     html_body = f"""
@@ -286,8 +310,46 @@ def purchase_order_email_content(purchase_order: PurchaseOrder) -> tuple[str, st
         <tbody>{rows}</tbody>
       </table>
       {notes_block}
+      {invoice_portal_block}
       <p style="margin-top: 18px;">Favor de confirmar recepcion de esta orden de compra.</p>
       <p>Gracias.</p>
+    </div>
+    """
+    return subject, text_body, html_body
+
+
+def supplier_invoice_correction_email_content(
+    purchase_order: PurchaseOrder,
+    *,
+    portal_url: str,
+    reason: str,
+) -> tuple[str, str, str]:
+    supplier_name = purchase_order.supplier.name if purchase_order.supplier else "Proveedor"
+    subject = f"Correccion de factura para {purchase_order.po_number}"
+    text_body = "\n".join(
+        [
+            f"Buen dia, {supplier_name}.",
+            "",
+            f"La factura enviada para la orden {purchase_order.po_number} requiere correccion.",
+            f"Motivo: {reason}",
+            "",
+            "Use la siguiente liga segura para enviar los documentos corregidos:",
+            portal_url,
+            "",
+            "La entrega anterior se conserva en el historial de auditoria y no sera procesada.",
+        ]
+    )
+    safe_url = escape(portal_url, quote=True)
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;color:#172033;line-height:1.5;">
+      <h2 style="margin:0 0 12px;">Correccion de factura</h2>
+      <p>Buen dia, {escape(supplier_name)}.</p>
+      <p>La factura enviada para la orden <strong>{escape(purchase_order.po_number)}</strong> requiere correccion.</p>
+      <div style="margin:16px 0;padding:14px;border:1px solid #f2c38c;border-radius:8px;background:#fff8ec;">
+        <strong>Motivo</strong><br>{escape(reason)}
+      </div>
+      <a href="{safe_url}" style="display:inline-block;padding:12px 16px;border-radius:8px;background:#006da8;color:#fff;text-decoration:none;font-weight:700;">Enviar factura corregida</a>
+      <p style="margin-top:16px;color:#59677d;">La entrega anterior se conserva en el historial de auditoria y no sera procesada.</p>
     </div>
     """
     return subject, text_body, html_body

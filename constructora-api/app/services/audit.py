@@ -103,6 +103,38 @@ def record_event(
     return event
 
 
+def record_external_event(
+    db: Session,
+    *,
+    module: str,
+    action: str,
+    entity_type: str,
+    entity_id: int | str | None,
+    company_id: int | None,
+    actor_name: str,
+    actor_email: str | None = None,
+    label: str | None = None,
+    description: str,
+    metadata: dict[str, Any] | None = None,
+) -> AuditEvent:
+    """Records an action performed through a public supplier link."""
+    event = AuditEvent(
+        company_id=company_id,
+        user_id=None,
+        user_name=actor_name,
+        user_email=actor_email,
+        module=module,
+        action=action,
+        entity_type=entity_type,
+        entity_id=str(entity_id) if entity_id is not None else None,
+        entity_label=label or (str(entity_id) if entity_id is not None else entity_type),
+        description=description,
+        event_metadata=metadata,
+    )
+    db.add(event)
+    return event
+
+
 def record_create(db: Session, current_user: User, *, module: str, item: Any) -> AuditEvent:
     return record_event(
         db,

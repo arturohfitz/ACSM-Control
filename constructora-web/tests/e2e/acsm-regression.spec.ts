@@ -1667,3 +1667,149 @@ test('pagos interpreta la factura y autocompleta encabezado y partidas recibidas
     invoiceSection.getByLabel('Precio unitario de Cemento gris 50kg'),
   ).toHaveValue('55.00')
 })
+
+test('proveedor entrega documentos fiscales desde la liga segura de la orden', async ({
+  page,
+}) => {
+  const token = 'invoice-portal-token-with-more-than-thirty-two-characters'
+  let submitted = false
+
+  await page.route(`**/api/v1/supplier-invoice-portal/${token}**`, async (route) => {
+    if (route.request().method() === 'POST') {
+      submitted = true
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 501,
+          invoice_number: 'FAC-PORTAL-001',
+          submitted_at: '2026-08-21T12:00:00-06:00',
+          status: 'review_required',
+          total: '1160.00',
+          documents: [
+            {
+              id: 701,
+              document_type: 'pdf',
+              original_file_name: 'FAC-PORTAL-001.pdf',
+              file_size: 58,
+            },
+          ],
+        }),
+      })
+    }
+
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        purchase_order_id: 800,
+        po_number: 'OC-202608-0001',
+        status: 'received',
+        supplier_name: 'Aceros del Bajio',
+        project_name: 'Privada Encinos',
+        issued_at: '2026-08-20',
+        subtotal: '1000.00',
+        currency: 'MXN',
+        items: [
+          {
+            id: 801,
+            description: 'Cemento gris 50kg',
+            unit: 'saco',
+            ordered: '20',
+            received: '20',
+            invoiced: '0',
+            available: '20',
+            unit_price: '50.00',
+          },
+        ],
+        submissions: submitted
+          ? [
+              {
+                id: 501,
+                invoice_number: 'FAC-PORTAL-001',
+                submitted_at: '2026-08-21T12:00:00-06:00',
+                status: 'review_required',
+                total: '1160.00',
+                documents: [
+                  {
+                    id: 701,
+                    document_type: 'pdf',
+                    original_file_name: 'FAC-PORTAL-001.pdf',
+                    file_size: 58,
+                  },
+                ],
+              },
+            ]
+          : [],
+      }),
+    })
+  })
+
+  await page.goto(`/supplier/invoice/${token}`)
+
+  await expect(page.getByRole('heading', { name: 'OC-202608-0001' })).toBeVisible()
+  await page.getByLabel('Folio').fill('FAC-PORTAL-001')
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: 'FAC-PORTAL-001.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n%%EOF'),
+  })
+  await page.getByRole('button', { name: 'Enviar documentos a Compras' }).click()
+
+  expect(submitted).toBe(true)
+  await expect(
+    page.getByText('Documentos recibidos. Compras fue notificado y revisara la factura antes de registrarla.'),
+  ).toBeVisible()
+  await expect(page.getByText('FAC-PORTAL-001', { exact: true })).toBeVisible()
+})
+
+test('alerta de factura abre y enfoca los documentos pendientes de la orden', async ({
+  page,
+}) => {
+  await mockApi(page)
+  await page.route('**/api/v1/purchasing/supplier-invoice-submissions**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 501,
+          purchase_order_id: 800,
+          supplier_id: 1,
+          invoice_number: 'FAC-PORTAL-001',
+          invoice_date: '2026-08-21',
+          currency: 'MXN',
+          subtotal: '1000.00',
+          total: '1160.00',
+          status: 'review_required',
+          notes: 'Entrega completa',
+          submitted_at: '2026-08-21T12:00:00-06:00',
+          documents: [
+            {
+              id: 701,
+              submission_id: 501,
+              document_type: 'pdf',
+              original_file_name: 'FAC-PORTAL-001.pdf',
+              file_size: 58,
+              validation_status: 'valid',
+              uploaded_at: '2026-08-21T12:00:00-06:00',
+            },
+          ],
+        },
+      ]),
+    })
+  })
+  await authenticate(page)
+
+  await page.goto(
+    '/supplier-payments?view=invoices&project_id=1&purchase_order_id=800&submission_id=501&focus=invoice-submissions',
+  )
+
+  const pendingDocuments = page.locator('#invoice-submissions')
+  await expect(page.getByRole('heading', { name: 'Facturas de proveedores' })).toBeVisible()
+  await expect(pendingDocuments.getByText('FAC-PORTAL-001', { exact: true })).toBeVisible()
+  await expect(pendingDocuments).toBeInViewport()
+  await expect(
+    pendingDocuments.locator('article', { hasText: 'FAC-PORTAL-001' }),
+  ).toHaveClass(/ring-2/)
+})

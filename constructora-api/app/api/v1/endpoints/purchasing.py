@@ -36,6 +36,8 @@ from app.models import (
     SupplierInvoice,
     SupplierInvoiceDocument,
     SupplierInvoiceItem,
+    SupplierInvoiceSubmission,
+    SupplierInvoiceSubmissionDocument,
     SupplierPayment,
     SupplierQuote,
     SupplierQuoteApproval,
@@ -70,6 +72,8 @@ from app.schemas.purchasing import (
     SupplierInvoiceCreate,
     SupplierInvoiceDocumentAnalysis,
     SupplierInvoiceRead,
+    SupplierInvoiceSubmissionDecision,
+    SupplierInvoiceSubmissionRead,
     SupplierInvoiceXMLAnalysis,
     SupplierInvoiceValidation,
     SupplierPaymentCreate,
@@ -107,6 +111,7 @@ from app.services.email_outbox import (
 from app.services.emailer import (
     purchase_order_email_content,
     rfq_email_content,
+    supplier_invoice_correction_email_content,
     supplier_quote_correction_email_content,
 )
 from app.services.financial_reconciliations import (
@@ -380,6 +385,20 @@ def _supplier_portal_url(token: str) -> str:
     return f"{settings.public_app_url.rstrip('/')}/supplier/quote/{token}"
 
 
+def _new_invoice_portal_token(purchase_order: PurchaseOrder) -> str:
+    token = secrets.token_urlsafe(32)
+    purchase_order.invoice_portal_token_hash = _token_hash(token)
+    purchase_order.invoice_portal_token_expires_at = _now() + timedelta(
+        days=settings.supplier_invoice_token_expire_days
+    )
+    purchase_order.invoice_portal_last_accessed_at = None
+    return token
+
+
+def _invoice_portal_url(token: str) -> str:
+    return f"{settings.public_app_url.rstrip('/')}/supplier/invoice/{token}"
+
+
 def _queue_rfq_emails(db: Session, rfq: SupplierRFQ, requested_by: int | None = None) -> tuple[int, int]:
     queued_count = 0
     error_count = 0
@@ -435,6 +454,8 @@ def _queue_purchase_order_email(
     db: Session,
     purchase_order: PurchaseOrder,
     requested_by: int | None = None,
+    *,
+    invoice_link_only: bool = False,
 ) -> bool:
     supplier = purchase_order.supplier
     recipient = (supplier.contact_email or "").strip() if supplier else ""
@@ -444,24 +465,63 @@ def _queue_purchase_order_email(
             detail="El proveedor no tiene correo de contacto configurado.",
         )
 
-    if has_active_or_sent_message(
+    entity_type = "PurchaseOrderInvoicePortal" if invoice_link_only else "PurchaseOrder"
+    if not invoice_link_only and has_active_or_sent_message(
         db,
-        related_entity_type="PurchaseOrder",
+        related_entity_type=entity_type,
         related_entity_id=purchase_order.id,
         recipient_email=recipient,
     ):
         return False
 
-    subject, text_body, html_body = purchase_order_email_content(purchase_order)
+    token = _new_invoice_portal_token(purchase_order)
+    subject, text_body, html_body = purchase_order_email_content(
+        purchase_order,
+        invoice_portal_url=_invoice_portal_url(token),
+    )
     queue_email(
         db,
         company_id=purchase_order.company_id,
         requested_by=requested_by,
-        message_type="purchase_order",
-        related_entity_type="PurchaseOrder",
+        message_type="supplier_invoice_portal" if invoice_link_only else "purchase_order",
+        related_entity_type=entity_type,
         related_entity_id=purchase_order.id,
         recipient_email=recipient,
         recipient_name=supplier.contact_name or supplier.name if supplier else None,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+    )
+    return True
+
+
+def _queue_supplier_invoice_correction_email(
+    db: Session,
+    submission: SupplierInvoiceSubmission,
+    *,
+    reason: str,
+    requested_by: int | None,
+) -> bool:
+    purchase_order = submission.purchase_order
+    supplier = submission.supplier
+    recipient = (supplier.contact_email or "").strip() if supplier else ""
+    if not recipient:
+        return False
+    token = _new_invoice_portal_token(purchase_order)
+    subject, text_body, html_body = supplier_invoice_correction_email_content(
+        purchase_order,
+        portal_url=_invoice_portal_url(token),
+        reason=reason,
+    )
+    queue_email(
+        db,
+        company_id=submission.company_id,
+        requested_by=requested_by,
+        message_type="supplier_invoice_correction",
+        related_entity_type="SupplierInvoiceSubmission",
+        related_entity_id=submission.id,
+        recipient_email=recipient,
+        recipient_name=supplier.contact_name or supplier.name,
         subject=subject,
         text_body=text_body,
         html_body=html_body,
@@ -3566,6 +3626,41 @@ def send_purchase_order(
     return get_purchase_order(purchase_order_id, db, current_user)
 
 
+@router.post("/purchase-orders/{purchase_order_id}/invoice-portal/send")
+def send_purchase_order_invoice_portal(
+    purchase_order_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_invoices", "upload")),
+) -> dict[str, str]:
+    purchase_order = get_purchase_order(purchase_order_id, db, current_user)
+    if purchase_order.status in {"issued", "cancelled", "closed"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La orden debe estar enviada y vigente para solicitar una factura.",
+        )
+    _queue_purchase_order_email(
+        db,
+        purchase_order,
+        requested_by=current_user.id,
+        invoice_link_only=True,
+    )
+    record_event(
+        db,
+        current_user,
+        module="facturas_proveedor",
+        action="send_supplier_portal",
+        entity_type="PurchaseOrder",
+        entity_id=purchase_order.id,
+        company_id=purchase_order.company_id,
+        label=purchase_order.po_number,
+        description=f"{current_user.full_name} envio la liga de factura de {purchase_order.po_number}",
+    )
+    db.commit()
+    background_tasks.add_task(process_email_outbox_for_company, purchase_order.company_id)
+    return {"message": "Liga segura de factura enviada al proveedor"}
+
+
 @router.patch("/purchase-orders/{purchase_order_id}/billing-mode", response_model=PurchaseOrderRead)
 def update_purchase_order_billing_mode(
     purchase_order_id: int,
@@ -3698,6 +3793,139 @@ def list_supplier_invoices(
             .limit(limit)
         ).all()
     )
+
+
+def _invoice_submission_with_documents(
+    db: Session,
+    submission_id: int,
+    current_user: User,
+) -> SupplierInvoiceSubmission:
+    submission = db.scalar(
+        select(SupplierInvoiceSubmission)
+        .where(SupplierInvoiceSubmission.id == submission_id)
+        .options(
+            selectinload(SupplierInvoiceSubmission.documents),
+            selectinload(SupplierInvoiceSubmission.purchase_order),
+            selectinload(SupplierInvoiceSubmission.supplier),
+        )
+    )
+    if submission is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entrega no encontrada")
+    ensure_same_company(current_user, submission, db=db)
+    ensure_project_access(db, current_user, submission.purchase_order.project_id)
+    return submission
+
+
+@router.get(
+    "/supplier-invoice-submissions",
+    response_model=list[SupplierInvoiceSubmissionRead],
+)
+def list_supplier_invoice_submissions(
+    purchase_order_id: int | None = None,
+    submission_status: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_invoices", "view")),
+) -> list[SupplierInvoiceSubmission]:
+    statement = scoped_select(
+        select(SupplierInvoiceSubmission),
+        SupplierInvoiceSubmission,
+        current_user,
+    )
+    if purchase_order_id is not None:
+        purchase_order = get_purchase_order(purchase_order_id, db, current_user)
+        statement = statement.where(
+            SupplierInvoiceSubmission.purchase_order_id == purchase_order.id
+        )
+    if submission_status:
+        statement = statement.where(SupplierInvoiceSubmission.status == submission_status)
+    return list(
+        db.scalars(
+            statement.options(selectinload(SupplierInvoiceSubmission.documents)).order_by(
+                SupplierInvoiceSubmission.submitted_at.desc()
+            )
+        ).all()
+    )
+
+
+@router.get("/supplier-invoice-submission-documents/{document_id}/download")
+def download_supplier_invoice_submission_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_invoices", "view")),
+) -> FileResponse:
+    document = db.scalar(
+        select(SupplierInvoiceSubmissionDocument)
+        .where(SupplierInvoiceSubmissionDocument.id == document_id)
+        .options(selectinload(SupplierInvoiceSubmissionDocument.submission))
+    )
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo no encontrado")
+    ensure_same_company(current_user, document.submission, db=db)
+    file_path = Path(document.storage_path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Archivo no encontrado")
+    return FileResponse(
+        path=file_path,
+        media_type=document.content_type,
+        filename=document.original_file_name,
+    )
+
+
+@router.post(
+    "/supplier-invoice-submissions/{submission_id}/reject",
+    response_model=SupplierInvoiceSubmissionRead,
+)
+def reject_supplier_invoice_submission(
+    submission_id: int,
+    payload: SupplierInvoiceSubmissionDecision,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_invoices", "validate")),
+) -> SupplierInvoiceSubmission:
+    submission = _invoice_submission_with_documents(db, submission_id, current_user)
+    if submission.status != "review_required":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La entrega ya fue atendida.",
+        )
+    submission.status = "rejected"
+    submission.validation_message = payload.notes.strip()
+    submission.reviewed_at = _now()
+    submission.reviewed_by = current_user.id
+    correction_email_queued = _queue_supplier_invoice_correction_email(
+        db,
+        submission,
+        reason=submission.validation_message,
+        requested_by=current_user.id,
+    )
+    record_event(
+        db,
+        current_user,
+        module="facturas_proveedor",
+        action="reject_supplier_submission",
+        entity_type="SupplierInvoiceSubmission",
+        entity_id=submission.id,
+        company_id=submission.company_id,
+        label=submission.invoice_number or submission.purchase_order.po_number,
+        description=(
+            f"{current_user.full_name} rechazo la entrega fiscal "
+            f"de {submission.purchase_order.po_number}"
+        ),
+        metadata={
+            "motivo": submission.validation_message,
+            "correo_proveedor_encolado": correction_email_queued,
+        },
+    )
+    resolve_notifications(
+        db,
+        company_id=submission.company_id,
+        entity_type="SupplierInvoiceSubmission",
+        entity_id=submission.id,
+    )
+    db.commit()
+    if correction_email_queued:
+        background_tasks.add_task(process_email_outbox_for_company, submission.company_id)
+    return _invoice_submission_with_documents(db, submission.id, current_user)
 
 
 def _invoice_payload_net_amount(
@@ -3942,6 +4170,32 @@ async def _validated_invoice_upload(file: UploadFile, document_type: str) -> Val
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+def _validated_submission_files(
+    submission: SupplierInvoiceSubmission,
+) -> tuple[ValidatedInvoiceFile | None, ValidatedInvoiceFile | None]:
+    validated: dict[str, ValidatedInvoiceFile] = {}
+    for document in submission.documents:
+        file_path = Path(document.storage_path)
+        if not file_path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"No se encontro el archivo {document.original_file_name}.",
+            )
+        try:
+            validated[document.document_type] = validate_invoice_file(
+                file_name=document.original_file_name,
+                content_type=document.content_type,
+                content=file_path.read_bytes(),
+                expected_type=document.document_type,
+            )
+        except InvoiceDocumentError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{document.original_file_name}: {exc}",
+            ) from exc
+    return validated.get("pdf"), validated.get("xml")
+
+
 @router.post(
     "/supplier-invoice-documents/analyze-xml",
     response_model=SupplierInvoiceXMLAnalysis,
@@ -4012,16 +4266,16 @@ async def analyze_supplier_invoice_document(
 )
 async def register_supplier_invoice(
     payload_json: str = Form(...),
+    submission_id: int | None = Form(default=None),
     pdf_file: UploadFile | None = File(default=None),
     xml_file: UploadFile | None = File(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("supplier_invoices", "upload")),
 ) -> SupplierInvoice:
-    if pdf_file is None and xml_file is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Adjunta al menos el PDF o el XML de la factura.",
-        )
+    # FastAPI resolves Form defaults during HTTP requests. Direct service-level
+    # tests call this function without that resolution, so normalize the marker.
+    if not isinstance(submission_id, int) or isinstance(submission_id, bool):
+        submission_id = None
     try:
         payload = SupplierInvoiceCreate.model_validate_json(payload_json)
     except ValidationError as exc:
@@ -4030,8 +4284,33 @@ async def register_supplier_invoice(
             detail=json.loads(exc.json()),
         ) from exc
 
-    validated_pdf = await _validated_invoice_upload(pdf_file, "pdf") if pdf_file else None
-    validated_xml = await _validated_invoice_upload(xml_file, "xml") if xml_file else None
+    submission: SupplierInvoiceSubmission | None = None
+    if submission_id is not None:
+        if pdf_file is not None or xml_file is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Usa los documentos del proveedor o adjunta archivos nuevos, no ambos.",
+            )
+        submission = _invoice_submission_with_documents(db, submission_id, current_user)
+        if submission.status != "review_required":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La entrega del proveedor ya fue atendida.",
+            )
+        if submission.purchase_order_id != payload.purchase_order_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La entrega no pertenece a la orden de compra seleccionada.",
+            )
+        validated_pdf, validated_xml = _validated_submission_files(submission)
+    else:
+        if pdf_file is None and xml_file is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Adjunta al menos el PDF o el XML de la factura.",
+            )
+        validated_pdf = await _validated_invoice_upload(pdf_file, "pdf") if pdf_file else None
+        validated_xml = await _validated_invoice_upload(xml_file, "xml") if xml_file else None
     purchase_order = get_purchase_order(payload.purchase_order_id, db, current_user)
     fiscal_status = "pending_manual"
     fiscal_message = "Factura capturada con PDF; requiere validacion fiscal manual."
@@ -4067,6 +4346,18 @@ async def register_supplier_invoice(
         invoice.fiscal_status = fiscal_status
         invoice.fiscal_validation_message = fiscal_message
         invoice.status = "received" if fiscal_status == "valid" else "fiscal_review"
+        if submission is not None:
+            submission.status = "registered"
+            submission.validation_message = "Documentos revisados e incorporados a la factura."
+            submission.reviewed_at = _now()
+            submission.reviewed_by = current_user.id
+            submission.supplier_invoice_id = invoice.id
+            resolve_notifications(
+                db,
+                company_id=submission.company_id,
+                entity_type="SupplierInvoiceSubmission",
+                entity_id=submission.id,
+            )
         record_event(
             db,
             current_user,
@@ -4081,6 +4372,7 @@ async def register_supplier_invoice(
                 "pdf": bool(validated_pdf),
                 "xml": bool(validated_xml),
                 "fiscal_status": fiscal_status,
+                "supplier_submission_id": submission.id if submission else None,
             },
         )
         db.commit()

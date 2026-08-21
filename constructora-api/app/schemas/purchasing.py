@@ -741,6 +741,47 @@ class SupplierInvoiceDocumentRead(TimestampRead):
     uploaded_at: datetime
 
 
+class SupplierInvoiceSubmissionDocumentRead(TimestampRead):
+    id: int
+    submission_id: int
+    document_type: str
+    original_file_name: str
+    content_type: str
+    extension: str
+    file_size: int
+    sha256: str
+    validation_status: str
+    validation_message: str | None = None
+    parsed_data: dict | None = None
+    uploaded_at: datetime
+
+
+class SupplierInvoiceSubmissionRead(TimestampRead):
+    id: int
+    company_id: int
+    purchase_order_id: int
+    supplier_id: int
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+    currency: str
+    subtotal: Decimal | None = None
+    total: Decimal | None = None
+    fiscal_uuid: str | None = None
+    notes: str | None = None
+    status: str
+    validation_message: str | None = None
+    parsed_data: dict | None = None
+    submitted_at: datetime
+    reviewed_at: datetime | None = None
+    reviewed_by: int | None = None
+    supplier_invoice_id: int | None = None
+    documents: list[SupplierInvoiceSubmissionDocumentRead] = Field(default_factory=list)
+
+
+class SupplierInvoiceSubmissionDecision(BaseModel):
+    notes: str = Field(min_length=3, max_length=2000)
+
+
 class SupplierInvoiceXMLAnalysis(BaseModel):
     document_type: str = "xml"
     validation_status: str

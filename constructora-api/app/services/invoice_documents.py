@@ -230,6 +230,26 @@ def store_invoice_file(validated: ValidatedInvoiceFile, *, company_id: int, invo
     return stored_path
 
 
+def store_invoice_submission_file(
+    validated: ValidatedInvoiceFile,
+    *,
+    company_id: int,
+    submission_id: int,
+) -> Path:
+    upload_dir = invoice_upload_base_dir() / str(company_id) / "portal" / str(submission_id)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_dir.chmod(0o700)
+    stored_path = upload_dir / f"{uuid4().hex}{validated.extension}"
+    stored_path.write_bytes(validated.content)
+    stored_path.chmod(0o600)
+    try:
+        scan_with_clamav_if_available(stored_path)
+    except Exception:
+        stored_path.unlink(missing_ok=True)
+        raise
+    return stored_path
+
+
 def scan_with_clamav_if_available(path: Path) -> None:
     scanner = shutil.which("clamscan")
     if scanner is None:
