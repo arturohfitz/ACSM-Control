@@ -22,6 +22,8 @@ TABLES_TO_CLEAR = (
     "supplier_invoice_corrections",
     "financial_reconciliation_cases",
     "supplier_payments",
+    "supplier_invoice_submission_documents",
+    "supplier_invoice_submissions",
     "supplier_invoice_items",
     "supplier_invoice_documents",
     "supplier_invoices",

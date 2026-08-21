@@ -32,6 +32,7 @@ DEFAULT_PERMISSIONS: list[tuple[str, str, str]] = [
     ("settings", "edit", "Editar configuracion"),
     ("settings", "test_email", "Probar configuracion de correo"),
     ("events", "view", "Ver bitacora de eventos"),
+    ("purchasing_audit", "view", "Ver bitacora administrativa de Compras"),
     ("notifications", "view", "Ver notificaciones"),
     ("companies", "view", "Ver empresas"),
     ("clients", "view", "Ver clientes"),

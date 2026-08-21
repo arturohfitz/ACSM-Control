@@ -28,6 +28,7 @@ import PurchasingWorkspacePage from './pages/PurchasingWorkspacePage'
 import SettingsPage from './pages/SettingsPage'
 import SupplierAgreementsPage from './pages/SupplierAgreementsPage'
 import SupplierPaymentsPage from './pages/SupplierPaymentsPage'
+import SupplierInvoicePortalPage from './pages/SupplierInvoicePortalPage'
 import SupplierQuotePortalPage from './pages/SupplierQuotePortalPage'
 import WorkWorkspacePage from './pages/WorkWorkspacePage'
 
@@ -59,6 +60,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/supplier/quote/:token" element={<SupplierQuotePortalPage />} />
+      <Route path="/supplier/invoice/:token" element={<SupplierInvoicePortalPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route index element={<HomeRoute />} />
@@ -105,6 +107,10 @@ export default function App() {
           <Route
             path="/purchasing/orders"
             element={protect(<PurchasingOrdersPage />, 'purchase_orders:view')}
+          />
+          <Route
+            path="/purchasing/audit"
+            element={protect(<EventsPage scope="purchasing" />, 'purchasing_audit:view')}
           />
           <Route
             path="/inventory"

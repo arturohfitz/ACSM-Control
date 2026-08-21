@@ -143,6 +143,12 @@ const purchasingSubItems = [
     icon: ReceiptText,
     permission: 'purchase_orders:view',
   },
+  {
+    to: '/purchasing/audit',
+    label: 'Bitacora de compras',
+    icon: Activity,
+    permission: 'purchasing_audit:view',
+  },
 ]
 
 const workSubItems = [
@@ -234,6 +240,7 @@ const titles: Record<string, string> = {
   '/purchasing/material-requisitions': 'Requerimientos de obra',
   '/purchasing/approvals': 'Aprobaciones de compras',
   '/purchasing/orders': 'Ordenes de compra',
+  '/purchasing/audit': 'Bitacora de Compras',
   '/inventory': 'Inventario',
   '/inventory/material-receiving': 'Recepcion de materiales',
   '/inventory/reception-history': 'Historial de recepciones',
@@ -286,6 +293,9 @@ const defaultNotificationAlertSettings: NotificationAlertSettings = {
 export const NOTIFICATION_SETTINGS_UPDATED_EVENT = 'acsm:notification-settings-updated'
 
 function focusForNotification(notification: NotificationItem) {
+  if (notification.notification_type === 'supplier_quote_document_uploaded') {
+    return 'quote-review'
+  }
   const hasExplicitFocus = notification.action_url?.includes('focus=') ?? false
   if (hasExplicitFocus) return null
 
@@ -293,7 +303,6 @@ function focusForNotification(notification: NotificationItem) {
     material_requisition_submitted: 'work-requisitions',
     material_requisition_converted: 'rfq-list',
     material_requisition_converted_to_rfq: 'rfq-list',
-    supplier_quote_document_uploaded: 'uploads',
     supplier_quote_update_requested: 'uploads',
     supplier_quote_approved: 'rfq-list',
     supplier_quote_rejected: 'rfq-list',
@@ -310,10 +319,14 @@ function focusForNotification(notification: NotificationItem) {
 
 function notificationActionUrl(notification: NotificationItem) {
   if (!notification.action_url) return null
-  const [path, query = ''] = notification.action_url.split('?')
+  const [originalPath, query = ''] = notification.action_url.split('?')
+  const path =
+    notification.notification_type === 'supplier_quote_document_uploaded'
+      ? '/purchasing/operations'
+      : originalPath
   const params = new URLSearchParams(query)
   const focus = focusForNotification(notification)
-  if (focus && !params.has('focus')) params.set('focus', focus)
+  if (focus) params.set('focus', focus)
   params.set('notification_id', String(notification.id))
   const nextQuery = params.toString()
   return nextQuery ? `${path}?${nextQuery}` : path

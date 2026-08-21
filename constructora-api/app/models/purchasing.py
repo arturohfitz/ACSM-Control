@@ -447,6 +447,9 @@ class PurchaseOrder(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invoice_portal_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    invoice_portal_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invoice_portal_last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     project: Mapped["Project"] = relationship()
     warehouse: Mapped["ProjectWarehouse | None"] = relationship()
@@ -456,6 +459,9 @@ class PurchaseOrder(TimestampMixin, Base):
         back_populates="purchase_order", cascade="all, delete-orphan"
     )
     invoices: Mapped[list["SupplierInvoice"]] = relationship(back_populates="purchase_order")
+    invoice_submissions: Mapped[list["SupplierInvoiceSubmission"]] = relationship(
+        back_populates="purchase_order", cascade="all, delete-orphan"
+    )
 
 
 class PurchaseOrderItem(Base):
@@ -557,6 +563,63 @@ class SupplierInvoiceDocument(TimestampMixin, Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     invoice: Mapped[SupplierInvoice] = relationship(back_populates="documents")
+
+
+class SupplierInvoiceSubmission(TimestampMixin, Base):
+    __tablename__ = "supplier_invoice_submissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), nullable=False, index=True)
+    invoice_number: Mapped[str | None] = mapped_column(String(100))
+    invoice_date: Mapped[date | None] = mapped_column(Date)
+    currency: Mapped[str] = mapped_column(String(10), default="MXN", nullable=False)
+    subtotal: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    total: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    fiscal_uuid: Mapped[str | None] = mapped_column(String(40), index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="review_required", nullable=False, index=True)
+    validation_message: Mapped[str | None] = mapped_column(Text)
+    parsed_data: Mapped[dict | None] = mapped_column(JSON)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    supplier_invoice_id: Mapped[int | None] = mapped_column(
+        ForeignKey("supplier_invoices.id"), unique=True, index=True
+    )
+
+    purchase_order: Mapped[PurchaseOrder] = relationship(back_populates="invoice_submissions")
+    supplier: Mapped[Supplier] = relationship()
+    invoice: Mapped[SupplierInvoice | None] = relationship()
+    documents: Mapped[list["SupplierInvoiceSubmissionDocument"]] = relationship(
+        back_populates="submission", cascade="all, delete-orphan"
+    )
+
+
+class SupplierInvoiceSubmissionDocument(TimestampMixin, Base):
+    __tablename__ = "supplier_invoice_submission_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    submission_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_invoice_submissions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    original_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(700), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    extension: Mapped[str] = mapped_column(String(20), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    validation_status: Mapped[str] = mapped_column(String(40), default="uploaded", nullable=False)
+    validation_message: Mapped[str | None] = mapped_column(Text)
+    parsed_data: Mapped[dict | None] = mapped_column(JSON)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    submission: Mapped[SupplierInvoiceSubmission] = relationship(back_populates="documents")
 
 
 class SupplierInvoiceItem(Base):

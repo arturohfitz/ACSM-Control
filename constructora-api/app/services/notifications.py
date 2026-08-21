@@ -424,6 +424,7 @@ def sync_purchase_order_invoice_readiness(
             "/supplier-payments?view=invoices"
             f"&project_id={purchase_order.project_id}"
             f"&purchase_order_id={purchase_order.id}"
+            "&focus=invoice-registration"
         ),
         metadata={
             "purchase_order_id": purchase_order.id,

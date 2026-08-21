@@ -30,11 +30,18 @@ RFQSupplierStatus = Literal[
     "missing_email",
     "email_error",
     "responded",
+    "correction_requested",
     "declined",
     "awarded",
 ]
 SupplierQuoteStatus = Literal["received", "approval_requested", "rejected", "discarded", "approved"]
-SupplierQuoteDraftStatus = Literal["review_required", "confirmed", "failed", "correction_requested"]
+SupplierQuoteDraftStatus = Literal[
+    "review_required",
+    "manual_capture",
+    "confirmed",
+    "failed",
+    "correction_requested",
+]
 SupplierQuoteApprovalStatus = Literal["requested", "approved", "rejected", "cancelled"]
 SupplierRFQExceptionStatus = Literal["requested", "approved", "rejected", "used", "cancelled"]
 PurchaseOrderBillingMode = Literal["single", "partial"]
@@ -460,8 +467,20 @@ class SupplierPortalRFQRead(BaseModel):
     required_by: date | None = None
     response_deadline: date | None = None
     supplier_name: str
+    correction_requested: bool = False
+    correction_reason: str | None = None
     items: list[SupplierRFQItemRead] = Field(default_factory=list)
     previous_uploads: list[SupplierQuoteUploadRead] = Field(default_factory=list)
+
+
+class SupplierQuoteCorrectionRequest(BaseModel):
+    reason: str = Field(min_length=10, max_length=2000)
+
+
+class SupplierQuoteCorrectionResponse(BaseModel):
+    message: str
+    supplier_email: str
+    email_queued: bool = True
 
 
 class SupplierQuoteApprovalRequest(BaseModel):
@@ -720,6 +739,47 @@ class SupplierInvoiceDocumentRead(TimestampRead):
     is_active: bool
     uploaded_by: int | None = None
     uploaded_at: datetime
+
+
+class SupplierInvoiceSubmissionDocumentRead(TimestampRead):
+    id: int
+    submission_id: int
+    document_type: str
+    original_file_name: str
+    content_type: str
+    extension: str
+    file_size: int
+    sha256: str
+    validation_status: str
+    validation_message: str | None = None
+    parsed_data: dict | None = None
+    uploaded_at: datetime
+
+
+class SupplierInvoiceSubmissionRead(TimestampRead):
+    id: int
+    company_id: int
+    purchase_order_id: int
+    supplier_id: int
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+    currency: str
+    subtotal: Decimal | None = None
+    total: Decimal | None = None
+    fiscal_uuid: str | None = None
+    notes: str | None = None
+    status: str
+    validation_message: str | None = None
+    parsed_data: dict | None = None
+    submitted_at: datetime
+    reviewed_at: datetime | None = None
+    reviewed_by: int | None = None
+    supplier_invoice_id: int | None = None
+    documents: list[SupplierInvoiceSubmissionDocumentRead] = Field(default_factory=list)
+
+
+class SupplierInvoiceSubmissionDecision(BaseModel):
+    notes: str = Field(min_length=3, max_length=2000)
 
 
 class SupplierInvoiceXMLAnalysis(BaseModel):

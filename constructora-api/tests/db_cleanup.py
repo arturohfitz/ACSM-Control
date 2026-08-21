@@ -40,6 +40,13 @@ def cleanup_company_data(db: Session, company_id: int) -> None:
         "DELETE FROM supplier_invoice_items WHERE supplier_invoice_id IN "
         "(SELECT id FROM supplier_invoices WHERE company_id = :company_id)",
     )
+    _delete_related(
+        db,
+        company_id,
+        "DELETE FROM supplier_invoice_submission_documents WHERE submission_id IN "
+        "(SELECT id FROM supplier_invoice_submissions WHERE company_id = :company_id)",
+    )
+    _delete_company_rows(db, company_id, "supplier_invoice_submissions")
     _delete_company_rows(db, company_id, "supplier_invoice_documents")
     _delete_related(
         db,

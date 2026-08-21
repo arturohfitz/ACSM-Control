@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowRight,
@@ -15,10 +16,12 @@ import {
   FileCheck2,
   FileText,
   ListChecks,
+  Mail,
   PackageCheck,
   RefreshCw,
   Search,
   Upload,
+  XCircle,
 } from 'lucide-react'
 
 import { API_BASE_URL, apiRequest, getStoredToken } from '../lib/api'
@@ -93,6 +96,38 @@ type SupplierInvoiceDocument = {
   file_size: number
   validation_status: string
   is_active: boolean
+}
+
+type SupplierInvoiceSubmissionDocument = {
+  id: number
+  submission_id: number
+  document_type: 'pdf' | 'xml' | string
+  original_file_name: string
+  file_size: number
+  validation_status: string
+  validation_message?: string | null
+  parsed_data?: Record<string, unknown> | null
+  uploaded_at: string
+}
+
+type SupplierInvoiceSubmission = {
+  id: number
+  purchase_order_id: number
+  supplier_id: number
+  invoice_number?: string | null
+  invoice_date?: string | null
+  currency: string
+  subtotal?: string | null
+  total?: string | null
+  fiscal_uuid?: string | null
+  notes?: string | null
+  status: string
+  validation_message?: string | null
+  parsed_data?: Record<string, unknown> | null
+  submitted_at: string
+  reviewed_at?: string | null
+  supplier_invoice_id?: number | null
+  documents: SupplierInvoiceSubmissionDocument[]
 }
 
 type InvoiceDocumentAnalysis = {
@@ -241,6 +276,7 @@ function statusPillClass(status: string) {
 }
 
 export default function SupplierPaymentsPage() {
+  const location = useLocation()
   const { hasPermission } = useAuth()
   const canViewInvoices = hasPermission('supplier_invoices:view')
   const canUploadInvoices = hasPermission('supplier_invoices:upload')
@@ -255,6 +291,7 @@ export default function SupplierPaymentsPage() {
   const canApproveReconciliations = hasPermission('financial_reconciliations:approve')
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [invoices, setInvoices] = useState<SupplierInvoice[]>([])
+  const [invoiceSubmissions, setInvoiceSubmissions] = useState<SupplierInvoiceSubmission[]>([])
   const [payments, setPayments] = useState<SupplierPayment[]>([])
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -278,6 +315,15 @@ export default function SupplierPaymentsPage() {
   const [purchaseOrderId, setPurchaseOrderId] = useState(
     () => new URLSearchParams(window.location.search).get('purchase_order_id') ?? '',
   )
+  const invoiceRegistrationRef = useRef<HTMLDivElement | null>(null)
+  const invoiceSubmissionsRef = useRef<HTMLDivElement | null>(null)
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(() => {
+    const value = Number(new URLSearchParams(window.location.search).get('submission_id'))
+    return Number.isInteger(value) && value > 0 ? value : null
+  })
+  const [rejectingSubmissionId, setRejectingSubmissionId] = useState<number | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [sendingInvoiceLink, setSendingInvoiceLink] = useState(false)
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [invoiceDate, setInvoiceDate] = useState('')
   const [subtotal, setSubtotal] = useState('')
@@ -293,6 +339,43 @@ export default function SupplierPaymentsPage() {
   const [scheduledDate, setScheduledDate] = useState('')
   const [reference, setReference] = useState('')
   const [paymentAmount, setPaymentAmount] = useState('')
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const requestedView = params.get('view') as PaymentWorkspaceTab | null
+    const requestedProjectId = params.get('project_id') ?? ''
+    const requestedPurchaseOrderId = params.get('purchase_order_id') ?? ''
+    const requestedSubmissionId = Number(params.get('submission_id'))
+
+    if (requestedView && workspaceTabs.has(requestedView)) setActiveView(requestedView)
+    if (requestedProjectId) setSelectedProjectId(requestedProjectId)
+    if (requestedPurchaseOrderId) setPurchaseOrderId(requestedPurchaseOrderId)
+    if (Number.isInteger(requestedSubmissionId) && requestedSubmissionId > 0) {
+      setSelectedSubmissionId(requestedSubmissionId)
+    }
+
+  }, [location.search])
+
+  useEffect(() => {
+    const focus = new URLSearchParams(location.search).get('focus')
+    if (!['invoice-registration', 'invoice-submissions'].includes(focus ?? '')) return
+    if (activeView !== 'invoices') return
+    if (focus === 'invoice-submissions' && !invoiceSubmissions.length) return
+
+    const timeout = window.setTimeout(() => {
+      const target = focus === 'invoice-submissions'
+        ? invoiceSubmissionsRef.current
+        : invoiceRegistrationRef.current
+      if (!target) return
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      target.classList.remove('acsm-notification-focus-target')
+      void target.offsetWidth
+      target.classList.add('acsm-notification-focus-target')
+      window.setTimeout(() => target.classList.remove('acsm-notification-focus-target'), 2300)
+    }, 120)
+
+    return () => window.clearTimeout(timeout)
+  }, [activeView, invoiceSubmissions.length, location.search])
 
   const invoiceMap = useMemo(
     () => new Map(invoices.map((invoice) => [invoice.id, invoice])),
@@ -317,6 +400,16 @@ export default function SupplierPaymentsPage() {
     () => orders.find((order) => String(order.id) === purchaseOrderId) ?? null,
     [orders, purchaseOrderId],
   )
+  const selectedSubmission = useMemo(
+    () => invoiceSubmissions.find((submission) => submission.id === selectedSubmissionId) ?? null,
+    [invoiceSubmissions, selectedSubmissionId],
+  )
+  const visibleInvoiceSubmissions = useMemo(() => {
+    const source = selectedOrder
+      ? invoiceSubmissions.filter((submission) => submission.purchase_order_id === selectedOrder.id)
+      : invoiceSubmissions
+    return source.filter((submission) => submission.status !== 'registered')
+  }, [invoiceSubmissions, selectedOrder])
   const selectedOrderInvoices = useMemo(() => {
     if (!selectedOrder) return []
     return invoices.filter((invoice) => invoice.purchase_order_id === selectedOrder.id)
@@ -505,11 +598,14 @@ export default function SupplierPaymentsPage() {
     setLoading(true)
     setError('')
     try {
-      const [orderData, invoiceData, paymentData, projectFinancialData] = await Promise.all([
+      const [orderData, invoiceData, submissionData, paymentData, projectFinancialData] = await Promise.all([
         apiRequest<PurchaseOrder[]>('/purchasing/purchase-orders'),
         canViewInvoices
           ? apiRequest<SupplierInvoice[]>('/purchasing/supplier-invoices')
           : Promise.resolve([] as SupplierInvoice[]),
+        canViewInvoices
+          ? apiRequest<SupplierInvoiceSubmission[]>('/purchasing/supplier-invoice-submissions')
+          : Promise.resolve([] as SupplierInvoiceSubmission[]),
         canViewPayments
           ? apiRequest<SupplierPayment[]>('/purchasing/supplier-payments')
           : Promise.resolve([] as SupplierPayment[]),
@@ -521,6 +617,7 @@ export default function SupplierPaymentsPage() {
       ])
       setOrders(orderData)
       setInvoices(invoiceData)
+      setInvoiceSubmissions(submissionData)
       setPayments(paymentData)
       setFinancialData(projectFinancialData)
       if (!purchaseOrderId && orderData[0]) setPurchaseOrderId(String(orderData[0].id))
@@ -696,6 +793,102 @@ export default function SupplierPaymentsPage() {
     }
   }
 
+  async function downloadSubmissionDocument(document: SupplierInvoiceSubmissionDocument) {
+    setError('')
+    try {
+      const token = getStoredToken()
+      const response = await fetch(
+        `${API_BASE_URL}/purchasing/supplier-invoice-submission-documents/${document.id}/download`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+      )
+      if (!response.ok) throw new Error('No fue posible descargar el documento enviado por el proveedor')
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = window.document.createElement('a')
+      link.href = url
+      link.download = document.original_file_name
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible descargar el documento')
+    }
+  }
+
+  function prepareInvoiceSubmission(submission: SupplierInvoiceSubmission) {
+    setPurchaseOrderId(String(submission.purchase_order_id))
+    setSelectedSubmissionId(submission.id)
+    setInvoiceNumber(submission.invoice_number ?? '')
+    setInvoiceDate(submission.invoice_date ?? '')
+    setSubtotal(submission.subtotal ?? '')
+    setTotal(submission.total ?? '')
+    setPdfFile(null)
+    setXmlFile(null)
+    setDocumentAnalysis(null)
+    setRejectingSubmissionId(null)
+    setRejectReason('')
+
+    const url = new URL(window.location.href)
+    url.searchParams.set('view', 'invoices')
+    url.searchParams.set('purchase_order_id', String(submission.purchase_order_id))
+    url.searchParams.set('submission_id', String(submission.id))
+    url.searchParams.set('focus', 'invoice-registration')
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+    window.requestAnimationFrame(() => {
+      invoiceRegistrationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      invoiceRegistrationRef.current?.classList.add('acsm-notification-focus-target')
+      window.setTimeout(
+        () => invoiceRegistrationRef.current?.classList.remove('acsm-notification-focus-target'),
+        2300,
+      )
+    })
+  }
+
+  async function rejectInvoiceSubmission(submission: SupplierInvoiceSubmission) {
+    if (!rejectReason.trim()) {
+      setError('Indica el motivo del rechazo para que quede registrado.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setMessage('')
+    try {
+      await apiRequest<SupplierInvoiceSubmission>(
+        `/purchasing/supplier-invoice-submissions/${submission.id}/reject`,
+        { method: 'POST', body: JSON.stringify({ notes: rejectReason.trim() }) },
+      )
+      const successMessage = `Documentos de ${submission.invoice_number || 'la factura'} rechazados. El evento quedo auditado.`
+      setMessage(successMessage)
+      showActionNotice(successMessage)
+      if (selectedSubmissionId === submission.id) setSelectedSubmissionId(null)
+      setRejectingSubmissionId(null)
+      setRejectReason('')
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible rechazar los documentos')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function sendInvoicePortalLink() {
+    if (!selectedOrder) return
+    setSendingInvoiceLink(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await apiRequest<{ message: string }>(
+        `/purchasing/purchase-orders/${selectedOrder.id}/invoice-portal/send`,
+        { method: 'POST' },
+      )
+      setMessage(result.message)
+      showActionNotice(result.message)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible enviar la liga al proveedor')
+    } finally {
+      setSendingInvoiceLink(false)
+    }
+  }
+
   async function uploadInvoiceDocument(
     invoice: SupplierInvoice,
     documentType: 'pdf' | 'xml',
@@ -792,6 +985,7 @@ export default function SupplierPaymentsPage() {
       }
       const formData = new FormData()
       formData.append('payload_json', JSON.stringify(payload))
+      if (selectedSubmissionId) formData.append('submission_id', String(selectedSubmissionId))
       if (pdfFile) formData.append('pdf_file', pdfFile)
       if (xmlFile) formData.append('xml_file', xmlFile)
       const created = await apiRequest<SupplierInvoice>('/purchasing/supplier-invoices/register', {
@@ -808,6 +1002,7 @@ export default function SupplierPaymentsPage() {
       setXmlFile(null)
       setDocumentAnalysis(null)
       setInvoiceRows({})
+      setSelectedSubmissionId(null)
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible registrar la factura')
@@ -1535,14 +1730,170 @@ export default function SupplierPaymentsPage() {
           </button>
         </div>
 
+        <div
+          ref={invoiceSubmissionsRef}
+          id="invoice-submissions"
+          className="scroll-mt-24 border-b border-acsm-line bg-acsm-paper/60 p-4"
+        >
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-acsm-muted">
+                Entrada del proveedor
+              </div>
+              <h3 className="font-semibold text-acsm-ink">Documentos pendientes de revision</h3>
+              <p className="text-xs text-acsm-muted">
+                Revisa el PDF o XML antes de convertir la entrega en una factura del sistema.
+              </p>
+            </div>
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
+              {visibleInvoiceSubmissions.length} pendiente(s)
+            </span>
+          </div>
+
+          {visibleInvoiceSubmissions.length ? (
+            <div className="grid gap-3 xl:grid-cols-2">
+              {visibleInvoiceSubmissions.map((submission) => {
+                const order = orders.find((item) => item.id === submission.purchase_order_id)
+                const isRejecting = rejectingSubmissionId === submission.id
+                return (
+                  <article
+                    key={submission.id}
+                    className={[
+                      'rounded-md border bg-white p-3',
+                      selectedSubmissionId === submission.id
+                        ? 'border-blue-400 ring-2 ring-blue-100'
+                        : 'border-acsm-line',
+                    ].join(' ')}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold text-acsm-ink">
+                          {submission.invoice_number || 'Factura sin folio'}
+                        </div>
+                        <div className="mt-0.5 text-xs text-acsm-muted">
+                          {order?.po_number || `OC #${submission.purchase_order_id}`} ·{' '}
+                          {order?.supplier?.name || 'Proveedor'}
+                        </div>
+                      </div>
+                      <span className={[
+                        'shrink-0 rounded-full border px-2 py-1 text-[11px] font-bold',
+                        statusPillClass(submission.status),
+                      ].join(' ')}>
+                        {statusLabel(submission.status)}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {submission.documents.map((document) => (
+                        <button
+                          key={document.id}
+                          type="button"
+                          onClick={() => void downloadSubmissionDocument(document)}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-acsm-line bg-white px-3 text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                        >
+                          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                          {document.document_type.toUpperCase()} · {document.original_file_name}
+                        </button>
+                      ))}
+                    </div>
+
+                    {(submission.total || submission.notes) && (
+                      <div className="mt-3 grid gap-2 rounded-md bg-acsm-paper p-2 text-xs sm:grid-cols-2">
+                        <div>
+                          <span className="font-semibold text-acsm-muted">Total declarado</span>
+                          <div className="font-bold text-acsm-ink">
+                            {submission.total ? formatMoney(submission.total) : 'Sin dato'}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-acsm-muted">Notas</span>
+                          <div className="line-clamp-2 text-acsm-ink">{submission.notes || 'Sin notas'}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {isRejecting ? (
+                      <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-2">
+                        <label className="mb-1 block text-xs font-bold text-red-900">
+                          Motivo del rechazo
+                        </label>
+                        <textarea
+                          value={rejectReason}
+                          onChange={(event) => setRejectReason(event.target.value)}
+                          rows={2}
+                          maxLength={1000}
+                          placeholder="Indica al proveedor que debe corregir."
+                          className="w-full resize-y rounded-md border border-red-200 bg-white px-3 py-2 text-sm"
+                        />
+                        <div className="mt-2 flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRejectingSubmissionId(null)
+                              setRejectReason('')
+                            }}
+                            className="h-8 rounded-md border border-acsm-line bg-white px-3 text-xs font-semibold text-acsm-ink"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void rejectInvoiceSubmission(submission)}
+                            disabled={loading || !rejectReason.trim()}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-red-700 px-3 text-xs font-semibold text-white disabled:opacity-60"
+                          >
+                            <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            Confirmar rechazo
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRejectingSubmissionId(submission.id)
+                            setRejectReason('')
+                          }}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50"
+                        >
+                          <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                          Rechazar documentos
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => prepareInvoiceSubmission(submission)}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-md bg-acsm-green px-3 text-xs font-semibold text-white hover:bg-acsm-green-hover"
+                        >
+                          <FileCheck2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          Revisar y registrar
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed border-acsm-line bg-white px-4 py-5 text-center text-sm text-acsm-muted">
+              No hay documentos enviados por proveedores pendientes de revision.
+            </div>
+          )}
+        </div>
+
         <div className={canUploadInvoices ? 'grid gap-4 p-4 lg:grid-cols-[420px_minmax(0,1fr)]' : 'p-4'}>
-          <div className={canUploadInvoices ? 'min-w-0 rounded-md border border-acsm-line bg-acsm-paper p-3' : 'hidden'}>
+          <div
+            ref={invoiceRegistrationRef}
+            id="invoice-registration"
+            className={canUploadInvoices ? 'scroll-mt-24 min-w-0 rounded-md border border-acsm-line bg-acsm-paper p-3' : 'hidden'}
+          >
             <h3 className="mb-3 text-sm font-semibold text-acsm-ink">Registrar factura</h3>
             <div className="space-y-3">
               <select
                 value={purchaseOrderId}
                 onChange={(event) => {
                   setPurchaseOrderId(event.target.value)
+                  setSelectedSubmissionId(null)
                   setPdfFile(null)
                   setXmlFile(null)
                   setDocumentAnalysis(null)
@@ -1561,8 +1912,45 @@ export default function SupplierPaymentsPage() {
                   </option>
                 ))}
               </select>
+              {selectedSubmission && (
+                <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-bold">Documentos del proveedor seleccionados</div>
+                      <div className="mt-0.5">
+                        {selectedSubmission.invoice_number || 'Sin folio'} · {selectedSubmission.documents.length} archivo(s)
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSubmissionId(null)}
+                      className="rounded-md border border-blue-200 bg-white px-2 py-1 font-semibold text-blue-800"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                  <p className="mt-2 text-blue-800">
+                    Al guardar, estos documentos se vincularan a la factura y la entrega quedara atendida.
+                  </p>
+                </div>
+              )}
               {selectedOrder && (
                 <div className="rounded-md border border-acsm-line bg-white p-2">
+                  <div className="mb-2 flex items-center justify-between gap-2 border-b border-acsm-line pb-2">
+                    <div>
+                      <div className="text-xs font-bold text-acsm-ink">Recepcion fiscal del proveedor</div>
+                      <div className="text-[11px] text-acsm-muted">Liga segura asociada a esta orden.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void sendInvoicePortalLink()}
+                      disabled={sendingInvoiceLink}
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-acsm-line bg-white px-2.5 text-[11px] font-semibold text-acsm-ink hover:bg-acsm-paper disabled:opacity-60"
+                    >
+                      <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                      {sendingInvoiceLink ? 'Enviando...' : 'Enviar liga'}
+                    </button>
+                  </div>
                   <div className="mb-2 text-xs font-semibold uppercase text-acsm-muted">Modo de facturacion</div>
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -1849,7 +2237,7 @@ export default function SupplierPaymentsPage() {
                   !purchaseOrderId ||
                   !invoiceNumber ||
                   !invoiceDate ||
-                  (!pdfFile && !xmlFile) ||
+                  (!selectedSubmissionId && !pdfFile && !xmlFile) ||
                   analyzingDocument ||
                   (selectedOrderIsPartial ? partialTotal <= 0 : !subtotal || !total)
                 }

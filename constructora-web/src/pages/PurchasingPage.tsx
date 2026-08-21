@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
+  ChevronUp,
   CircleDashed,
   ClipboardCheck,
   Clock,
@@ -10,6 +12,7 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  RotateCcw,
   Send,
   ShoppingCart,
   Trash2,
@@ -317,7 +320,10 @@ type NotificationFocusTarget =
   | 'rfq-form'
   | 'rfq-list'
   | 'quote-capture'
+  | 'quote-review'
   | 'uploads'
+
+const ASSISTED_CAPTURE_VISIBILITY_KEY = 'acsm:purchasing:assisted-capture-visible'
 
 const money = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -814,6 +820,10 @@ export default function PurchasingPage() {
   const [activeQuoteDraftId, setActiveQuoteDraftId] = useState<number | null>(null)
   const [quoteDraftForm, setQuoteDraftForm] = useState<SupplierQuoteDraftForm | null>(null)
   const [supplierIdentityAcknowledged, setSupplierIdentityAcknowledged] = useState(false)
+  const [assistedCaptureExpanded, setAssistedCaptureExpanded] = useState(
+    () => window.localStorage.getItem(ASSISTED_CAPTURE_VISIBILITY_KEY) !== 'false',
+  )
+  const [quoteDetailsRfqId, setQuoteDetailsRfqId] = useState<number | null>(null)
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [materialRequisitions, setMaterialRequisitions] = useState<MaterialRequisition[]>([])
@@ -846,6 +856,10 @@ export default function PurchasingPage() {
   const [quoteRows, setQuoteRows] = useState<QuoteDraftItem[]>([])
   const [exceptionOpen, setExceptionOpen] = useState(false)
   const [exceptionNotes, setExceptionNotes] = useState('')
+  const [quoteCorrectionRow, setQuoteCorrectionRow] = useState<ComparisonRow | null>(null)
+  const [quoteCorrectionReason, setQuoteCorrectionReason] = useState('')
+  const [quoteCorrectionError, setQuoteCorrectionError] = useState('')
+  const [quoteCorrectionSubmitting, setQuoteCorrectionSubmitting] = useState(false)
   const [rfqExceptionOpen, setRfqExceptionOpen] = useState(false)
   const [rfqExceptionNotes, setRfqExceptionNotes] = useState('')
   const [rfqExceptionError, setRfqExceptionError] = useState('')
@@ -856,11 +870,20 @@ export default function PurchasingPage() {
   const rfqListRef = useRef<HTMLDivElement | null>(null)
   const quoteCaptureRef = useRef<HTMLElement | null>(null)
   const quoteUploadsRef = useRef<HTMLElement | null>(null)
+  const quoteReviewRef = useRef<HTMLElement | null>(null)
   const handledNotificationTargetRef = useRef('')
 
   const selectedRfq = useMemo(
     () => rfqs.find((rfq) => rfq.id === selectedRfqId) ?? rfqs[0],
     [rfqs, selectedRfqId],
+  )
+  const activeQuoteSupplierLinks = useMemo(
+    () => selectedRfq?.supplier_links.filter((link) => link.status !== 'correction_requested') ?? [],
+    [selectedRfq],
+  )
+  const correctionPendingSupplierLinks = useMemo(
+    () => selectedRfq?.supplier_links.filter((link) => link.status === 'correction_requested') ?? [],
+    [selectedRfq],
   )
   const activeQuoteDraft = useMemo(
     () => quoteDrafts.find((draft) => draft.id === activeQuoteDraftId) ?? null,
@@ -897,6 +920,11 @@ export default function PurchasingPage() {
   }, [searchParams])
   const notificationFocus = searchParams.get('focus')
   const notificationId = searchParams.get('notification_id')
+  const notificationDraftId = useMemo(() => {
+    const rawId = searchParams.get('draft_id')
+    const parsedId = rawId ? Number(rawId) : NaN
+    return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null
+  }, [searchParams])
 
   function notifySuccess(text: string, kind: ActionNoticeKind = 'success') {
     setMessage(text)
@@ -909,7 +937,10 @@ export default function PurchasingPage() {
   function spotlightPanel(target: NotificationFocusTarget, element: HTMLElement | null | undefined) {
     if (!element) return
     setFocusedPanel(target)
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    element.scrollIntoView({
+      behavior: 'smooth',
+      block: target === 'quote-review' ? 'start' : 'center',
+    })
     window.setTimeout(() => setFocusedPanel((current) => (current === target ? null : current)), 2200)
   }
   const detailRfq = useMemo(
@@ -1370,6 +1401,7 @@ export default function PurchasingPage() {
   }
 
   async function loadRfqDetails(rfqId: number | undefined) {
+    setQuoteDetailsRfqId(null)
     if (!rfqId) {
       setQuotes([])
       setQuoteUploads([])
@@ -1391,13 +1423,24 @@ export default function PurchasingPage() {
       setComparison(comparisonData)
       setQuoteUploads(uploadData)
       setQuoteDrafts(draftData)
-      const reviewDraft = draftData.find((draft) => draft.status === 'review_required')
-      if (reviewDraft && activeQuoteDraftId !== reviewDraft.id) {
+      const reviewDraft =
+        draftData.find(
+          (draft) => draft.id === notificationDraftId && draft.status === 'review_required',
+        ) ?? draftData.find((draft) => draft.status === 'review_required')
+      const shouldOpenAssistedCapture =
+        notificationFocus === 'quote-review' ||
+        window.localStorage.getItem(ASSISTED_CAPTURE_VISIBILITY_KEY) !== 'false'
+      if (
+        reviewDraft &&
+        shouldOpenAssistedCapture &&
+        activeQuoteDraftId !== reviewDraft.id
+      ) {
         beginQuoteDraftReview(reviewDraft)
-      } else if (!reviewDraft) {
+      } else if (!reviewDraft || !shouldOpenAssistedCapture) {
         setActiveQuoteDraftId(null)
         setQuoteDraftForm(null)
       }
+      setQuoteDetailsRfqId(rfqId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar cotizaciones')
     }
@@ -1424,6 +1467,8 @@ export default function PurchasingPage() {
   }
 
   function beginQuoteDraftReview(draft: SupplierQuoteDraft) {
+    setAssistedCaptureExpanded(true)
+    window.localStorage.setItem(ASSISTED_CAPTURE_VISIBILITY_KEY, 'true')
     setActiveQuoteDraftId(draft.id)
     setSupplierIdentityAcknowledged(false)
     setQuoteDraftForm({
@@ -1451,6 +1496,14 @@ export default function PurchasingPage() {
   }, [selectedRfq?.id])
 
   useEffect(() => {
+    if (!quoteSupplierId) return
+    const supplierIsActive = activeQuoteSupplierLinks.some(
+      (link) => String(link.supplier_id) === quoteSupplierId,
+    )
+    if (!supplierIsActive) resetQuoteCapture(selectedRfq)
+  }, [activeQuoteSupplierLinks, quoteSupplierId, selectedRfq])
+
+  useEffect(() => {
     if (!notificationFocus) return
     const targetKey = `${notificationId ?? 'manual'}:${notificationRfqId ?? 'none'}:${notificationFocus}`
     if (handledNotificationTargetRef.current === targetKey) return
@@ -1460,19 +1513,43 @@ export default function PurchasingPage() {
       'rfq-form': { target: 'rfq-form', ref: rfqFormRef },
       'rfq-list': { target: 'rfq-list', ref: rfqListRef },
       'quote-capture': { target: 'quote-capture', ref: quoteCaptureRef },
+      'quote-review': { target: 'quote-review', ref: quoteReviewRef },
       uploads: { target: 'uploads', ref: quoteUploadsRef },
     }
-    const focusTarget = focusTargets[notificationFocus] ?? focusTargets['rfq-form']
-
     if (notificationRfqId && rfqs.some((rfq) => rfq.id === notificationRfqId)) {
       setSelectedRfqId(notificationRfqId)
     } else if (notificationRfqId) {
       return
     }
 
+    if (notificationFocus === 'quote-review') {
+      if (!selectedRfq?.id || quoteDetailsRfqId !== selectedRfq.id) return
+      const requestedDraft = pendingQuoteDrafts.find((draft) => draft.id === notificationDraftId)
+      const reviewDraft = requestedDraft ?? pendingQuoteDrafts[0]
+      if (reviewDraft) {
+        beginQuoteDraftReview(reviewDraft)
+        setAssistedCaptureExpanded(true)
+      } else {
+        handledNotificationTargetRef.current = targetKey
+        window.setTimeout(() => spotlightPanel('uploads', quoteUploadsRef.current), 160)
+        return
+      }
+    }
+
+    const focusTarget = focusTargets[notificationFocus] ?? focusTargets['rfq-form']
+
     handledNotificationTargetRef.current = targetKey
     window.setTimeout(() => spotlightPanel(focusTarget.target, focusTarget.ref.current), 160)
-  }, [notificationFocus, notificationId, notificationRfqId, rfqs])
+  }, [
+    notificationDraftId,
+    notificationFocus,
+    notificationId,
+    notificationRfqId,
+    pendingQuoteDrafts,
+    quoteDetailsRfqId,
+    rfqs,
+    selectedRfq?.id,
+  ])
 
   useEffect(() => {
     if (!filteredRfqs.length) return
@@ -1799,6 +1876,60 @@ export default function PurchasingPage() {
     }
   }
 
+  function toggleAssistedCapture() {
+    const next = !assistedCaptureExpanded
+    window.localStorage.setItem(ASSISTED_CAPTURE_VISIBILITY_KEY, String(next))
+    setAssistedCaptureExpanded(next)
+    if (next && !activeQuoteDraft && pendingQuoteDrafts[0]) {
+      beginQuoteDraftReview(pendingQuoteDrafts[0])
+    }
+  }
+
+  async function continueWithManualQuoteCapture() {
+    if (!selectedRfq || !activeQuoteDraft) return
+    setLoading(true)
+    setError('')
+    try {
+      await apiRequest<SupplierQuoteDraft>(
+        `/purchasing/supplier-quote-drafts/${activeQuoteDraft.id}/manual-capture`,
+        { method: 'POST' },
+      )
+      const draftItems = new Map(activeQuoteDraft.items.map((item) => [item.rfq_item_id, item]))
+      setQuoteSupplierId(String(activeQuoteDraft.supplier_id))
+      setQuoteNumber(activeQuoteDraft.quote_number ?? '')
+      setDeliveryDays(
+        activeQuoteDraft.delivery_days == null ? '' : String(activeQuoteDraft.delivery_days),
+      )
+      setPaymentTermsDays(String(activeQuoteDraft.payment_terms_days ?? 30))
+      setQuoteRows(
+        selectedRfq.items.map((item) => {
+          const draftItem = draftItems.get(item.id)
+          return {
+            rfq_item_id: item.id,
+            unit_price: draftItem?.unit_price ?? '',
+            delivery_days:
+              draftItem?.delivery_days == null ? '' : String(draftItem.delivery_days),
+          }
+        }),
+      )
+      setActiveQuoteDraftId(null)
+      setQuoteDraftForm(null)
+      setSupplierIdentityAcknowledged(false)
+      setAssistedCaptureExpanded(false)
+      window.localStorage.setItem(ASSISTED_CAPTURE_VISIBILITY_KEY, 'false')
+      await loadRfqDetails(selectedRfq.id)
+      notifySuccess(
+        'Captura asistida cancelada. El documento se conserva y los datos recuperados quedaron en la captura manual.',
+        'info',
+      )
+      window.setTimeout(() => spotlightPanel('quote-capture', quoteCaptureRef.current), 120)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible volver a la captura manual')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function requestRfqApproval(isException = false) {
     if (!selectedRfq) return
     setError('')
@@ -1893,25 +2024,40 @@ export default function PurchasingPage() {
     }
   }
 
-  async function deleteSupplierQuoteForRecapture(row: ComparisonRow) {
-    setError('')
-    setMessage('')
+  async function requestSupplierQuoteCorrection() {
+    if (!quoteCorrectionRow) return
+    const reason = quoteCorrectionReason.trim()
+    if (reason.length < 10) {
+      setQuoteCorrectionError('Describe el motivo de la correccion con al menos 10 caracteres.')
+      return
+    }
+    setQuoteCorrectionSubmitting(true)
+    setQuoteCorrectionError('')
     try {
-      await apiRequest<void>(`/purchasing/supplier-quotes/${row.supplier_quote_id}`, {
-        method: 'DELETE',
+      const response = await apiRequest<{
+        message: string
+        supplier_email: string
+        email_queued: boolean
+      }>(`/purchasing/supplier-quotes/${quoteCorrectionRow.supplier_quote_id}/request-correction`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
       })
       resetQuoteCapture(selectedRfq)
+      const supplierName = quoteCorrectionRow.supplier_name
+      setQuoteCorrectionRow(null)
+      setQuoteCorrectionReason('')
       notifySuccess(
-        `Cotizacion de ${row.supplier_name} borrada. Tienes que volver a seleccionar el proveedor y recapturar los datos.`,
+        `Cotizacion de ${supplierName} cancelada. La solicitud de reemplazo se envio a ${response.supplier_email}.`,
         'warning',
       )
       await loadData(selectedRfq?.id)
       if (selectedRfq?.id) await loadRfqDetails(selectedRfq.id)
-      window.setTimeout(() => {
-        quoteCaptureRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 80)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible borrar la cotizacion')
+      setQuoteCorrectionError(
+        err instanceof Error ? err.message : 'No fue posible solicitar la nueva cotizacion',
+      )
+    } finally {
+      setQuoteCorrectionSubmitting(false)
     }
   }
 
@@ -2753,6 +2899,17 @@ export default function PurchasingPage() {
               </div>
             </div>
             <div className="space-y-3 p-5">
+              {correctionPendingSupplierLinks.length > 0 ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                  <div className="font-bold">Esperando cotizacion corregida</div>
+                  <p className="mt-1 leading-relaxed">
+                    {correctionPendingSupplierLinks
+                      .map((link) => link.supplier?.name ?? `Proveedor ${link.supplier_id}`)
+                      .join(', ')}
+                    . La version cancelada se conserva unicamente en la bitacora y ya no participa en esta captura.
+                  </p>
+                </div>
+              ) : null}
               <div className="grid gap-3 md:grid-cols-4">
                 <label className="text-xs font-bold uppercase text-acsm-muted">
                   Proveedor cotizante
@@ -2767,7 +2924,7 @@ export default function PurchasingPage() {
                     className="mt-1 h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold normal-case text-acsm-ink"
                   >
                     <option value="">Seleccionar proveedor</option>
-                    {selectedRfq.supplier_links.map((link) => (
+                    {activeQuoteSupplierLinks.map((link) => (
                       <option key={link.supplier_id} value={link.supplier_id}>
                         {link.supplier?.name ?? link.supplier_id}
                       </option>
@@ -2909,6 +3066,7 @@ export default function PurchasingPage() {
                     const canInterpret =
                       upload.file_extension.toLowerCase() === '.pdf' &&
                       (!uploadDraft ||
+                        uploadDraft.status === 'manual_capture' ||
                         (uploadDraft.status === 'review_required' &&
                           uploadDraft.source_type !== 'pdf_text'))
                     return (
@@ -2935,7 +3093,11 @@ export default function PurchasingPage() {
                               className="inline-flex h-9 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
                             >
                               <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                              {uploadDraft ? 'Reinterpretar PDF' : 'Interpretar PDF'}
+                              {uploadDraft?.status === 'manual_capture'
+                                ? 'Reactivar asistencia'
+                                : uploadDraft
+                                  ? 'Reinterpretar PDF'
+                                  : 'Interpretar PDF'}
                             </button>
                           ) : null}
                         <button
@@ -2965,7 +3127,13 @@ export default function PurchasingPage() {
         )}
 
         {selectedRfq && pendingQuoteDrafts.length > 0 && (
-          <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
+          <section
+            ref={quoteReviewRef}
+            className={[
+              'overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel',
+              focusClass('quote-review'),
+            ].join(' ')}
+          >
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-sky-50 px-5 py-4">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.2em] text-sky-700">
@@ -2976,11 +3144,27 @@ export default function PurchasingPage() {
                   Verifica los datos contra el documento antes de incorporarlos al comparativo.
                 </p>
               </div>
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
-                {pendingQuoteDrafts.length} pendientes
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
+                  {pendingQuoteDrafts.length} pendientes
+                </span>
+                <button
+                  type="button"
+                  onClick={toggleAssistedCapture}
+                  aria-expanded={assistedCaptureExpanded}
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-sky-200 bg-white px-3 text-xs font-bold text-sky-800 hover:bg-sky-100"
+                >
+                  {assistedCaptureExpanded ? (
+                    <ChevronUp className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {assistedCaptureExpanded ? 'Ocultar asistencia' : 'Abrir asistencia'}
+                </button>
+              </div>
             </div>
 
+            {assistedCaptureExpanded ? (
             <div className="grid border-b border-acsm-line lg:grid-cols-[330px_minmax(0,1fr)]">
               <div className="border-b border-acsm-line bg-acsm-paper p-4 lg:border-b-0 lg:border-r">
                 <div className="space-y-2">
@@ -3319,17 +3503,28 @@ export default function PurchasingPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-acsm-line px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        activeQuoteDraft.upload_id && void openSupplierQuoteUpload(activeQuoteDraft.upload_id)
-                      }
-                      disabled={!activeQuoteDraft.upload_id}
-                      className="inline-flex h-10 items-center gap-2 rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold disabled:opacity-50"
-                    >
-                      <Eye className="h-4 w-4" aria-hidden="true" />
-                      Abrir documento
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          activeQuoteDraft.upload_id && void openSupplierQuoteUpload(activeQuoteDraft.upload_id)
+                        }
+                        disabled={!activeQuoteDraft.upload_id}
+                        className="inline-flex h-10 items-center gap-2 rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold disabled:opacity-50"
+                      >
+                        <Eye className="h-4 w-4" aria-hidden="true" />
+                        Abrir documento
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void continueWithManualQuoteCapture()}
+                        disabled={loading}
+                        className="inline-flex h-10 items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                      >
+                        <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                        Usar captura manual
+                      </button>
+                    </div>
                     <button
                       type="button"
                       onClick={() => void confirmQuoteDraft()}
@@ -3352,6 +3547,19 @@ export default function PurchasingPage() {
                 </div>
               )}
             </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-5 py-3 text-sm text-acsm-muted">
+                <span>La asistencia esta oculta. Los documentos pendientes se conservan sin cambios.</span>
+                <button
+                  type="button"
+                  onClick={toggleAssistedCapture}
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover"
+                >
+                  <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                  Revisar cotizaciones
+                </button>
+              </div>
+            )}
           </section>
         )}
 
@@ -3431,13 +3639,17 @@ export default function PurchasingPage() {
                       <td className="px-4 py-3 text-right">
                         <button
                           type="button"
-                          onClick={() => void deleteSupplierQuoteForRecapture(row)}
+                          onClick={() => {
+                            setQuoteCorrectionRow(row)
+                            setQuoteCorrectionReason('')
+                            setQuoteCorrectionError('')
+                          }}
                           disabled={!canCorrectQuote}
-                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
-                          title="Borrar esta captura para volver a registrar la cotizacion"
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-xs font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                          title="Cancelar esta version y pedir una nueva al proveedor"
                         >
-                          <Trash2 className="h-4 w-4" aria-hidden="true" />
-                          Volver a registrar
+                          <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                          Solicitar nueva
                         </button>
                       </td>
                     </tr>
@@ -3527,6 +3739,101 @@ export default function PurchasingPage() {
           </div>
         </div>
       </section>
+
+      {quoteCorrectionRow ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="quote-correction-title"
+          onClick={() => {
+            if (!quoteCorrectionSubmitting) setQuoteCorrectionRow(null)
+          }}
+        >
+          <div
+            className="w-full max-w-2xl overflow-hidden rounded-[22px] border border-white/20 bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-amber-200 bg-amber-50 px-6 py-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl border border-amber-300 bg-white text-amber-700">
+                  <RotateCcw className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">
+                    Correccion a proveedor
+                  </p>
+                  <h2 id="quote-correction-title" className="mt-1 text-xl font-bold text-acsm-ink">
+                    Cancelar y solicitar nueva cotizacion
+                  </h2>
+                  <p className="mt-1 text-sm text-acsm-muted">
+                    {quoteCorrectionRow.supplier_name} ·{' '}
+                    {quotes.find((quote) => quote.id === quoteCorrectionRow.supplier_quote_id)?.quote_number ||
+                      selectedRfq?.rfq_number}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuoteCorrectionRow(null)}
+                disabled={quoteCorrectionSubmitting}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-acsm-line bg-white text-acsm-ink hover:bg-acsm-paper disabled:opacity-50"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="space-y-4 p-6">
+              <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+                Esta version saldra del comparativo. El documento, los datos y el motivo se conservaran en el historial, y el proveedor recibira una liga nueva para cargar su reemplazo.
+              </div>
+              <label className="block text-sm font-bold text-acsm-ink">
+                Motivo y correcciones solicitadas *
+                <textarea
+                  value={quoteCorrectionReason}
+                  onChange={(event) => {
+                    setQuoteCorrectionReason(event.target.value)
+                    setQuoteCorrectionError('')
+                  }}
+                  rows={5}
+                  maxLength={2000}
+                  autoFocus
+                  placeholder="Ej. Corregir cantidades de las partidas 2 y 4, confirmar vigencia y reenviar el documento firmado."
+                  className="mt-2 w-full rounded-xl border border-acsm-line px-3 py-3 text-sm"
+                />
+              </label>
+              <div className="flex items-center justify-between gap-3 text-xs text-acsm-muted">
+                <span>El proveedor vera estas indicaciones en el correo y en su portal.</span>
+                <span>{quoteCorrectionReason.length}/2000</span>
+              </div>
+              {quoteCorrectionError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                  {quoteCorrectionError}
+                </div>
+              ) : null}
+              <div className="flex flex-wrap justify-end gap-3 border-t border-acsm-line pt-4">
+                <button
+                  type="button"
+                  onClick={() => setQuoteCorrectionRow(null)}
+                  disabled={quoteCorrectionSubmitting}
+                  className="inline-flex h-11 items-center rounded-xl border border-acsm-line bg-white px-5 text-sm font-bold text-acsm-ink hover:bg-acsm-paper disabled:opacity-50"
+                >
+                  Conservar cotizacion
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void requestSupplierQuoteCorrection()}
+                  disabled={quoteCorrectionSubmitting || quoteCorrectionReason.trim().length < 10}
+                  className="inline-flex h-11 items-center gap-2 rounded-xl bg-acsm-green px-5 text-sm font-bold text-white shadow-button hover:bg-acsm-green-hover disabled:opacity-60"
+                >
+                  <Send className="h-4 w-4" aria-hidden="true" />
+                  {quoteCorrectionSubmitting ? 'Enviando...' : 'Enviar solicitud al proveedor'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {rfqExceptionOpen ? (
         <div

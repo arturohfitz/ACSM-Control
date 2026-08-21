@@ -31,7 +31,11 @@ from app.api.v1.endpoints.purchasing import (
     list_purchase_cases,
     list_supplier_agreement_approvals,
     list_supplier_quote_approvals,
+    list_supplier_quote_drafts,
+    list_supplier_quote_uploads,
+    move_supplier_quote_draft_to_manual_capture,
     register_supplier_invoice,
+    request_supplier_quote_correction,
     request_supplier_rfq_approval,
     send_purchase_order,
     supplier_rfq_comparison,
@@ -46,6 +50,7 @@ from app.models import (
     AuditEvent,
     Client,
     Company,
+    EmailOutboxMessage,
     ExpectedMaterialItem,
     ExpectedMaterialList,
     HouseModel,
@@ -83,6 +88,7 @@ from app.schemas.purchasing import (
     SupplierPaymentUpdate,
     FinancialReconciliationCreate,
     SupplierQuoteCreate,
+    SupplierQuoteCorrectionRequest,
     SupplierQuoteDraftConfirmation,
     SupplierQuoteDraftInput,
     SupplierQuoteItemCreate,
@@ -845,6 +851,19 @@ class PurchasingFlowDBTest(unittest.TestCase):
             )
         )
 
+        manual_draft = move_supplier_quote_draft_to_manual_capture(
+            draft.id,
+            self.db,
+            self.user,
+        )
+        self.assertEqual(manual_draft.status, "manual_capture")
+        self.assertEqual(manual_draft.upload.status, "manual_capture_required")
+
+        # Continue this scenario with the assisted confirmation path.
+        manual_draft.status = "review_required"
+        manual_draft.upload.status = "review_required"
+        self.db.commit()
+
         draft.supplier_match_status = "mismatch"
         with self.assertRaisesRegex(HTTPException, "Confirma expresamente"):
             confirm_supplier_quote_draft(
@@ -876,6 +895,127 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.assertEqual(quote.subtotal, Decimal("1500.00"))
         self.assertEqual(quote.total, Decimal("1798.00"))
         self.assertEqual(len(quote.items), 2)
+
+    def test_quote_correction_reopens_portal_and_preserves_document_history(self) -> None:
+        rfq = create_supplier_rfq(
+            SupplierRFQCreate(
+                project_id=self.project.id,
+                title=f"Cotizacion para corregir {self.suffix}",
+                required_by=date.today() + timedelta(days=10),
+                response_deadline=date.today() + timedelta(days=5),
+                supplier_ids=[supplier.id for supplier in self.suppliers],
+                items=[
+                    SupplierRFQItemCreate(
+                        source_code="COR-001",
+                        description="Material sujeto a correccion",
+                        unit="pieza",
+                        quantity=Decimal("12"),
+                    )
+                ],
+            ),
+            BackgroundTasks(),
+            self.db,
+            self.user,
+        )
+        link = next(
+            item for item in rfq.supplier_links if item.supplier_id == self.suppliers[0].id
+        )
+        original_token_hash = link.portal_token_hash
+        upload = SupplierQuoteUpload(
+            company_id=self.company.id,
+            rfq_id=rfq.id,
+            rfq_supplier_id=link.id,
+            supplier_id=link.supplier_id,
+            quote_number=f"COT-COR-{self.suffix}",
+            original_file_name="cotizacion-original.pdf",
+            stored_file_name=f"correccion-{self.suffix}.pdf",
+            stored_file_path=f"/tmp/correccion-{self.suffix}.pdf",
+            content_type="application/pdf",
+            file_extension=".pdf",
+            file_size_bytes=100,
+            file_sha256="b" * 64,
+            status="confirmed",
+            uploaded_at=datetime.now(timezone.utc),
+        )
+        self.db.add(upload)
+        self.db.commit()
+        quote = create_supplier_quote(
+            rfq.id,
+            SupplierQuoteCreate(
+                supplier_id=self.suppliers[0].id,
+                quote_number=f"COT-COR-{self.suffix}",
+                delivery_days=5,
+                payment_terms_days=30,
+                attachment_name=upload.original_file_name,
+                items=[
+                    SupplierQuoteItemCreate(
+                        rfq_item_id=rfq.items[0].id,
+                        unit_price=Decimal("125.50"),
+                    )
+                ],
+            ),
+            self.db,
+            self.user,
+        )
+        quote_id = quote.id
+        reason = "Corrige la cantidad cotizada y confirma la vigencia comercial."
+        background_tasks = BackgroundTasks()
+
+        response = request_supplier_quote_correction(
+            quote_id,
+            SupplierQuoteCorrectionRequest(reason=reason),
+            background_tasks,
+            self.db,
+            self.user,
+        )
+
+        self.assertEqual(response.supplier_email, self.suppliers[0].contact_email)
+        self.assertIsNone(self.db.get(SupplierQuote, quote_id))
+        self.db.refresh(upload)
+        self.db.refresh(link)
+        self.assertEqual(upload.status, "correction_requested")
+        self.assertEqual(link.status, "correction_requested")
+        self.assertEqual(link.notes, reason)
+        self.assertIsNotNone(link.portal_token_hash)
+        self.assertNotEqual(link.portal_token_hash, original_token_hash)
+        self.assertEqual(supplier_rfq_comparison(rfq.id, self.db, self.user), [])
+        self.assertEqual(list_supplier_quote_uploads(rfq.id, self.db, self.user), [])
+        self.assertEqual(list_supplier_quote_drafts(rfq.id, self.db, self.user), [])
+        purchase_case = next(
+            item
+            for item in list_purchase_cases(skip=0, limit=100, db=self.db, current_user=self.user)
+            if item.id == rfq.id
+        )
+        self.assertEqual(purchase_case.upload_count, 0)
+        self.assertEqual(purchase_case.current_stage, "documents")
+
+        queued_email = self.db.scalar(
+            select(EmailOutboxMessage).where(
+                EmailOutboxMessage.company_id == self.company.id,
+                EmailOutboxMessage.message_type == "supplier_quote_correction",
+                EmailOutboxMessage.related_entity_id == str(quote_id),
+            )
+        )
+        self.assertIsNotNone(queued_email)
+        self.assertEqual(queued_email.status, "pending")
+        self.assertEqual(queued_email.recipient_email, self.suppliers[0].contact_email)
+        self.assertIn(reason, queued_email.text_body)
+        self.assertIn("/supplier/quote/", queued_email.text_body)
+        self.assertEqual(len(background_tasks.tasks), 1)
+
+        audit = self.db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.company_id == self.company.id,
+                AuditEvent.entity_type == "SupplierQuote",
+                AuditEvent.entity_id == str(quote_id),
+                AuditEvent.action == "request_correction",
+            )
+        )
+        self.assertIsNotNone(audit)
+        self.assertEqual(audit.event_metadata["reason"], reason)
+        self.assertEqual(audit.event_metadata["upload_ids"], [upload.id])
+        self.assertEqual(audit.event_metadata["uploads"][0]["file_name"], upload.original_file_name)
+        self.assertEqual(audit.event_metadata["uploads"][0]["previous_status"], "confirmed")
 
     def test_purchase_order_reception_invoice_and_payment_controls(self) -> None:
         rfq = create_supplier_rfq(

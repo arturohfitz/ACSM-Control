@@ -253,7 +253,7 @@ function makeQuote(rfq: Rfq, supplier: Supplier, quoteId: number, price = 20): S
 async function mockApi(
   page: Page,
   currentUser = user,
-  options: { withoutWarehouses?: boolean } = {},
+  options: { withoutWarehouses?: boolean; withAssistedQuote?: boolean } = {},
 ) {
   let warehouses: Array<{
     id: number
@@ -269,6 +269,73 @@ async function mockApi(
     10: suppliers.map((supplier, index) => makeQuote(rfqs[0], supplier, 600 + index, 22 + index)),
     11: [],
   }
+  const assistedUpload = {
+    id: 501,
+    rfq_id: 11,
+    supplier_id: 1,
+    quote_number: 'COT-ASISTIDA-001',
+    original_file_name: 'COT-ASISTIDA-001.pdf',
+    file_extension: '.pdf',
+    file_size_bytes: 4096,
+    status: 'review_required',
+    uploaded_at: '2026-08-20T18:00:00-06:00',
+    notes: null,
+    supplier: suppliers[0],
+  }
+  let quoteUploads = options.withAssistedQuote ? [assistedUpload] : []
+  let quoteDrafts = options.withAssistedQuote
+    ? [
+        {
+          id: 500,
+          rfq_id: 11,
+          supplier_id: 1,
+          upload_id: assistedUpload.id,
+          supplier_quote_id: null,
+          status: 'review_required',
+          source_type: 'pdf_text',
+          confidence: '0.96',
+          quote_number: 'COT-ASISTIDA-001',
+          valid_until: '2026-08-27',
+          currency: 'MXN',
+          delivery_days: 5,
+          payment_terms_days: 30,
+          subtotal: '800',
+          discount: '0',
+          shipping_cost: '0',
+          tax_amount: '128',
+          total: '928',
+          notes: null,
+          validation_errors: [],
+          detected_supplier_name: 'Aceros del Bajio',
+          detected_supplier_tax_id: null,
+          detected_supplier_email: null,
+          supplier_match_status: 'matched',
+          supplier_match_confidence: '1',
+          detected_rfq_number: 'SC-202605-0006',
+          document_subtotal: '800',
+          document_tax_amount: '128',
+          document_total: '928',
+          extraction_metadata: {},
+          supplier: suppliers[0],
+          upload: assistedUpload,
+          items: [
+            {
+              id: 600,
+              rfq_item_id: 101,
+              description: 'Varilla 3/8',
+              unit: 'pieza',
+              quantity: '40',
+              unit_price: '20',
+              line_total: '800',
+              delivery_days: 5,
+              notes: null,
+              confidence: '0.99',
+              match_method: 'description',
+            },
+          ],
+        },
+      ]
+    : []
   let approvals: Approval[] = []
   let purchaseOrders: PurchaseOrder[] = []
   let expectedLists: ExpectedList[] = []
@@ -618,6 +685,56 @@ async function mockApi(
       return rfq ? json(rfq) : json({ detail: 'RFQ no encontrada' }, 404)
     }
 
+    const quoteUploadsMatch = pathname.match(
+      /^\/purchasing\/supplier-rfqs\/(\d+)\/quote-uploads$/,
+    )
+    if (quoteUploadsMatch && method === 'GET') {
+      const rfqId = Number(quoteUploadsMatch[1])
+      return json(quoteUploads.filter((upload) => upload.rfq_id === rfqId))
+    }
+
+    const quoteDraftsMatch = pathname.match(
+      /^\/purchasing\/supplier-rfqs\/(\d+)\/quote-drafts$/,
+    )
+    if (quoteDraftsMatch && method === 'GET') {
+      const rfqId = Number(quoteDraftsMatch[1])
+      return json(quoteDrafts.filter((draft) => draft.rfq_id === rfqId))
+    }
+
+    const manualCaptureMatch = pathname.match(
+      /^\/purchasing\/supplier-quote-drafts\/(\d+)\/manual-capture$/,
+    )
+    if (manualCaptureMatch && method === 'POST') {
+      const draftId = Number(manualCaptureMatch[1])
+      const currentDraft = quoteDrafts.find((draft) => draft.id === draftId)
+      if (!currentDraft) return json({ detail: 'Borrador no encontrado' }, 404)
+      quoteDrafts = quoteDrafts.map((draft) =>
+        draft.id === draftId ? { ...draft, status: 'manual_capture' } : draft,
+      )
+      quoteUploads = quoteUploads.map((upload) =>
+        upload.id === currentDraft.upload_id
+          ? { ...upload, status: 'manual_capture_required' }
+          : upload,
+      )
+      return json(quoteDrafts.find((draft) => draft.id === draftId))
+    }
+
+    const reprocessUploadMatch = pathname.match(
+      /^\/purchasing\/supplier-quote-uploads\/(\d+)\/reprocess$/,
+    )
+    if (reprocessUploadMatch && method === 'POST') {
+      const uploadId = Number(reprocessUploadMatch[1])
+      const currentDraft = quoteDrafts.find((draft) => draft.upload_id === uploadId)
+      if (!currentDraft) return json({ detail: 'Borrador no encontrado' }, 404)
+      quoteDrafts = quoteDrafts.map((draft) =>
+        draft.id === currentDraft.id ? { ...draft, status: 'review_required' } : draft,
+      )
+      quoteUploads = quoteUploads.map((upload) =>
+        upload.id === uploadId ? { ...upload, status: 'review_required' } : upload,
+      )
+      return json(quoteDrafts.find((draft) => draft.id === currentDraft.id))
+    }
+
     const quotesMatch = pathname.match(/^\/purchasing\/supplier-rfqs\/(\d+)\/quotes$/)
     if (quotesMatch && method === 'GET') return json(quotesByRfq[Number(quotesMatch[1])] ?? [])
     if (quotesMatch && method === 'POST') {
@@ -664,6 +781,29 @@ async function mockApi(
         ...(quotesByRfq[rfq.id] ?? []).filter((entry) => entry.supplier_id !== supplier.id),
       ]
       return json(quote)
+    }
+
+    const quoteCorrectionMatch = pathname.match(
+      /^\/purchasing\/supplier-quotes\/(\d+)\/request-correction$/,
+    )
+    if (quoteCorrectionMatch && method === 'POST') {
+      const quoteId = Number(quoteCorrectionMatch[1])
+      const quote = Object.values(quotesByRfq)
+        .flat()
+        .find((entry) => entry.id === quoteId)
+      if (!quote) return json({ detail: 'Cotizacion no encontrada' }, 404)
+      const payload = await request.postDataJSON()
+      if (String(payload.reason ?? '').trim().length < 10) {
+        return json({ detail: 'El motivo es obligatorio' }, 422)
+      }
+      quotesByRfq[quote.rfq_id] = (quotesByRfq[quote.rfq_id] ?? []).filter(
+        (entry) => entry.id !== quoteId,
+      )
+      return json({
+        message: 'Solicitud de nueva cotizacion enviada al proveedor.',
+        supplier_email: 'compras@aceros-bajio.example.com',
+        email_queued: true,
+      })
     }
 
     const comparisonMatch = pathname.match(/^\/purchasing\/supplier-rfqs\/(\d+)\/comparison$/)
@@ -1165,6 +1305,82 @@ test('compras separa detalle de solicitud y captura de cotizacion', async ({ pag
   await expect(page.getByText('Datos guardados para su comparativo.')).toBeVisible()
 })
 
+test('compras cancela una cotizacion y solicita reemplazo con motivo obligatorio', async ({
+  page,
+}) => {
+  await mockApi(page)
+  await authenticate(page)
+  await page.goto('/purchasing/operations?rfq_id=10&focus=comparison')
+
+  await page.getByRole('button', { name: 'Solicitar nueva' }).first().click()
+  const dialog = page.getByRole('dialog', { name: 'Cancelar y solicitar nueva cotizacion' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Enviar solicitud al proveedor' })).toBeDisabled()
+
+  await dialog
+    .getByLabel('Motivo y correcciones solicitadas *')
+    .fill('Corregir cantidades, vigencia y reenviar el documento firmado.')
+  await dialog.getByRole('button', { name: 'Enviar solicitud al proveedor' }).click()
+
+  await expect(dialog).toHaveCount(0)
+  await expect(
+    page.getByText(
+      'Cotizacion de Aceros del Bajio cancelada. La solicitud de reemplazo se envio a compras@aceros-bajio.example.com.',
+    ),
+  ).toBeVisible()
+  await expect(page.getByText('2 cotizaciones completas de 3 requeridas')).toBeVisible()
+})
+
+test('captura asistida abre desde la alerta y permite continuar manualmente', async ({
+  page,
+}) => {
+  await mockApi(page, user, { withAssistedQuote: true })
+  await authenticate(page)
+  await page.goto(
+    '/purchasing/operations?rfq_id=11&focus=quote-review&draft_id=500&notification_id=900',
+  )
+
+  const assistedSection = page
+    .getByRole('heading', { name: 'Cotizaciones por revisar' })
+    .locator('xpath=ancestor::section[1]')
+  await expect(assistedSection).toBeVisible()
+  await expect(assistedSection.locator('input[value="COT-ASISTIDA-001"]')).toBeVisible()
+  await expect
+    .poll(async () =>
+      assistedSection.evaluate((element) => {
+        const bounds = element.getBoundingClientRect()
+        return bounds.top >= 0 && bounds.top < window.innerHeight
+      }),
+    )
+    .toBe(true)
+
+  await assistedSection.getByRole('button', { name: 'Ocultar asistencia' }).click()
+  await expect(
+    assistedSection.getByText('La asistencia esta oculta. Los documentos pendientes se conservan sin cambios.'),
+  ).toBeVisible()
+
+  await page.goto('/purchasing/operations?rfq_id=11')
+  await expect(
+    assistedSection.getByText('La asistencia esta oculta. Los documentos pendientes se conservan sin cambios.'),
+  ).toBeVisible()
+  await assistedSection.getByRole('button', { name: 'Revisar cotizaciones' }).click()
+  await expect(assistedSection.locator('input[value="COT-ASISTIDA-001"]')).toBeVisible()
+
+  await assistedSection.getByRole('button', { name: 'Usar captura manual' }).click()
+  await expect(
+    page.getByText(
+      'Captura asistida cancelada. El documento se conserva y los datos recuperados quedaron en la captura manual.',
+    ),
+  ).toBeVisible()
+  await expect(page.getByLabel('Proveedor cotizante')).toHaveValue('1')
+  await expect(page.getByLabel('Folio de cotizacion')).toHaveValue('COT-ASISTIDA-001')
+  await expect(page.locator('tr', { hasText: 'Varilla 3/8' }).locator('input').first()).toHaveValue(
+    '20',
+  )
+  await expect(page.getByRole('button', { name: 'Reactivar asistencia' })).toBeVisible()
+  await expect(assistedSection).toHaveCount(0)
+})
+
 test('compras crea solicitud de cotizacion con materiales y tres proveedores', async ({ page }) => {
   await mockApi(page)
   await authenticate(page)
@@ -1450,4 +1666,150 @@ test('pagos interpreta la factura y autocompleta encabezado y partidas recibidas
   await expect(
     invoiceSection.getByLabel('Precio unitario de Cemento gris 50kg'),
   ).toHaveValue('55.00')
+})
+
+test('proveedor entrega documentos fiscales desde la liga segura de la orden', async ({
+  page,
+}) => {
+  const token = 'invoice-portal-token-with-more-than-thirty-two-characters'
+  let submitted = false
+
+  await page.route(`**/api/v1/supplier-invoice-portal/${token}**`, async (route) => {
+    if (route.request().method() === 'POST') {
+      submitted = true
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 501,
+          invoice_number: 'FAC-PORTAL-001',
+          submitted_at: '2026-08-21T12:00:00-06:00',
+          status: 'review_required',
+          total: '1160.00',
+          documents: [
+            {
+              id: 701,
+              document_type: 'pdf',
+              original_file_name: 'FAC-PORTAL-001.pdf',
+              file_size: 58,
+            },
+          ],
+        }),
+      })
+    }
+
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        purchase_order_id: 800,
+        po_number: 'OC-202608-0001',
+        status: 'received',
+        supplier_name: 'Aceros del Bajio',
+        project_name: 'Privada Encinos',
+        issued_at: '2026-08-20',
+        subtotal: '1000.00',
+        currency: 'MXN',
+        items: [
+          {
+            id: 801,
+            description: 'Cemento gris 50kg',
+            unit: 'saco',
+            ordered: '20',
+            received: '20',
+            invoiced: '0',
+            available: '20',
+            unit_price: '50.00',
+          },
+        ],
+        submissions: submitted
+          ? [
+              {
+                id: 501,
+                invoice_number: 'FAC-PORTAL-001',
+                submitted_at: '2026-08-21T12:00:00-06:00',
+                status: 'review_required',
+                total: '1160.00',
+                documents: [
+                  {
+                    id: 701,
+                    document_type: 'pdf',
+                    original_file_name: 'FAC-PORTAL-001.pdf',
+                    file_size: 58,
+                  },
+                ],
+              },
+            ]
+          : [],
+      }),
+    })
+  })
+
+  await page.goto(`/supplier/invoice/${token}`)
+
+  await expect(page.getByRole('heading', { name: 'OC-202608-0001' })).toBeVisible()
+  await page.getByLabel('Folio').fill('FAC-PORTAL-001')
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: 'FAC-PORTAL-001.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n%%EOF'),
+  })
+  await page.getByRole('button', { name: 'Enviar documentos a Compras' }).click()
+
+  expect(submitted).toBe(true)
+  await expect(
+    page.getByText('Documentos recibidos. Compras fue notificado y revisara la factura antes de registrarla.'),
+  ).toBeVisible()
+  await expect(page.getByText('FAC-PORTAL-001', { exact: true })).toBeVisible()
+})
+
+test('alerta de factura abre y enfoca los documentos pendientes de la orden', async ({
+  page,
+}) => {
+  await mockApi(page)
+  await page.route('**/api/v1/purchasing/supplier-invoice-submissions**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 501,
+          purchase_order_id: 800,
+          supplier_id: 1,
+          invoice_number: 'FAC-PORTAL-001',
+          invoice_date: '2026-08-21',
+          currency: 'MXN',
+          subtotal: '1000.00',
+          total: '1160.00',
+          status: 'review_required',
+          notes: 'Entrega completa',
+          submitted_at: '2026-08-21T12:00:00-06:00',
+          documents: [
+            {
+              id: 701,
+              submission_id: 501,
+              document_type: 'pdf',
+              original_file_name: 'FAC-PORTAL-001.pdf',
+              file_size: 58,
+              validation_status: 'valid',
+              uploaded_at: '2026-08-21T12:00:00-06:00',
+            },
+          ],
+        },
+      ]),
+    })
+  })
+  await authenticate(page)
+
+  await page.goto(
+    '/supplier-payments?view=invoices&project_id=1&purchase_order_id=800&submission_id=501&focus=invoice-submissions',
+  )
+
+  const pendingDocuments = page.locator('#invoice-submissions')
+  await expect(page.getByRole('heading', { name: 'Facturas de proveedores' })).toBeVisible()
+  await expect(pendingDocuments.getByText('FAC-PORTAL-001', { exact: true })).toBeVisible()
+  await expect(pendingDocuments).toBeInViewport()
+  await expect(
+    pendingDocuments.locator('article', { hasText: 'FAC-PORTAL-001' }),
+  ).toHaveClass(/ring-2/)
 })

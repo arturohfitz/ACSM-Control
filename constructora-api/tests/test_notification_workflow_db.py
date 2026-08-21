@@ -189,6 +189,10 @@ class NotificationWorkflowDBTest(unittest.TestCase):
         self.assertIsNotNone(notification)
         assert notification is not None
         self.assertEqual(notification.status, "unread")
+        self.assertIn("/supplier-payments?view=invoices", notification.action_url)
+        self.assertIn(f"project_id={self.project.id}", notification.action_url)
+        self.assertIn(f"purchase_order_id={order.id}", notification.action_url)
+        self.assertIn("focus=invoice-registration", notification.action_url)
 
         invoice = SupplierInvoice(
             company_id=self.company.id,
