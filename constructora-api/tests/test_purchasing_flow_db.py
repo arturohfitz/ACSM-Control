@@ -31,6 +31,7 @@ from app.api.v1.endpoints.purchasing import (
     list_purchase_cases,
     list_supplier_agreement_approvals,
     list_supplier_quote_approvals,
+    move_supplier_quote_draft_to_manual_capture,
     register_supplier_invoice,
     request_supplier_rfq_approval,
     send_purchase_order,
@@ -844,6 +845,19 @@ class PurchasingFlowDBTest(unittest.TestCase):
                 )
             )
         )
+
+        manual_draft = move_supplier_quote_draft_to_manual_capture(
+            draft.id,
+            self.db,
+            self.user,
+        )
+        self.assertEqual(manual_draft.status, "manual_capture")
+        self.assertEqual(manual_draft.upload.status, "manual_capture_required")
+
+        # Continue this scenario with the assisted confirmation path.
+        manual_draft.status = "review_required"
+        manual_draft.upload.status = "review_required"
+        self.db.commit()
 
         draft.supplier_match_status = "mismatch"
         with self.assertRaisesRegex(HTTPException, "Confirma expresamente"):

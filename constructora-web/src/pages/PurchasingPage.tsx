@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
+  ChevronUp,
   CircleDashed,
   ClipboardCheck,
   Clock,
@@ -10,6 +12,7 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  RotateCcw,
   Send,
   ShoppingCart,
   Trash2,
@@ -317,7 +320,10 @@ type NotificationFocusTarget =
   | 'rfq-form'
   | 'rfq-list'
   | 'quote-capture'
+  | 'quote-review'
   | 'uploads'
+
+const ASSISTED_CAPTURE_VISIBILITY_KEY = 'acsm:purchasing:assisted-capture-visible'
 
 const money = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -814,6 +820,10 @@ export default function PurchasingPage() {
   const [activeQuoteDraftId, setActiveQuoteDraftId] = useState<number | null>(null)
   const [quoteDraftForm, setQuoteDraftForm] = useState<SupplierQuoteDraftForm | null>(null)
   const [supplierIdentityAcknowledged, setSupplierIdentityAcknowledged] = useState(false)
+  const [assistedCaptureExpanded, setAssistedCaptureExpanded] = useState(
+    () => window.localStorage.getItem(ASSISTED_CAPTURE_VISIBILITY_KEY) !== 'false',
+  )
+  const [quoteDetailsRfqId, setQuoteDetailsRfqId] = useState<number | null>(null)
   const [comparison, setComparison] = useState<ComparisonRow[]>([])
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [materialRequisitions, setMaterialRequisitions] = useState<MaterialRequisition[]>([])
@@ -856,6 +866,7 @@ export default function PurchasingPage() {
   const rfqListRef = useRef<HTMLDivElement | null>(null)
   const quoteCaptureRef = useRef<HTMLElement | null>(null)
   const quoteUploadsRef = useRef<HTMLElement | null>(null)
+  const quoteReviewRef = useRef<HTMLElement | null>(null)
   const handledNotificationTargetRef = useRef('')
 
   const selectedRfq = useMemo(
@@ -897,6 +908,11 @@ export default function PurchasingPage() {
   }, [searchParams])
   const notificationFocus = searchParams.get('focus')
   const notificationId = searchParams.get('notification_id')
+  const notificationDraftId = useMemo(() => {
+    const rawId = searchParams.get('draft_id')
+    const parsedId = rawId ? Number(rawId) : NaN
+    return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null
+  }, [searchParams])
 
   function notifySuccess(text: string, kind: ActionNoticeKind = 'success') {
     setMessage(text)
@@ -909,7 +925,10 @@ export default function PurchasingPage() {
   function spotlightPanel(target: NotificationFocusTarget, element: HTMLElement | null | undefined) {
     if (!element) return
     setFocusedPanel(target)
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    element.scrollIntoView({
+      behavior: 'smooth',
+      block: target === 'quote-review' ? 'start' : 'center',
+    })
     window.setTimeout(() => setFocusedPanel((current) => (current === target ? null : current)), 2200)
   }
   const detailRfq = useMemo(
@@ -1370,6 +1389,7 @@ export default function PurchasingPage() {
   }
 
   async function loadRfqDetails(rfqId: number | undefined) {
+    setQuoteDetailsRfqId(null)
     if (!rfqId) {
       setQuotes([])
       setQuoteUploads([])
@@ -1391,13 +1411,24 @@ export default function PurchasingPage() {
       setComparison(comparisonData)
       setQuoteUploads(uploadData)
       setQuoteDrafts(draftData)
-      const reviewDraft = draftData.find((draft) => draft.status === 'review_required')
-      if (reviewDraft && activeQuoteDraftId !== reviewDraft.id) {
+      const reviewDraft =
+        draftData.find(
+          (draft) => draft.id === notificationDraftId && draft.status === 'review_required',
+        ) ?? draftData.find((draft) => draft.status === 'review_required')
+      const shouldOpenAssistedCapture =
+        notificationFocus === 'quote-review' ||
+        window.localStorage.getItem(ASSISTED_CAPTURE_VISIBILITY_KEY) !== 'false'
+      if (
+        reviewDraft &&
+        shouldOpenAssistedCapture &&
+        activeQuoteDraftId !== reviewDraft.id
+      ) {
         beginQuoteDraftReview(reviewDraft)
-      } else if (!reviewDraft) {
+      } else if (!reviewDraft || !shouldOpenAssistedCapture) {
         setActiveQuoteDraftId(null)
         setQuoteDraftForm(null)
       }
+      setQuoteDetailsRfqId(rfqId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar cotizaciones')
     }
@@ -1424,6 +1455,8 @@ export default function PurchasingPage() {
   }
 
   function beginQuoteDraftReview(draft: SupplierQuoteDraft) {
+    setAssistedCaptureExpanded(true)
+    window.localStorage.setItem(ASSISTED_CAPTURE_VISIBILITY_KEY, 'true')
     setActiveQuoteDraftId(draft.id)
     setSupplierIdentityAcknowledged(false)
     setQuoteDraftForm({
@@ -1460,19 +1493,43 @@ export default function PurchasingPage() {
       'rfq-form': { target: 'rfq-form', ref: rfqFormRef },
       'rfq-list': { target: 'rfq-list', ref: rfqListRef },
       'quote-capture': { target: 'quote-capture', ref: quoteCaptureRef },
+      'quote-review': { target: 'quote-review', ref: quoteReviewRef },
       uploads: { target: 'uploads', ref: quoteUploadsRef },
     }
-    const focusTarget = focusTargets[notificationFocus] ?? focusTargets['rfq-form']
-
     if (notificationRfqId && rfqs.some((rfq) => rfq.id === notificationRfqId)) {
       setSelectedRfqId(notificationRfqId)
     } else if (notificationRfqId) {
       return
     }
 
+    if (notificationFocus === 'quote-review') {
+      if (!selectedRfq?.id || quoteDetailsRfqId !== selectedRfq.id) return
+      const requestedDraft = pendingQuoteDrafts.find((draft) => draft.id === notificationDraftId)
+      const reviewDraft = requestedDraft ?? pendingQuoteDrafts[0]
+      if (reviewDraft) {
+        beginQuoteDraftReview(reviewDraft)
+        setAssistedCaptureExpanded(true)
+      } else {
+        handledNotificationTargetRef.current = targetKey
+        window.setTimeout(() => spotlightPanel('uploads', quoteUploadsRef.current), 160)
+        return
+      }
+    }
+
+    const focusTarget = focusTargets[notificationFocus] ?? focusTargets['rfq-form']
+
     handledNotificationTargetRef.current = targetKey
     window.setTimeout(() => spotlightPanel(focusTarget.target, focusTarget.ref.current), 160)
-  }, [notificationFocus, notificationId, notificationRfqId, rfqs])
+  }, [
+    notificationDraftId,
+    notificationFocus,
+    notificationId,
+    notificationRfqId,
+    pendingQuoteDrafts,
+    quoteDetailsRfqId,
+    rfqs,
+    selectedRfq?.id,
+  ])
 
   useEffect(() => {
     if (!filteredRfqs.length) return
@@ -1794,6 +1851,60 @@ export default function PurchasingPage() {
       await loadData(selectedRfq.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible confirmar la cotizacion')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function toggleAssistedCapture() {
+    const next = !assistedCaptureExpanded
+    window.localStorage.setItem(ASSISTED_CAPTURE_VISIBILITY_KEY, String(next))
+    setAssistedCaptureExpanded(next)
+    if (next && !activeQuoteDraft && pendingQuoteDrafts[0]) {
+      beginQuoteDraftReview(pendingQuoteDrafts[0])
+    }
+  }
+
+  async function continueWithManualQuoteCapture() {
+    if (!selectedRfq || !activeQuoteDraft) return
+    setLoading(true)
+    setError('')
+    try {
+      await apiRequest<SupplierQuoteDraft>(
+        `/purchasing/supplier-quote-drafts/${activeQuoteDraft.id}/manual-capture`,
+        { method: 'POST' },
+      )
+      const draftItems = new Map(activeQuoteDraft.items.map((item) => [item.rfq_item_id, item]))
+      setQuoteSupplierId(String(activeQuoteDraft.supplier_id))
+      setQuoteNumber(activeQuoteDraft.quote_number ?? '')
+      setDeliveryDays(
+        activeQuoteDraft.delivery_days == null ? '' : String(activeQuoteDraft.delivery_days),
+      )
+      setPaymentTermsDays(String(activeQuoteDraft.payment_terms_days ?? 30))
+      setQuoteRows(
+        selectedRfq.items.map((item) => {
+          const draftItem = draftItems.get(item.id)
+          return {
+            rfq_item_id: item.id,
+            unit_price: draftItem?.unit_price ?? '',
+            delivery_days:
+              draftItem?.delivery_days == null ? '' : String(draftItem.delivery_days),
+          }
+        }),
+      )
+      setActiveQuoteDraftId(null)
+      setQuoteDraftForm(null)
+      setSupplierIdentityAcknowledged(false)
+      setAssistedCaptureExpanded(false)
+      window.localStorage.setItem(ASSISTED_CAPTURE_VISIBILITY_KEY, 'false')
+      await loadRfqDetails(selectedRfq.id)
+      notifySuccess(
+        'Captura asistida cancelada. El documento se conserva y los datos recuperados quedaron en la captura manual.',
+        'info',
+      )
+      window.setTimeout(() => spotlightPanel('quote-capture', quoteCaptureRef.current), 120)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible volver a la captura manual')
     } finally {
       setLoading(false)
     }
@@ -2909,6 +3020,7 @@ export default function PurchasingPage() {
                     const canInterpret =
                       upload.file_extension.toLowerCase() === '.pdf' &&
                       (!uploadDraft ||
+                        uploadDraft.status === 'manual_capture' ||
                         (uploadDraft.status === 'review_required' &&
                           uploadDraft.source_type !== 'pdf_text'))
                     return (
@@ -2935,7 +3047,11 @@ export default function PurchasingPage() {
                               className="inline-flex h-9 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
                             >
                               <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                              {uploadDraft ? 'Reinterpretar PDF' : 'Interpretar PDF'}
+                              {uploadDraft?.status === 'manual_capture'
+                                ? 'Reactivar asistencia'
+                                : uploadDraft
+                                  ? 'Reinterpretar PDF'
+                                  : 'Interpretar PDF'}
                             </button>
                           ) : null}
                         <button
@@ -2965,7 +3081,13 @@ export default function PurchasingPage() {
         )}
 
         {selectedRfq && pendingQuoteDrafts.length > 0 && (
-          <section className="overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel">
+          <section
+            ref={quoteReviewRef}
+            className={[
+              'overflow-hidden rounded-[22px] border border-acsm-line bg-white shadow-panel',
+              focusClass('quote-review'),
+            ].join(' ')}
+          >
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-acsm-line bg-sky-50 px-5 py-4">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.2em] text-sky-700">
@@ -2976,11 +3098,27 @@ export default function PurchasingPage() {
                   Verifica los datos contra el documento antes de incorporarlos al comparativo.
                 </p>
               </div>
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
-                {pendingQuoteDrafts.length} pendientes
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
+                  {pendingQuoteDrafts.length} pendientes
+                </span>
+                <button
+                  type="button"
+                  onClick={toggleAssistedCapture}
+                  aria-expanded={assistedCaptureExpanded}
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-sky-200 bg-white px-3 text-xs font-bold text-sky-800 hover:bg-sky-100"
+                >
+                  {assistedCaptureExpanded ? (
+                    <ChevronUp className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {assistedCaptureExpanded ? 'Ocultar asistencia' : 'Abrir asistencia'}
+                </button>
+              </div>
             </div>
 
+            {assistedCaptureExpanded ? (
             <div className="grid border-b border-acsm-line lg:grid-cols-[330px_minmax(0,1fr)]">
               <div className="border-b border-acsm-line bg-acsm-paper p-4 lg:border-b-0 lg:border-r">
                 <div className="space-y-2">
@@ -3319,17 +3457,28 @@ export default function PurchasingPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-acsm-line px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        activeQuoteDraft.upload_id && void openSupplierQuoteUpload(activeQuoteDraft.upload_id)
-                      }
-                      disabled={!activeQuoteDraft.upload_id}
-                      className="inline-flex h-10 items-center gap-2 rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold disabled:opacity-50"
-                    >
-                      <Eye className="h-4 w-4" aria-hidden="true" />
-                      Abrir documento
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          activeQuoteDraft.upload_id && void openSupplierQuoteUpload(activeQuoteDraft.upload_id)
+                        }
+                        disabled={!activeQuoteDraft.upload_id}
+                        className="inline-flex h-10 items-center gap-2 rounded-md border border-acsm-line bg-white px-4 text-sm font-semibold disabled:opacity-50"
+                      >
+                        <Eye className="h-4 w-4" aria-hidden="true" />
+                        Abrir documento
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void continueWithManualQuoteCapture()}
+                        disabled={loading}
+                        className="inline-flex h-10 items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                      >
+                        <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                        Usar captura manual
+                      </button>
+                    </div>
                     <button
                       type="button"
                       onClick={() => void confirmQuoteDraft()}
@@ -3352,6 +3501,19 @@ export default function PurchasingPage() {
                 </div>
               )}
             </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-5 py-3 text-sm text-acsm-muted">
+                <span>La asistencia esta oculta. Los documentos pendientes se conservan sin cambios.</span>
+                <button
+                  type="button"
+                  onClick={toggleAssistedCapture}
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-acsm-green px-4 text-sm font-semibold text-white hover:bg-acsm-green-hover"
+                >
+                  <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                  Revisar cotizaciones
+                </button>
+              </div>
+            )}
           </section>
         )}
 

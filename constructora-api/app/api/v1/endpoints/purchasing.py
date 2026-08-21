@@ -2303,6 +2303,40 @@ def list_supplier_quote_drafts(
 
 
 @router.post(
+    "/supplier-quote-drafts/{draft_id}/manual-capture",
+    response_model=SupplierQuoteDraftRead,
+)
+def move_supplier_quote_draft_to_manual_capture(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("supplier_quotes", "create")),
+) -> SupplierQuoteDraft:
+    draft = db.scalar(_quote_draft_query().where(SupplierQuoteDraft.id == draft_id))
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Borrador no encontrado")
+    ensure_same_company(current_user, draft, db=db)
+    if draft.status == "confirmed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La cotizacion ya fue confirmada",
+        )
+    if draft.status != "manual_capture":
+        previous_status = draft.status
+        draft.status = "manual_capture"
+        if draft.upload:
+            draft.upload.status = "manual_capture_required"
+        record_update(
+            db,
+            current_user,
+            module="compras",
+            item=draft,
+            before={"status": previous_status},
+        )
+        db.commit()
+    return db.scalar(_quote_draft_query().where(SupplierQuoteDraft.id == draft.id))
+
+
+@router.post(
     "/supplier-quote-drafts/{draft_id}/confirm",
     response_model=SupplierQuoteRead,
     status_code=status.HTTP_201_CREATED,

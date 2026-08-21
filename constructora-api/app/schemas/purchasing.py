@@ -34,7 +34,13 @@ RFQSupplierStatus = Literal[
     "awarded",
 ]
 SupplierQuoteStatus = Literal["received", "approval_requested", "rejected", "discarded", "approved"]
-SupplierQuoteDraftStatus = Literal["review_required", "confirmed", "failed", "correction_requested"]
+SupplierQuoteDraftStatus = Literal[
+    "review_required",
+    "manual_capture",
+    "confirmed",
+    "failed",
+    "correction_requested",
+]
 SupplierQuoteApprovalStatus = Literal["requested", "approved", "rejected", "cancelled"]
 SupplierRFQExceptionStatus = Literal["requested", "approved", "rejected", "used", "cancelled"]
 PurchaseOrderBillingMode = Literal["single", "partial"]

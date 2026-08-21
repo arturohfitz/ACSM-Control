@@ -399,7 +399,12 @@ async def upload_supplier_quote_document(
             entity_type="SupplierQuoteUpload",
             entity_id=upload.id,
             entity_label=link.rfq.rfq_number,
-            action_url=f"/purchasing?rfq_id={link.rfq_id}&focus=uploads",
+            action_url=(
+                f"/purchasing/operations?rfq_id={link.rfq_id}"
+                f"&focus=quote-review&draft_id={draft.id}"
+                if draft
+                else f"/purchasing/operations?rfq_id={link.rfq_id}&focus=uploads"
+            ),
             project_id=link.rfq.project_id,
             metadata={
                 "rfq_id": link.rfq_id,
