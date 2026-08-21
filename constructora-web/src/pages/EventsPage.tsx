@@ -24,12 +24,14 @@ type AuditEventResponse = {
 
 const moduleLabels: Record<string, string> = {
   compras: 'Compras',
+  convenios_proveedor: 'Convenios de proveedores',
   cotizaciones: 'Cotizaciones',
   desarrolladoras: 'Inmobiliarias',
   facturas_proveedor: 'Facturas proveedor',
   materiales: 'Materiales',
   modelos: 'Modelos',
   ordenes_compra: 'Ordenes de compra',
+  presupuesto_materiales: 'Presupuesto de materiales',
   pagos_proveedores: 'Pagos proveedores',
   conciliaciones_financieras: 'Conciliaciones financieras',
   proveedores: 'Proveedores',
@@ -37,16 +39,34 @@ const moduleLabels: Record<string, string> = {
 
 const actionLabels: Record<string, string> = {
   approve: 'Aprobacion',
+  approve_exception: 'Aprobacion de excepcion',
+  cancel: 'Cancelacion',
+  convert_to_rfq: 'Conversion a solicitud',
   create: 'Creacion',
+  create_agreement_rfq: 'Solicitud por convenio',
   delete: 'Eliminacion',
   pay: 'Pago',
+  prepare_purchase_order: 'Preparacion de orden',
   request: 'Solicitud',
+  request_approval: 'Solicitud de aprobacion',
+  request_approval_agreement: 'Aprobacion por convenio',
+  request_approval_exception: 'Aprobacion por excepcion',
+  request_correction: 'Solicitud de correccion',
+  request_exception: 'Solicitud de excepcion',
   reject: 'Rechazo',
+  reject_exception: 'Rechazo de excepcion',
+  return: 'Devolucion',
   schedule: 'Programacion',
   send: 'Envio',
+  start_review: 'Inicio de revision',
   update: 'Edicion',
   upload: 'Carga',
+  upload_documents: 'Carga de documentos',
   validate: 'Validacion',
+}
+
+type EventsPageProps = {
+  scope?: 'system' | 'purchasing'
 }
 
 function formatDate(value: string) {
@@ -74,7 +94,7 @@ function metadataSummary(metadata?: Record<string, unknown> | null) {
     .join(' · ')
 }
 
-export default function EventsPage() {
+export default function EventsPage({ scope = 'system' }: EventsPageProps) {
   const [events, setEvents] = useState<AuditEvent[]>([])
   const [total, setTotal] = useState(0)
   const [module, setModule] = useState('')
@@ -83,20 +103,22 @@ export default function EventsPage() {
   const [selected, setSelected] = useState<AuditEvent | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const isPurchasingAudit = scope === 'purchasing'
 
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: '100' })
-    if (module) params.set('module', module)
+    if (!isPurchasingAudit && module) params.set('module', module)
     if (action) params.set('action', action)
     if (search.trim()) params.set('search', search.trim())
     return params.toString()
-  }, [action, module, search])
+  }, [action, isPurchasingAudit, module, search])
 
   async function loadEvents() {
     setLoading(true)
     setError('')
     try {
-      const data = await apiRequest<AuditEventResponse>(`/events?${query}`)
+      const endpoint = isPurchasingAudit ? '/events/purchasing' : '/events'
+      const data = await apiRequest<AuditEventResponse>(`${endpoint}?${query}`)
       setEvents(data.items)
       setTotal(data.total)
       setSelected((current) => {
@@ -129,10 +151,16 @@ export default function EventsPage() {
               <Activity className="h-5 w-5" aria-hidden="true" />
             </div>
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-acsm-muted">Auditoria</p>
-              <h2 className="text-lg font-bold text-acsm-ink">Eventos del sistema</h2>
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-acsm-muted">
+                {isPurchasingAudit ? 'Control administrativo' : 'Auditoria'}
+              </p>
+              <h2 className="text-lg font-bold text-acsm-ink">
+                {isPurchasingAudit ? 'Bitacora de Compras' : 'Eventos del sistema'}
+              </h2>
               <p className="text-sm text-acsm-muted">
-                Bitacora de cambios relevantes en operacion, compras, costos y catalogos.
+                {isPurchasingAudit
+                  ? 'Trazabilidad de solicitudes, cotizaciones, ordenes, facturas, pagos y conciliaciones.'
+                  : 'Bitacora de cambios relevantes en operacion, compras, costos y catalogos.'}
               </p>
             </div>
           </div>
@@ -146,7 +174,14 @@ export default function EventsPage() {
           </button>
         </div>
 
-        <div className="grid gap-4 border-b border-acsm-line bg-slate-50/80 p-4 lg:grid-cols-[minmax(260px,1fr)_220px_220px]">
+        <div
+          className={[
+            'grid gap-4 border-b border-acsm-line bg-slate-50/80 p-4',
+            isPurchasingAudit
+              ? 'lg:grid-cols-[minmax(260px,1fr)_220px]'
+              : 'lg:grid-cols-[minmax(260px,1fr)_220px_220px]',
+          ].join(' ')}
+        >
           <label className="text-sm font-semibold text-acsm-ink">
             <span className="mb-1 flex items-center gap-2">
               <Search className="h-4 w-4" aria-hidden="true" />
@@ -159,24 +194,26 @@ export default function EventsPage() {
               className="h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
             />
           </label>
-          <label className="text-sm font-semibold text-acsm-ink">
-            <span className="mb-1 flex items-center gap-2">
-              <Filter className="h-4 w-4" aria-hidden="true" />
-              Modulo
-            </span>
-            <select
-              value={module}
-              onChange={(event) => setModule(event.target.value)}
-              className="h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
-            >
-              <option value="">Todos</option>
-              {Object.entries(moduleLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {!isPurchasingAudit ? (
+            <label className="text-sm font-semibold text-acsm-ink">
+              <span className="mb-1 flex items-center gap-2">
+                <Filter className="h-4 w-4" aria-hidden="true" />
+                Modulo
+              </span>
+              <select
+                value={module}
+                onChange={(event) => setModule(event.target.value)}
+                className="h-11 w-full rounded-xl border border-acsm-line bg-white px-3 text-sm"
+              >
+                <option value="">Todos</option>
+                {Object.entries(moduleLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="text-sm font-semibold text-acsm-ink">
             Accion
             <select

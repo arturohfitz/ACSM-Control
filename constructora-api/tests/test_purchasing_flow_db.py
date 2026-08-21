@@ -31,6 +31,8 @@ from app.api.v1.endpoints.purchasing import (
     list_purchase_cases,
     list_supplier_agreement_approvals,
     list_supplier_quote_approvals,
+    list_supplier_quote_drafts,
+    list_supplier_quote_uploads,
     move_supplier_quote_draft_to_manual_capture,
     register_supplier_invoice,
     request_supplier_quote_correction,
@@ -977,6 +979,15 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.assertIsNotNone(link.portal_token_hash)
         self.assertNotEqual(link.portal_token_hash, original_token_hash)
         self.assertEqual(supplier_rfq_comparison(rfq.id, self.db, self.user), [])
+        self.assertEqual(list_supplier_quote_uploads(rfq.id, self.db, self.user), [])
+        self.assertEqual(list_supplier_quote_drafts(rfq.id, self.db, self.user), [])
+        purchase_case = next(
+            item
+            for item in list_purchase_cases(skip=0, limit=100, db=self.db, current_user=self.user)
+            if item.id == rfq.id
+        )
+        self.assertEqual(purchase_case.upload_count, 0)
+        self.assertEqual(purchase_case.current_stage, "documents")
 
         queued_email = self.db.scalar(
             select(EmailOutboxMessage).where(
@@ -1003,6 +1014,8 @@ class PurchasingFlowDBTest(unittest.TestCase):
         self.assertIsNotNone(audit)
         self.assertEqual(audit.event_metadata["reason"], reason)
         self.assertEqual(audit.event_metadata["upload_ids"], [upload.id])
+        self.assertEqual(audit.event_metadata["uploads"][0]["file_name"], upload.original_file_name)
+        self.assertEqual(audit.event_metadata["uploads"][0]["previous_status"], "confirmed")
 
     def test_purchase_order_reception_invoice_and_payment_controls(self) -> None:
         rfq = create_supplier_rfq(

@@ -143,6 +143,12 @@ const purchasingSubItems = [
     icon: ReceiptText,
     permission: 'purchase_orders:view',
   },
+  {
+    to: '/purchasing/audit',
+    label: 'Bitacora de compras',
+    icon: Activity,
+    permission: 'purchasing_audit:view',
+  },
 ]
 
 const workSubItems = [
@@ -234,6 +240,7 @@ const titles: Record<string, string> = {
   '/purchasing/material-requisitions': 'Requerimientos de obra',
   '/purchasing/approvals': 'Aprobaciones de compras',
   '/purchasing/orders': 'Ordenes de compra',
+  '/purchasing/audit': 'Bitacora de Compras',
   '/inventory': 'Inventario',
   '/inventory/material-receiving': 'Recepcion de materiales',
   '/inventory/reception-history': 'Historial de recepciones',

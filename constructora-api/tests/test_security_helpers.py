@@ -41,6 +41,7 @@ class SecurityHelpersTest(unittest.TestCase):
         self.assertNotIn("purchase_approvals:view", compras)
         self.assertNotIn("supplier_payments:pay", compras)
         self.assertNotIn("settings:edit", compras)
+        self.assertNotIn("purchasing_audit:view", compras)
 
         self.assertIn("inventory_receiving:receive", inventarios)
         self.assertIn("inventory_reception_history:view", inventarios)

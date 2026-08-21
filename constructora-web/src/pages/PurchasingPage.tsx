@@ -877,6 +877,14 @@ export default function PurchasingPage() {
     () => rfqs.find((rfq) => rfq.id === selectedRfqId) ?? rfqs[0],
     [rfqs, selectedRfqId],
   )
+  const activeQuoteSupplierLinks = useMemo(
+    () => selectedRfq?.supplier_links.filter((link) => link.status !== 'correction_requested') ?? [],
+    [selectedRfq],
+  )
+  const correctionPendingSupplierLinks = useMemo(
+    () => selectedRfq?.supplier_links.filter((link) => link.status === 'correction_requested') ?? [],
+    [selectedRfq],
+  )
   const activeQuoteDraft = useMemo(
     () => quoteDrafts.find((draft) => draft.id === activeQuoteDraftId) ?? null,
     [activeQuoteDraftId, quoteDrafts],
@@ -1486,6 +1494,14 @@ export default function PurchasingPage() {
     void loadRfqDetails(selectedRfq?.id)
     resetQuoteCapture(selectedRfq)
   }, [selectedRfq?.id])
+
+  useEffect(() => {
+    if (!quoteSupplierId) return
+    const supplierIsActive = activeQuoteSupplierLinks.some(
+      (link) => String(link.supplier_id) === quoteSupplierId,
+    )
+    if (!supplierIsActive) resetQuoteCapture(selectedRfq)
+  }, [activeQuoteSupplierLinks, quoteSupplierId, selectedRfq])
 
   useEffect(() => {
     if (!notificationFocus) return
@@ -2883,6 +2899,17 @@ export default function PurchasingPage() {
               </div>
             </div>
             <div className="space-y-3 p-5">
+              {correctionPendingSupplierLinks.length > 0 ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                  <div className="font-bold">Esperando cotizacion corregida</div>
+                  <p className="mt-1 leading-relaxed">
+                    {correctionPendingSupplierLinks
+                      .map((link) => link.supplier?.name ?? `Proveedor ${link.supplier_id}`)
+                      .join(', ')}
+                    . La version cancelada se conserva unicamente en la bitacora y ya no participa en esta captura.
+                  </p>
+                </div>
+              ) : null}
               <div className="grid gap-3 md:grid-cols-4">
                 <label className="text-xs font-bold uppercase text-acsm-muted">
                   Proveedor cotizante
@@ -2897,7 +2924,7 @@ export default function PurchasingPage() {
                     className="mt-1 h-10 w-full rounded-md border border-acsm-line bg-white px-3 text-sm font-semibold normal-case text-acsm-ink"
                   >
                     <option value="">Seleccionar proveedor</option>
-                    {selectedRfq.supplier_links.map((link) => (
+                    {activeQuoteSupplierLinks.map((link) => (
                       <option key={link.supplier_id} value={link.supplier_id}>
                         {link.supplier?.name ?? link.supplier_id}
                       </option>

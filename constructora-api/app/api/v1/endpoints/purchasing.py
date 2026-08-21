@@ -1346,6 +1346,13 @@ _PURCHASE_STAGE_LABELS = {
     "cancelled": "Proceso cancelado",
 }
 
+_INACTIVE_QUOTE_UPLOAD_STATUSES = {"correction_requested", "superseded"}
+_INACTIVE_QUOTE_DRAFT_STATUSES = {"correction_requested"}
+
+
+def _is_active_quote_upload(upload: SupplierQuoteUpload) -> bool:
+    return upload.status not in _INACTIVE_QUOTE_UPLOAD_STATUSES
+
 
 def _purchase_case_from_rfq(
     rfq: SupplierRFQ,
@@ -1353,7 +1360,12 @@ def _purchase_case_from_rfq(
 ) -> PurchaseCaseRead:
     supplier_count = len(rfq.supplier_links)
     item_count = len(rfq.items)
-    upload_count = sum(len(link.quote_uploads) for link in rfq.supplier_links)
+    upload_count = sum(
+        1
+        for link in rfq.supplier_links
+        for upload in link.quote_uploads
+        if _is_active_quote_upload(upload)
+    )
     eligible_quotes = [quote for quote in rfq.quotes if quote.status != "discarded"]
     complete_quotes = [quote for quote in eligible_quotes if item_count and len(quote.items) == item_count]
     required_quote_count = 1 if rfq.request_type in {"agreement", "exception"} else min(3, supplier_count)
@@ -2302,7 +2314,10 @@ def list_supplier_quote_drafts(
     return list(
         db.scalars(
             _quote_draft_query()
-            .where(SupplierQuoteDraft.rfq_id == rfq.id)
+            .where(
+                SupplierQuoteDraft.rfq_id == rfq.id,
+                SupplierQuoteDraft.status.notin_(_INACTIVE_QUOTE_DRAFT_STATUSES),
+            )
             .order_by(SupplierQuoteDraft.created_at.desc())
         ).all()
     )
@@ -2475,7 +2490,10 @@ def list_supplier_quote_uploads(
     return list(
         db.scalars(
             select(SupplierQuoteUpload)
-            .where(SupplierQuoteUpload.rfq_id == rfq.id)
+            .where(
+                SupplierQuoteUpload.rfq_id == rfq.id,
+                SupplierQuoteUpload.status.notin_(_INACTIVE_QUOTE_UPLOAD_STATUSES),
+            )
             .options(selectinload(SupplierQuoteUpload.supplier))
             .order_by(SupplierQuoteUpload.uploaded_at.desc())
         ).all()
@@ -2593,6 +2611,16 @@ def request_supplier_quote_correction(
             )
         ).all()
     )
+    upload_evidence = [
+        {
+            "id": upload.id,
+            "file_name": upload.original_file_name,
+            "sha256": upload.file_sha256,
+            "uploaded_at": upload.uploaded_at.isoformat(),
+            "previous_status": upload.status,
+        }
+        for upload in previous_uploads
+    ]
     for upload in previous_uploads:
         if upload.status != "superseded":
             upload.status = "correction_requested"
@@ -2647,6 +2675,7 @@ def request_supplier_quote_correction(
             "subtotal": str(quote.subtotal),
             "total": str(quote.total),
             "upload_ids": [upload.id for upload in previous_uploads],
+            "uploads": upload_evidence,
             "items": [
                 {
                     "rfq_item_id": item.rfq_item_id,

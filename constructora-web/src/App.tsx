@@ -107,6 +107,10 @@ export default function App() {
             element={protect(<PurchasingOrdersPage />, 'purchase_orders:view')}
           />
           <Route
+            path="/purchasing/audit"
+            element={protect(<EventsPage scope="purchasing" />, 'purchasing_audit:view')}
+          />
+          <Route
             path="/inventory"
             element={protect(<InventoryWorkspacePage />, 'inventory_receiving:view')}
           />
