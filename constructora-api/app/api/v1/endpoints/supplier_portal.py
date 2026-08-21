@@ -12,6 +12,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from pydantic import ValidationError
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import selectinload
@@ -38,7 +40,7 @@ from app.services.supplier_quote_pdf import (
 router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".pdf", ".xlsx", ".xls"}
-PDF_DANGEROUS_MARKERS = (b"/JavaScript", b"/JS", b"<script", b"/Launch", b"/EmbeddedFile")
+PDF_ACTIVE_MARKERS = (b"/JavaScript", b"/JS", b"<script", b"/Launch", b"/RichMedia")
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
@@ -74,6 +76,59 @@ def _upload_base_dir() -> Path:
     return base_dir
 
 
+def _resolved_pdf_object(value):
+    return value.get_object() if hasattr(value, "get_object") else value
+
+
+def _embedded_pdf_file_specs(name_tree) -> list[tuple[str, object]]:
+    tree = _resolved_pdf_object(name_tree)
+    if not hasattr(tree, "get"):
+        return []
+
+    specs: list[tuple[str, object]] = []
+    names = _resolved_pdf_object(tree.get("/Names")) or []
+    for index in range(0, len(names) - 1, 2):
+        specs.append((str(names[index]), _resolved_pdf_object(names[index + 1])))
+    for child in _resolved_pdf_object(tree.get("/Kids")) or []:
+        specs.extend(_embedded_pdf_file_specs(child))
+    return specs
+
+
+def _has_only_c2pa_content_credentials(content: bytes) -> bool:
+    try:
+        reader = PdfReader(BytesIO(content), strict=False)
+        root = _resolved_pdf_object(reader.trailer.get("/Root"))
+        names = _resolved_pdf_object(root.get("/Names")) if hasattr(root, "get") else None
+        embedded_files = _resolved_pdf_object(names.get("/EmbeddedFiles")) if hasattr(names, "get") else None
+        specs = _embedded_pdf_file_specs(embedded_files)
+    except (PdfReadError, OSError, ValueError, TypeError):
+        return False
+
+    if not specs:
+        return False
+    for display_name, spec in specs:
+        if not hasattr(spec, "get"):
+            return False
+        file_name = str(spec.get("/UF") or spec.get("/F") or display_name).strip()
+        if file_name.casefold() != "content credentials" or display_name.strip().casefold() != "content credentials":
+            return False
+        if str(spec.get("/AFRelationship") or "") != "/C2PA_Manifest":
+            return False
+        if str(spec.get("/Subtype") or "").casefold() != "application/c2pa":
+            return False
+        embedded = _resolved_pdf_object(spec.get("/EF"))
+        stream = _resolved_pdf_object(embedded.get("/F")) if hasattr(embedded, "get") else None
+        if stream is None or not hasattr(stream, "get_data"):
+            return False
+        try:
+            manifest = stream.get_data()
+        except Exception:
+            return False
+        if not manifest.startswith(b"\x00\x00") or b"jumb" not in manifest[:32] or b"c2pa." not in manifest[:4096]:
+            return False
+    return True
+
+
 def _validate_file(file_name: str, content: bytes) -> tuple[str, str | None]:
     extension = Path(file_name).suffix.lower()
     if extension not in ALLOWED_EXTENSIONS:
@@ -90,12 +145,20 @@ def _validate_file(file_name: str, content: bytes) -> tuple[str, str | None]:
     if extension == ".pdf":
         if not content.startswith(b"%PDF-"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo no parece ser un PDF valido")
-        if any(marker.lower() in lowered for marker in PDF_DANGEROUS_MARKERS):
+        if any(marker.lower() in lowered for marker in PDF_ACTIVE_MARKERS):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El PDF contiene elementos activos o embebidos no permitidos",
             )
-        return extension, "PDF validado por firma y sin elementos activos comunes"
+        if b"/embeddedfile" in lowered and not _has_only_c2pa_content_credentials(content):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El PDF contiene archivos adjuntos no permitidos",
+            )
+        security_note = "PDF validado por firma y sin elementos activos comunes"
+        if b"/embeddedfile" in lowered:
+            security_note += "; credenciales C2PA verificadas"
+        return extension, security_note
 
     if extension == ".xlsx":
         if not any(header.startswith(magic) for magic in ZIP_MAGICS):
